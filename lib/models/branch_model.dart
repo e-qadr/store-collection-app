@@ -1,11 +1,15 @@
 class BranchModel {
   final String id;
   final String name;
-  final String branchManagerId; // تم التعديل إلى camelCase
+  final String companyName;
+  final String branchCode;
+  final String branchManagerId;
 
   BranchModel({
     required this.id,
     required this.name,
+    required this.companyName,
+    required this.branchCode,
     required this.branchManagerId,
   });
 
@@ -13,7 +17,9 @@ class BranchModel {
     return BranchModel(
       id: json['id'],
       name: json['name'],
-      branchManagerId: json['branch_manager_id'], // مفتاح الفايربيس يبقى كما هو
+      companyName: json['company_name'] ?? 'بدون شركة',
+      branchCode: json['branch_code'] ?? '',
+      branchManagerId: json['branch_manager_id'] ?? '',
     );
   }
 
@@ -21,6 +27,8 @@ class BranchModel {
     return {
       'id': id,
       'name': name,
+      'company_name': companyName,
+      'branch_code': branchCode,
       'branch_manager_id': branchManagerId,
     };
   }

@@ -5,13 +5,17 @@ import 'package:store_collection_app/screens/transactions/branch_transactions_sc
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
+import 'package:store_collection_app/widgets/notification_bell.dart';
 
 class AccountantDashboard extends StatelessWidget {
   final String branchId;
   final String branchName;
 
-  const AccountantDashboard(
-      {super.key, required this.branchId, required this.branchName});
+  const AccountantDashboard({
+    super.key,
+    required this.branchId,
+    required this.branchName,
+  });
 
   // دالة لإظهار نافذة اختيار التواريخ ثم استخراج التقرير
   Future<void> _generateReportDialog(BuildContext context) async {
@@ -33,13 +37,14 @@ class AccountantDashboard extends StatelessWidget {
                       color: AppTheme.accountantColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(Icons.picture_as_pdf_rounded,
-                        color: AppTheme.accountantColor, size: 22),
+                    child: Icon(
+                      Icons.picture_as_pdf_rounded,
+                      color: AppTheme.accountantColor,
+                      size: 22,
+                    ),
                   ),
                   const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text('استخراج تقرير السندات'),
-                  ),
+                  const Expanded(child: Text('استخراج تقرير السندات')),
                 ],
               ),
               content: Column(
@@ -52,18 +57,21 @@ class AccountantDashboard extends StatelessWidget {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          icon: const Icon(Icons.calendar_today_rounded,
-                              size: 15),
+                          icon: const Icon(
+                            Icons.calendar_today_rounded,
+                            size: 15,
+                          ),
                           label: Text(
                             'من: ${startDate.year}/${startDate.month}/${startDate.day}',
                             style: const TextStyle(fontSize: 12),
                           ),
                           onPressed: () async {
                             final picked = await showDatePicker(
-                                context: context,
-                                initialDate: startDate,
-                                firstDate: DateTime(2020),
-                                lastDate: DateTime.now());
+                              context: context,
+                              initialDate: startDate,
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now(),
+                            );
                             if (picked != null) {
                               setDialogState(() => startDate = picked);
                             }
@@ -73,18 +81,21 @@ class AccountantDashboard extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: OutlinedButton.icon(
-                          icon: const Icon(Icons.calendar_today_rounded,
-                              size: 15),
+                          icon: const Icon(
+                            Icons.calendar_today_rounded,
+                            size: 15,
+                          ),
                           label: Text(
                             'إلى: ${endDate.year}/${endDate.month}/${endDate.day}',
                             style: const TextStyle(fontSize: 12),
                           ),
                           onPressed: () async {
                             final picked = await showDatePicker(
-                                context: context,
-                                initialDate: endDate,
-                                firstDate: DateTime(2020),
-                                lastDate: DateTime.now());
+                              context: context,
+                              initialDate: endDate,
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now(),
+                            );
                             if (picked != null) {
                               setDialogState(() => endDate = picked);
                             }
@@ -97,8 +108,7 @@ class AccountantDashboard extends StatelessWidget {
               ),
               actions: [
                 TextButton(
-                  onPressed:
-                      isGenerating ? null : () => Navigator.pop(context),
+                  onPressed: isGenerating ? null : () => Navigator.pop(context),
                   child: const Text('إلغاء'),
                 ),
                 ElevatedButton.icon(
@@ -107,7 +117,9 @@ class AccountantDashboard extends StatelessWidget {
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 2),
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
                         )
                       : const Icon(Icons.download_rounded, size: 18),
                   label: const Text('استخراج PDF'),
@@ -115,7 +127,9 @@ class AccountantDashboard extends StatelessWidget {
                     backgroundColor: AppTheme.accountantColor,
                     minimumSize: Size.zero,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
                   ),
                   onPressed: isGenerating
                       ? null
@@ -127,11 +141,16 @@ class AccountantDashboard extends StatelessWidget {
                                 .instance
                                 .collection('transactions')
                                 .where('branchId', isEqualTo: branchId)
-                                .where('timestamp',
-                                    isGreaterThanOrEqualTo: startDate)
-                                .where('timestamp',
-                                    isLessThanOrEqualTo:
-                                        endDate.add(const Duration(days: 1)))
+                                .where(
+                                  'timestamp',
+                                  isGreaterThanOrEqualTo: startDate,
+                                )
+                                .where(
+                                  'timestamp',
+                                  isLessThanOrEqualTo: endDate.add(
+                                    const Duration(days: 1),
+                                  ),
+                                )
                                 .orderBy('timestamp', descending: true)
                                 .get();
 
@@ -140,8 +159,10 @@ class AccountantDashboard extends StatelessWidget {
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
-                                      content: Text(
-                                          'لا توجد سندات في هذه الفترة')),
+                                    content: Text(
+                                      'لا توجد سندات في هذه الفترة',
+                                    ),
+                                  ),
                                 );
                               }
                               return;
@@ -211,7 +232,9 @@ class AccountantDashboard extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (context) => BranchTransactionsScreen(
-                                branchId: branchId, branchName: branchName),
+                              branchId: branchId,
+                              branchName: branchName,
+                            ),
                           ),
                         );
                       },
@@ -256,6 +279,7 @@ class AccountantDashboard extends StatelessWidget {
       backgroundColor: AppTheme.accountantColor,
       automaticallyImplyLeading: false,
       actions: [
+        const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',

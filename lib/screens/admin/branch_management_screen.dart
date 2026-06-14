@@ -11,21 +11,92 @@ class BranchManagementScreen extends StatefulWidget {
 
 class _BranchManagementScreenState extends State<BranchManagementScreen> {
   final TextEditingController _branchNameController = TextEditingController();
+  final TextEditingController _companyNameController = TextEditingController();
+  final TextEditingController _branchCodeController = TextEditingController();
 
-  // إضافة فرع جديد
-  Future<void> _addBranch() async {
-    if (_branchNameController.text.isEmpty) return;
-    
-    final docRef = FirebaseFirestore.instance.collection('branches').doc(); 
-    await docRef.set({
-      'id': docRef.id,
-      'name': _branchNameController.text.trim(),
-      'branch_manager_id': '', 
-    });
-    
-    _branchNameController.clear();
-    if (mounted) Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تمت إضافة الفرع بنجاح'), backgroundColor: Colors.green));
+  Future<void> _saveBranch({String? branchId, String managerId = ''}) async {
+    final name = _branchNameController.text.trim();
+    final companyName = _companyNameController.text.trim();
+    final branchCode = _branchCodeController.text.trim().toUpperCase();
+
+    if (name.isEmpty || companyName.isEmpty || branchCode.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('الرجاء إدخال اسم الشركة واسم الفرع ورمز الفرع'),
+        ),
+      );
+      return;
+    }
+    if (!RegExp(r'^[A-Z0-9]+$').hasMatch(branchCode)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('رمز الفرع يجب أن يحتوي على حروف إنجليزية وأرقام فقط'),
+        ),
+      );
+      return;
+    }
+
+    final firestore = FirebaseFirestore.instance;
+    final branchRef = branchId == null
+        ? firestore.collection('branches').doc()
+        : firestore.collection('branches').doc(branchId);
+    final newCodeRef = firestore.collection('branch_codes').doc(branchCode);
+
+    try {
+      final duplicateBranches = await firestore
+          .collection('branches')
+          .where('branch_code', isEqualTo: branchCode)
+          .get();
+      if (duplicateBranches.docs.any((doc) => doc.id != branchRef.id)) {
+        throw Exception('رمز الفرع مستخدم لفرع آخر');
+      }
+
+      await firestore.runTransaction((transaction) async {
+        final newCodeDoc = await transaction.get(newCodeRef);
+        if (newCodeDoc.exists &&
+            newCodeDoc.data()?['branch_id'] != branchRef.id) {
+          throw Exception('رمز الفرع مستخدم لفرع آخر');
+        }
+
+        transaction.set(branchRef, {
+          'id': branchRef.id,
+          'name': name,
+          'company_name': companyName,
+          'branch_code': branchCode,
+          'branch_manager_id': managerId,
+        }, SetOptions(merge: true));
+        transaction.set(newCodeRef, {
+          'branch_id': branchRef.id,
+          'branch_name': name,
+        });
+      });
+
+      _branchNameController.clear();
+      _companyNameController.clear();
+      _branchCodeController.clear();
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              branchId == null
+                  ? 'تمت إضافة الفرع بنجاح'
+                  : 'تم تحديث بيانات الفرع بنجاح',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   // حذف فرع
@@ -39,34 +110,59 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           children: [
             Icon(Icons.warning_rounded, color: Colors.red),
             SizedBox(width: 8),
-            Text('تأكيد الحذف', style: TextStyle(color: Colors.red, fontSize: 18)),
+            Text(
+              'تأكيد الحذف',
+              style: TextStyle(color: Colors.red, fontSize: 18),
+            ),
           ],
         ),
-        content: const Text('هل أنت متأكد من حذف هذا الفرع؟', style: TextStyle(fontSize: 16)),
+        content: const Text(
+          'هل أنت متأكد من حذف هذا الفرع؟',
+          style: TextStyle(fontSize: 16),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
             onPressed: () async {
               Navigator.pop(context);
-              await FirebaseFirestore.instance.collection('branches').doc(branchId).delete();
-              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الفرع'), backgroundColor: Colors.red));
+              await FirebaseFirestore.instance
+                  .collection('branches')
+                  .doc(branchId)
+                  .delete();
+              if (mounted)
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم حذف الفرع'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
             },
             icon: const Icon(Icons.delete_rounded, size: 18),
             label: const Text('حذف'),
-          )
+          ),
         ],
-      )
+      ),
     );
   }
 
   // نافذة تعيين مدير للفرع
-  Future<void> _showAssignManagerDialog(String branchId, String currentManagerId) async {
-    String? selectedManagerId = currentManagerId.isEmpty ? null : currentManagerId;
+  Future<void> _showAssignManagerDialog(
+    String branchId,
+    String currentManagerId,
+  ) async {
+    String? selectedManagerId = currentManagerId.isEmpty
+        ? null
+        : currentManagerId;
 
     await showDialog(
       context: context,
@@ -74,76 +170,125 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               title: const Row(
                 children: [
-                  Icon(Icons.manage_accounts_rounded, color: AppTheme.adminColor),
+                  Icon(
+                    Icons.manage_accounts_rounded,
+                    color: AppTheme.adminColor,
+                  ),
                   SizedBox(width: 8),
-                  Text('تعيين مدير للفرع', style: TextStyle(color: AppTheme.adminColor, fontSize: 18)),
+                  Text(
+                    'تعيين مدير للفرع',
+                    style: TextStyle(color: AppTheme.adminColor, fontSize: 18),
+                  ),
                 ],
               ),
               content: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'manager').snapshots(),
+                stream: FirebaseFirestore.instance
+                    .collection('users')
+                    .where('role', isEqualTo: 'manager')
+                    .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData) return const SizedBox(height: 100, child: Center(child: CircularProgressIndicator(color: AppTheme.adminColor)));
-                  
+                  if (!snapshot.hasData)
+                    return const SizedBox(
+                      height: 100,
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          color: AppTheme.adminColor,
+                        ),
+                      ),
+                    );
+
                   final managers = snapshot.data!.docs;
                   if (managers.isEmpty) {
-                    return const Text('لا يوجد مدراء مسجلين في النظام. أضف مديراً أولاً.', style: TextStyle(color: AppTheme.textSecondary));
+                    return const Text(
+                      'لا يوجد مدراء مسجلين في النظام. أضف مديراً أولاً.',
+                      style: TextStyle(color: AppTheme.textSecondary),
+                    );
                   }
 
                   // تأكد من أن الـ selectedManagerId لا يزال موجوداً في القائمة إذا لم يكن null
-                  if (selectedManagerId != null && !managers.any((m) => m.id == selectedManagerId)) {
+                  if (selectedManagerId != null &&
+                      !managers.any((m) => m.id == selectedManagerId)) {
                     selectedManagerId = null;
                   }
 
                   return InputDecorator(
                     decoration: const InputDecoration(
                       labelText: 'اختر المدير',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(12)),
+                      ),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
                     ),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
                         value: selectedManagerId,
                         isExpanded: true,
                         items: [
-                          const DropdownMenuItem(value: null, child: Text('بدون مدير (إزالة)')),
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('بدون مدير (إزالة)'),
+                          ),
                           ...managers.map((manager) {
                             final data = manager.data() as Map<String, dynamic>;
                             return DropdownMenuItem(
                               value: manager.id,
                               child: Text(data['name'] ?? 'بدون اسم'),
                             );
-                          })
+                          }),
                         ],
-                        onChanged: (value) => setDialogState(() => selectedManagerId = value),
+                        onChanged: (value) =>
+                            setDialogState(() => selectedManagerId = value),
                       ),
                     ),
                   );
                 },
               ),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('إلغاء'),
+                ),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.adminColor,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   onPressed: () async {
                     WriteBatch batch = FirebaseFirestore.instance.batch();
-                    DocumentReference branchRef = FirebaseFirestore.instance.collection('branches').doc(branchId);
-                    
+                    DocumentReference branchRef = FirebaseFirestore.instance
+                        .collection('branches')
+                        .doc(branchId);
+
                     if (selectedManagerId == null) {
                       batch.update(branchRef, {'branch_manager_id': ''});
                       if (currentManagerId.isNotEmpty) {
-                        DocumentReference oldManagerRef = FirebaseFirestore.instance.collection('users').doc(currentManagerId);
-                        batch.update(oldManagerRef, {'branchId': FieldValue.delete()});
+                        DocumentReference oldManagerRef = FirebaseFirestore
+                            .instance
+                            .collection('users')
+                            .doc(currentManagerId);
+                        batch.update(oldManagerRef, {
+                          'branchId': FieldValue.delete(),
+                        });
                       }
                     } else {
-                      batch.update(branchRef, {'branch_manager_id': selectedManagerId});
-                      DocumentReference newManagerRef = FirebaseFirestore.instance.collection('users').doc(selectedManagerId);
+                      batch.update(branchRef, {
+                        'branch_manager_id': selectedManagerId,
+                      });
+                      DocumentReference newManagerRef = FirebaseFirestore
+                          .instance
+                          .collection('users')
+                          .doc(selectedManagerId);
                       batch.update(newManagerRef, {'branchId': branchId});
                     }
 
@@ -151,7 +296,12 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
 
                     if (mounted) {
                       Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تحديث إدارة الفرع'), backgroundColor: Colors.green));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم تحديث إدارة الفرع'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
                     }
                   },
                   icon: const Icon(Icons.save_rounded, size: 18),
@@ -159,7 +309,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                 ),
               ],
             );
-          }
+          },
         );
       },
     );
@@ -167,6 +317,23 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
 
   // نافذة إضافة فرع
   void _showAddBranchDialog() {
+    _branchNameController.clear();
+    _companyNameController.clear();
+    _branchCodeController.clear();
+    _showBranchDialog();
+  }
+
+  void _showEditBranchDialog(String branchId, Map<String, dynamic> data) {
+    _branchNameController.text = data['name'] ?? '';
+    _companyNameController.text = data['company_name'] ?? '';
+    _branchCodeController.text = data['branch_code'] ?? '';
+    _showBranchDialog(
+      branchId: branchId,
+      managerId: data['branch_manager_id'] ?? '',
+    );
+  }
+
+  void _showBranchDialog({String? branchId, String managerId = ''}) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -175,28 +342,72 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           children: [
             Icon(Icons.store_rounded, color: AppTheme.adminColor),
             SizedBox(width: 8),
-            Text('إضافة فرع جديد', style: TextStyle(color: AppTheme.adminColor, fontSize: 18)),
+            Text(
+              'بيانات الفرع',
+              style: TextStyle(color: AppTheme.adminColor, fontSize: 18),
+            ),
           ],
         ),
-        content: TextField(
-          controller: _branchNameController,
-          decoration: const InputDecoration(
-            hintText: 'اسم الفرع (مثل: فرع سيئون)',
-            border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-            prefixIcon: Icon(Icons.storefront_rounded),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _companyNameController,
+                decoration: const InputDecoration(
+                  labelText: 'اسم الشركة أو العلامة التجارية',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  prefixIcon: Icon(Icons.business_rounded),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _branchNameController,
+                decoration: const InputDecoration(
+                  labelText: 'اسم الفرع',
+                  hintText: 'مثل: فرع سيئون',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  prefixIcon: Icon(Icons.storefront_rounded),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _branchCodeController,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'رمز الفرع الفريد',
+                  hintText: 'مثل: AM',
+                  helperText: 'سيُستخدم في أرقام السندات مثل AM005',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                  ),
+                  prefixIcon: Icon(Icons.tag_rounded),
+                ),
+              ),
+            ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.adminColor,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
-            onPressed: _addBranch,
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text('إضافة الفرع'),
+            onPressed: () =>
+                _saveBranch(branchId: branchId, managerId: managerId),
+            icon: const Icon(Icons.save_rounded, size: 18),
+            label: const Text('حفظ بيانات الفرع'),
           ),
         ],
       ),
@@ -210,14 +421,20 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: const Text('إدارة الفروع', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          title: const Text(
+            'إدارة الفروع',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
           backgroundColor: AppTheme.adminColor,
           elevation: 0,
         ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: _showAddBranchDialog,
           icon: const Icon(Icons.add_rounded, color: Colors.white),
-          label: const Text('فرع جديد', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          label: const Text(
+            'فرع جديد',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
           backgroundColor: AppTheme.adminColor,
         ),
         body: Column(
@@ -233,23 +450,44 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                 ),
               ),
               child: const Text(
-                'يمكنك من هنا إضافة فروع جديدة للشركة وتعيين مدراء لتلك الفروع لتمكينهم من إدارة المبيعات.',
-                style: TextStyle(color: Colors.white, fontSize: 14, height: 1.5),
+                'أضف الشركة واسم الفرع ورمزه الفريد، ثم عيّن مدير الفرع.',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  height: 1.5,
+                ),
               ),
             ),
             Expanded(
               child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance.collection('branches').snapshots(),
+                stream: FirebaseFirestore.instance
+                    .collection('branches')
+                    .snapshots(),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: AppTheme.adminColor));
+                  if (snapshot.connectionState == ConnectionState.waiting)
+                    return const Center(
+                      child: CircularProgressIndicator(
+                        color: AppTheme.adminColor,
+                      ),
+                    );
                   if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.storefront_outlined, size: 64, color: AppTheme.textHint.withValues(alpha: 0.5)),
+                          Icon(
+                            Icons.storefront_outlined,
+                            size: 64,
+                            color: AppTheme.textHint.withValues(alpha: 0.5),
+                          ),
                           const SizedBox(height: 16),
-                          const Text('لا توجد فروع مسجلة حتى الآن', style: TextStyle(color: AppTheme.textSecondary, fontSize: 16)),
+                          const Text(
+                            'لا توجد فروع مسجلة حتى الآن',
+                            style: TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 16,
+                            ),
+                          ),
                         ],
                       ),
                     );
@@ -273,7 +511,8 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                           borderRadius: BorderRadius.circular(16),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(16),
-                            onTap: () => _showAssignManagerDialog(doc.id, managerId),
+                            onTap: () =>
+                                _showAssignManagerDialog(doc.id, managerId),
                             child: Padding(
                               padding: const EdgeInsets.all(16),
                               child: Row(
@@ -282,27 +521,91 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                     width: 48,
                                     height: 48,
                                     decoration: BoxDecoration(
-                                      color: AppTheme.adminColor.withValues(alpha: 0.1),
+                                      color: AppTheme.adminColor.withValues(
+                                        alpha: 0.1,
+                                      ),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
-                                    child: const Icon(Icons.store_rounded, color: AppTheme.adminColor, size: 24),
+                                    child: const Icon(
+                                      Icons.store_rounded,
+                                      color: AppTheme.adminColor,
+                                      size: 24,
+                                    ),
                                   ),
                                   const SizedBox(width: 16),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Text(data['name'] ?? 'فرع غير مسمى', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary)),
+                                        Text(
+                                          data['name'] ?? 'فرع غير مسمى',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            color: AppTheme.textPrimary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '${data['company_name'] ?? 'بدون شركة'} • الرمز: ${data['branch_code'] ?? 'غير محدد'}',
+                                          style: const TextStyle(
+                                            color: AppTheme.textSecondary,
+                                            fontSize: 12,
+                                          ),
+                                        ),
                                         const SizedBox(height: 6),
                                         managerId.isEmpty
-                                            ? const Text('لم يتم تعيين مدير للفرع', style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold))
+                                            ? const Text(
+                                                'لم يتم تعيين مدير للفرع',
+                                                style: TextStyle(
+                                                  color: Colors.red,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              )
                                             : FutureBuilder<DocumentSnapshot>(
-                                                future: FirebaseFirestore.instance.collection('users').doc(managerId).get(),
+                                                future: FirebaseFirestore
+                                                    .instance
+                                                    .collection('users')
+                                                    .doc(managerId)
+                                                    .get(),
                                                 builder: (context, userSnapshot) {
-                                                  if (!userSnapshot.hasData) return const Text('جاري جلب المدير...', style: TextStyle(fontSize: 12, color: AppTheme.textHint));
-                                                  if (!userSnapshot.data!.exists) return const Text('المدير محذوف من النظام', style: TextStyle(color: Colors.red, fontSize: 12));
-                                                  final managerName = (userSnapshot.data!.data() as Map<String, dynamic>?)?['name'] ?? 'مجهول';
-                                                  return Text('المدير: $managerName', style: const TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.bold));
+                                                  if (!userSnapshot.hasData)
+                                                    return const Text(
+                                                      'جاري جلب المدير...',
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        color:
+                                                            AppTheme.textHint,
+                                                      ),
+                                                    );
+                                                  if (!userSnapshot
+                                                      .data!
+                                                      .exists)
+                                                    return const Text(
+                                                      'المدير محذوف من النظام',
+                                                      style: TextStyle(
+                                                        color: Colors.red,
+                                                        fontSize: 12,
+                                                      ),
+                                                    );
+                                                  final managerName =
+                                                      (userSnapshot.data!.data()
+                                                          as Map<
+                                                            String,
+                                                            dynamic
+                                                          >?)?['name'] ??
+                                                      'مجهول';
+                                                  return Text(
+                                                    'المدير: $managerName',
+                                                    style: const TextStyle(
+                                                      color: Colors.green,
+                                                      fontSize: 13,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  );
                                                 },
                                               ),
                                       ],
@@ -312,12 +615,31 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       IconButton(
-                                        icon: const Icon(Icons.manage_accounts_rounded, color: AppTheme.adminColor),
-                                        tooltip: 'تعيين مدير',
-                                        onPressed: () => _showAssignManagerDialog(doc.id, managerId),
+                                        icon: const Icon(
+                                          Icons.edit_rounded,
+                                          color: Colors.orange,
+                                        ),
+                                        tooltip: 'تعديل بيانات الفرع',
+                                        onPressed: () =>
+                                            _showEditBranchDialog(doc.id, data),
                                       ),
                                       IconButton(
-                                        icon: Icon(Icons.delete_outline_rounded, color: Colors.red.shade400),
+                                        icon: const Icon(
+                                          Icons.manage_accounts_rounded,
+                                          color: AppTheme.adminColor,
+                                        ),
+                                        tooltip: 'تعيين مدير',
+                                        onPressed: () =>
+                                            _showAssignManagerDialog(
+                                              doc.id,
+                                              managerId,
+                                            ),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.delete_outline_rounded,
+                                          color: Colors.red.shade400,
+                                        ),
                                         onPressed: () => _deleteBranch(doc.id),
                                       ),
                                     ],

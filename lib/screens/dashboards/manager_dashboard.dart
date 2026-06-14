@@ -5,6 +5,7 @@ import 'package:store_collection_app/screens/transactions/branch_transactions_sc
 import 'package:store_collection_app/screens/transactions/manager_approvals_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
+import 'package:store_collection_app/widgets/notification_bell.dart';
 
 class ManagerDashboard extends StatelessWidget {
   final String branchId;
@@ -44,7 +45,8 @@ class ManagerDashboard extends StatelessWidget {
                     const SizedBox(height: 14),
                     ActionCard(
                       title: 'طلبات الاعتماد والتعديل',
-                      subtitle: 'مراجعة السندات الجديدة والموافقة على التعديلات',
+                      subtitle:
+                          'مراجعة السندات الجديدة والموافقة على التعديلات',
                       icon: Icons.check_circle_outline_rounded,
                       color: AppTheme.managerColor,
                       onTap: () => Navigator.push(
@@ -105,6 +107,7 @@ class ManagerDashboard extends StatelessWidget {
       backgroundColor: AppTheme.managerColor,
       automaticallyImplyLeading: false,
       actions: [
+        const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',
@@ -150,13 +153,13 @@ class ManagerDashboard extends StatelessWidget {
         if (snapshot.hasData) {
           final docs = snapshot.data!.docs;
           total = docs.length;
-          pending = docs
-              .where((d) => d['status'] == 'pending')
-              .length;
+          pending = docs.where((d) => d['status'] == 'pending').length;
           editReqs = docs
-              .where((d) =>
-                  d['status'] == 'pendingApprovalOfEdit' ||
-                  d['status'] == 'editRequestedByCollector')
+              .where(
+                (d) =>
+                    d['status'] == 'pendingApprovalOfEdit' ||
+                    d['status'] == 'editRequestedByCollector',
+              )
               .length;
         }
 

@@ -14,6 +14,8 @@ class TransactionModel {
   final TransactionStatus status;
   final DateTime timestamp;
   final String currency;
+  final bool amountMatches;
+  final double? cashierAmount;
   final Map<String, dynamic>? pendingEditData;
   final List<Map<String, dynamic>>? history; // تمت إضافة هذا الحقل
 
@@ -30,6 +32,8 @@ class TransactionModel {
     required this.status,
     required this.timestamp,
     required this.currency,
+    required this.amountMatches,
+    this.cashierAmount,
     this.pendingEditData, // تمت الإضافة
     this.history,
   });
@@ -45,11 +49,17 @@ class TransactionModel {
       dateTo: (json['dateTo'] as Timestamp).toDate(),
       transactionDate: (json['transaction_date'] as Timestamp).toDate(),
       notes: json['notes'] ?? '',
-      status: TransactionStatus.values.firstWhere((e) => e.name == json['status']),
+      status: TransactionStatus.values.firstWhere(
+        (e) => e.name == json['status'],
+      ),
       timestamp: (json['timestamp'] as Timestamp).toDate(),
       currency: json['currency'] ?? 'YER',
+      amountMatches: json['amount_matches'] ?? true,
+      cashierAmount: (json['cashier_amount'] as num?)?.toDouble(),
       pendingEditData: json['pending_edit_data'], // قراءة التعديلات المعلقة
-      
+      history: (json['history'] as List?)
+          ?.map((item) => Map<String, dynamic>.from(item as Map))
+          .toList(),
     );
   }
 
@@ -67,14 +77,16 @@ class TransactionModel {
       'status': status.name,
       'timestamp': Timestamp.fromDate(timestamp),
       'currency': currency,
+      'amount_matches': amountMatches,
+      'cashier_amount': cashierAmount,
       'history': history,
     };
-    
+
     // إضافة الحقل فقط إذا كان يحتوي على بيانات
     if (pendingEditData != null) {
       data['pending_edit_data'] = pendingEditData;
     }
-    
+
     return data;
   }
 }

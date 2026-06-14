@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/screens/admin/branch_management_screen.dart';
 import 'package:store_collection_app/screens/admin/user_management_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/widgets/notification_bell.dart';
 
 class AdminDashboard extends StatelessWidget {
   const AdminDashboard({super.key});
@@ -29,7 +30,12 @@ class AdminDashboard extends StatelessWidget {
                       subtitle: 'إضافة، تعديل، أو حذف الفروع التابعة للشركة',
                       icon: Icons.store_mall_directory_rounded,
                       color: const Color(0xFF1976D2),
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BranchManagementScreen())),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const BranchManagementScreen(),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 16),
                     _buildAdminCard(
@@ -38,7 +44,12 @@ class AdminDashboard extends StatelessWidget {
                       subtitle: 'إنشاء حسابات وتعيين أدوار الموظفين',
                       icon: Icons.manage_accounts_rounded,
                       color: const Color(0xFF388E3C),
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const UserManagementScreen())),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const UserManagementScreen(),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -59,6 +70,7 @@ class AdminDashboard extends StatelessWidget {
       backgroundColor: AppTheme.adminColor,
       automaticallyImplyLeading: false,
       actions: [
+        const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',
@@ -98,9 +110,15 @@ class AdminDashboard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.25),
+                      ),
                     ),
-                    child: const Icon(Icons.admin_panel_settings_rounded, color: Colors.white, size: 26),
+                    child: const Icon(
+                      Icons.admin_panel_settings_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -119,7 +137,10 @@ class AdminDashboard extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(20),
@@ -145,7 +166,14 @@ class AdminDashboard extends StatelessWidget {
     );
   }
 
-  Widget _buildAdminCard(BuildContext context, {required String title, required String subtitle, required IconData icon, required Color color, required VoidCallback onTap}) {
+  Widget _buildAdminCard(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
     return Container(
       decoration: AppTheme.cardShadow(),
       child: Material(
@@ -180,7 +208,7 @@ class AdminDashboard extends StatelessWidget {
                   child: Icon(icon, color: Colors.white, size: 28),
                 ),
                 const SizedBox(width: 18),
-                
+
                 // Content
                 Expanded(
                   child: Column(
@@ -206,9 +234,13 @@ class AdminDashboard extends StatelessWidget {
                     ],
                   ),
                 ),
-                
+
                 const SizedBox(width: 8),
-                const Icon(Icons.arrow_forward_ios_rounded, color: AppTheme.textHint, size: 16),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: AppTheme.textHint,
+                  size: 16,
+                ),
               ],
             ),
           ),

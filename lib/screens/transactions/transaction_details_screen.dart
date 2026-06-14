@@ -16,32 +16,46 @@ class TransactionDetailsScreen extends StatelessWidget {
 
   String _getStatusText(String status) {
     switch (status) {
-      case 'pending': return 'قيد الانتظار (سند جديد)';
-      case 'approvedByCollector': return 'معتمد من المحصل';
-      case 'approvedByManager': return 'تم الاعتماد من المدير';
-      case 'approvedByAccountant': return 'تم الاعتماد النهائي (المحاسب)';
-      case 'editRequestedByCollector': return 'معلق - مطلوب تعديله من المحصل';
-      case 'pendingApprovalOfEdit': return 'تعديل بانتظار موافقة المدير';
-      case 'rejectedByManager': return 'مرفوض';
-      default: return 'غير معروف';
+      case 'pending':
+        return 'قيد الانتظار (سند جديد)';
+      case 'approvedByCollector':
+        return 'معتمد من المحصل';
+      case 'approvedByManager':
+        return 'تم الاعتماد من المدير';
+      case 'approvedByAccountant':
+        return 'تم الاعتماد النهائي (المحاسب)';
+      case 'editRequestedByCollector':
+        return 'معلق - مطلوب تعديله من المحصل';
+      case 'pendingApprovalOfEdit':
+        return 'تعديل بانتظار موافقة المدير';
+      case 'rejectedByManager':
+        return 'مرفوض';
+      default:
+        return 'غير معروف';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final double amount = (transactionData['amount'] as num?)?.toDouble() ?? 0.0;
+    final double amount =
+        (transactionData['amount'] as num?)?.toDouble() ?? 0.0;
     final String currency = transactionData['currency'] ?? 'YER';
     final String trnNumber = transactionData['transaction_number'] ?? '#';
     final String status = transactionData['status'] ?? 'pending';
     final String notes = transactionData['notes'] ?? 'لا توجد ملاحظات';
     final String managerNotes = transactionData['manager_notes'] ?? '';
-    
+    final bool amountMatches = transactionData['amount_matches'] ?? true;
+    final double? cashierAmount = (transactionData['cashier_amount'] as num?)
+        ?.toDouble();
+
     final dateFrom = (transactionData['dateFrom'] as Timestamp?)?.toDate();
     final dateTo = (transactionData['dateTo'] as Timestamp?)?.toDate();
     final creationDate = (transactionData['timestamp'] as Timestamp?)?.toDate();
 
     List<dynamic> history = transactionData['history'] ?? [];
-    List<Map<String, dynamic>> sortedHistory = List<Map<String, dynamic>>.from(history);
+    List<Map<String, dynamic>> sortedHistory = List<Map<String, dynamic>>.from(
+      history,
+    );
     sortedHistory.sort((a, b) {
       final tA = (a['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
       final tB = (b['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
@@ -55,7 +69,10 @@ class TransactionDetailsScreen extends StatelessWidget {
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: const Text('تفاصيل السند', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          title: const Text(
+            'تفاصيل السند',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
           backgroundColor: Colors.blueGrey.shade800,
           elevation: 0,
           actions: [
@@ -68,7 +85,7 @@ class TransactionDetailsScreen extends StatelessWidget {
                   branchName: 'الفرع المختار',
                 );
               },
-            )
+            ),
           ],
         ),
         body: Column(
@@ -85,22 +102,36 @@ class TransactionDetailsScreen extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  Text('سند #$trnNumber', style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                  Text(
+                    'سند #$trnNumber',
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     '${NumberFormat('#,##0.##', 'en_US').format(amount)} $currency',
-                    style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: Colors.white),
+                    style: const TextStyle(
+                      fontSize: 34,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: statusColor,
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
                       _getStatusText(status),
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ],
@@ -114,7 +145,14 @@ class TransactionDetailsScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // بطاقة التواريخ
-                    const Text('التواريخ والفترة', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                    const Text(
+                      'التواريخ والفترة',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     Container(
                       decoration: AppTheme.cardShadow(),
@@ -126,26 +164,64 @@ class TransactionDetailsScreen extends StatelessWidget {
                             ListTile(
                               leading: Container(
                                 padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(color: Colors.teal.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-                                child: const Icon(Icons.date_range_rounded, color: Colors.teal, size: 20),
+                                decoration: BoxDecoration(
+                                  color: Colors.teal.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.date_range_rounded,
+                                  color: Colors.teal,
+                                  size: 20,
+                                ),
                               ),
-                              title: const Text('فترة التحصيل (من - إلى)', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                              title: const Text(
+                                'فترة التحصيل (من - إلى)',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
                               subtitle: Text(
                                 '${dateFrom != null ? DateFormat('yyyy/MM/dd').format(dateFrom) : ''}  -  ${dateTo != null ? DateFormat('yyyy/MM/dd').format(dateTo) : ''}',
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: AppTheme.textPrimary,
+                                ),
                               ),
                             ),
                             const Divider(height: 1, indent: 60),
                             ListTile(
                               leading: Container(
                                 padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(color: Colors.grey.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-                                child: const Icon(Icons.access_time_rounded, color: Colors.grey, size: 20),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.access_time_rounded,
+                                  color: Colors.grey,
+                                  size: 20,
+                                ),
                               ),
-                              title: const Text('تاريخ ووقت الإدخال في النظام', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                              title: const Text(
+                                'تاريخ ووقت الإدخال في النظام',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
                               subtitle: Text(
-                                creationDate != null ? DateFormat('yyyy/MM/dd - hh:mm a').format(creationDate) : '',
-                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppTheme.textPrimary),
+                                creationDate != null
+                                    ? DateFormat(
+                                        'yyyy/MM/dd - hh:mm a',
+                                      ).format(creationDate)
+                                    : '',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  color: AppTheme.textPrimary,
+                                ),
                               ),
                             ),
                           ],
@@ -154,8 +230,53 @@ class TransactionDetailsScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 24),
 
+                    const Text(
+                      'مطابقة مبلغ الكاشير',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: AppTheme.cardShadow(),
+                      child: ListTile(
+                        tileColor: AppTheme.cardColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        leading: Icon(
+                          amountMatches
+                              ? Icons.check_circle_rounded
+                              : Icons.warning_rounded,
+                          color: amountMatches ? Colors.green : Colors.orange,
+                        ),
+                        title: Text(
+                          amountMatches ? 'المبلغ مطابق' : 'المبلغ غير مطابق',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: amountMatches ? Colors.green : Colors.orange,
+                          ),
+                        ),
+                        subtitle: !amountMatches && cashierAmount != null
+                            ? Text(
+                                'المبلغ الموجود على الكاشير: ${NumberFormat('#,##0.##', 'en_US').format(cashierAmount)} $currency',
+                              )
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
                     // بطاقة الملاحظات
-                    const Text('الملاحظات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                    const Text(
+                      'الملاحظات',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     Container(
                       decoration: AppTheme.cardShadow(),
@@ -169,26 +290,64 @@ class TransactionDetailsScreen extends StatelessWidget {
                             children: [
                               Row(
                                 children: [
-                                  const Icon(Icons.notes_rounded, color: AppTheme.textHint, size: 20),
+                                  const Icon(
+                                    Icons.notes_rounded,
+                                    color: AppTheme.textHint,
+                                    size: 20,
+                                  ),
                                   const SizedBox(width: 8),
-                                  const Text('ملاحظات المحصل:', style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold)),
+                                  const Text(
+                                    'ملاحظات المحصل:',
+                                    style: TextStyle(
+                                      color: AppTheme.textSecondary,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              Text(notes, style: const TextStyle(fontSize: 15, color: AppTheme.textPrimary, height: 1.4)),
-                              
+                              Text(
+                                notes,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  color: AppTheme.textPrimary,
+                                  height: 1.4,
+                                ),
+                              ),
+
                               if (managerNotes.isNotEmpty) ...[
-                                const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider(height: 1)),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  child: Divider(height: 1),
+                                ),
                                 Row(
                                   children: [
-                                    Icon(Icons.admin_panel_settings_rounded, color: Colors.red.shade400, size: 20),
+                                    Icon(
+                                      Icons.admin_panel_settings_rounded,
+                                      color: Colors.red.shade400,
+                                      size: 20,
+                                    ),
                                     const SizedBox(width: 8),
-                                    const Text('رد / ملاحظات الإدارة:', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                                    const Text(
+                                      'رد / ملاحظات الإدارة:',
+                                      style: TextStyle(
+                                        color: Colors.red,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                Text(managerNotes, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppTheme.textPrimary, height: 1.4)),
-                              ]
+                                Text(
+                                  managerNotes,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.textPrimary,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -197,7 +356,14 @@ class TransactionDetailsScreen extends StatelessWidget {
                     const SizedBox(height: 32),
 
                     // القسم الجديد: سجل حركات السند (Audit Trail)
-                    const Text('سجل الحركات (Audit Trail)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                    const Text(
+                      'مراحل السند وسجل الحركات',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     if (sortedHistory.isEmpty)
                       Container(
@@ -205,9 +371,16 @@ class TransactionDetailsScreen extends StatelessWidget {
                         alignment: Alignment.center,
                         child: Column(
                           children: [
-                            Icon(Icons.history_rounded, size: 48, color: AppTheme.textHint.withValues(alpha: 0.5)),
+                            Icon(
+                              Icons.history_rounded,
+                              size: 48,
+                              color: AppTheme.textHint.withValues(alpha: 0.5),
+                            ),
                             const SizedBox(height: 8),
-                            const Text('لا يوجد سجل حركات لهذا السند', style: TextStyle(color: AppTheme.textSecondary)),
+                            const Text(
+                              'لا يوجد سجل حركات لهذا السند',
+                              style: TextStyle(color: AppTheme.textSecondary),
+                            ),
                           ],
                         ),
                       )
@@ -229,19 +402,44 @@ class TransactionDetailsScreen extends StatelessWidget {
     final message = item['message'] as String? ?? '';
     final timestamp = (item['timestamp'] as Timestamp?)?.toDate();
     final changes = item['changes'] as Map<String, dynamic>?;
+    final actorName = item['actor_name'] as String?;
+    final actorRole = item['actor_role'] as String?;
 
     IconData icon;
     Color color;
-    
-    switch(action) {
-      case 'created': icon = Icons.add_circle_rounded; color = Colors.blue; break;
-      case 'status_update': icon = Icons.sync_rounded; color = Colors.orange; break;
-      case 'edit_requested': icon = Icons.edit_note_rounded; color = Colors.purple; break;
-      case 'edit_approved': icon = Icons.check_circle_rounded; color = Colors.green; break;
-      case 'edit_requested_by_accountant': icon = Icons.assignment_return_rounded; color = Colors.redAccent; break;
-      case 'approved_by_accountant': icon = Icons.verified_user_rounded; color = Colors.green.shade800; break;
-      case 'edit_request_rejected': icon = Icons.cancel_rounded; color = Colors.red; break;
-      default: icon = Icons.info_outline_rounded; color = Colors.grey;
+
+    switch (action) {
+      case 'created':
+        icon = Icons.add_circle_rounded;
+        color = Colors.blue;
+        break;
+      case 'status_update':
+        icon = Icons.sync_rounded;
+        color = Colors.orange;
+        break;
+      case 'edit_requested':
+        icon = Icons.edit_note_rounded;
+        color = Colors.purple;
+        break;
+      case 'edit_approved':
+        icon = Icons.check_circle_rounded;
+        color = Colors.green;
+        break;
+      case 'edit_requested_by_accountant':
+        icon = Icons.assignment_return_rounded;
+        color = Colors.redAccent;
+        break;
+      case 'approved_by_accountant':
+        icon = Icons.verified_user_rounded;
+        color = Colors.green.shade800;
+        break;
+      case 'edit_request_rejected':
+        icon = Icons.cancel_rounded;
+        color = Colors.red;
+        break;
+      default:
+        icon = Icons.info_outline_rounded;
+        color = Colors.grey;
     }
 
     return Container(
@@ -251,7 +449,11 @@ class TransactionDetailsScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: color.withValues(alpha: 0.3)),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 6, offset: const Offset(0, 2)),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       child: Padding(
@@ -272,13 +474,36 @@ class TransactionDetailsScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(message, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary)),
+                  Text(
+                    message,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  if (actorName != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'بواسطة: $actorName (${_getRoleText(actorRole)})',
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 6),
                   if (timestamp != null)
-                    Text(DateFormat('yyyy/MM/dd - hh:mm a').format(timestamp), style: const TextStyle(color: AppTheme.textHint, fontSize: 12)),
-                  
-                  if (changes != null)
-                    _buildChangesDetails(changes),
+                    Text(
+                      DateFormat('yyyy/MM/dd - hh:mm a').format(timestamp),
+                      style: const TextStyle(
+                        color: AppTheme.textHint,
+                        fontSize: 12,
+                      ),
+                    ),
+
+                  if (changes != null) _buildChangesDetails(changes),
                 ],
               ),
             ),
@@ -286,6 +511,21 @@ class TransactionDetailsScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _getRoleText(String? role) {
+    switch (role) {
+      case 'admin':
+        return 'مسؤول النظام';
+      case 'collector':
+        return 'المحصل';
+      case 'manager':
+        return 'مدير الفرع';
+      case 'accountant':
+        return 'المحاسب';
+      default:
+        return 'دور غير معروف';
+    }
   }
 
   // بناء مربع تفاصيل التعديل
@@ -297,7 +537,7 @@ class TransactionDetailsScreen extends StatelessWidget {
 
     final oldDateFrom = (changes['oldDateFrom'] as Timestamp?)?.toDate();
     final newDateFrom = (changes['newDateFrom'] as Timestamp?)?.toDate();
-    
+
     final oldDateTo = (changes['oldDateTo'] as Timestamp?)?.toDate();
     final newDateTo = (changes['newDateTo'] as Timestamp?)?.toDate();
 
@@ -307,24 +547,51 @@ class TransactionDetailsScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.purple.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.purple.withValues(alpha: 0.15))
+        border: Border.all(color: Colors.purple.withValues(alpha: 0.15)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('تفاصيل التعديل المقترح:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple, fontSize: 12)),
+          const Text(
+            'تفاصيل التعديل المقترح:',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.deepPurple,
+              fontSize: 12,
+            ),
+          ),
           const SizedBox(height: 6),
           const Divider(height: 1, color: Colors.black12),
           const SizedBox(height: 6),
-          
+
           if (oldAmount != newAmount || oldCur != newCur)
-            _buildChangeRow('المبلغ:', '${NumberFormat('#,##0.##', 'en_US').format(oldAmount)} $oldCur', '${NumberFormat('#,##0.##', 'en_US').format(newAmount)} $newCur'),
-          
+            _buildChangeRow(
+              'المبلغ:',
+              '${NumberFormat('#,##0.##', 'en_US').format(oldAmount)} $oldCur',
+              '${NumberFormat('#,##0.##', 'en_US').format(newAmount)} $newCur',
+            ),
+
           if (oldDateFrom != newDateFrom)
-            _buildChangeRow('من تاريخ:', oldDateFrom != null ? DateFormat('yyyy/MM/dd').format(oldDateFrom) : '', newDateFrom != null ? DateFormat('yyyy/MM/dd').format(newDateFrom) : ''),
-            
+            _buildChangeRow(
+              'من تاريخ:',
+              oldDateFrom != null
+                  ? DateFormat('yyyy/MM/dd').format(oldDateFrom)
+                  : '',
+              newDateFrom != null
+                  ? DateFormat('yyyy/MM/dd').format(newDateFrom)
+                  : '',
+            ),
+
           if (oldDateTo != newDateTo)
-            _buildChangeRow('إلى تاريخ:', oldDateTo != null ? DateFormat('yyyy/MM/dd').format(oldDateTo) : '', newDateTo != null ? DateFormat('yyyy/MM/dd').format(newDateTo) : ''),
+            _buildChangeRow(
+              'إلى تاريخ:',
+              oldDateTo != null
+                  ? DateFormat('yyyy/MM/dd').format(oldDateTo)
+                  : '',
+              newDateTo != null
+                  ? DateFormat('yyyy/MM/dd').format(newDateTo)
+                  : '',
+            ),
         ],
       ),
     );
@@ -335,12 +602,41 @@ class TransactionDetailsScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppTheme.textSecondary)),
+          Text(
+            label,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+            ),
+          ),
           const SizedBox(width: 8),
-          Expanded(child: Text(oldVal, style: const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.red, fontSize: 12))),
-          const Icon(Icons.arrow_back_rounded, size: 14, color: AppTheme.textHint),
+          Expanded(
+            child: Text(
+              oldVal,
+              style: const TextStyle(
+                decoration: TextDecoration.lineThrough,
+                color: Colors.red,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          const Icon(
+            Icons.arrow_back_rounded,
+            size: 14,
+            color: AppTheme.textHint,
+          ),
           const SizedBox(width: 8),
-          Expanded(child: Text(newVal, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12))),
+          Expanded(
+            child: Text(
+              newVal,
+              style: const TextStyle(
+                color: Colors.green,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+          ),
         ],
       ),
     );

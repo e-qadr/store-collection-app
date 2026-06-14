@@ -6,6 +6,7 @@ import 'package:store_collection_app/screens/transactions/branch_transactions_sc
 import 'package:store_collection_app/screens/transactions/collector_edit_requests_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
+import 'package:store_collection_app/widgets/notification_bell.dart';
 
 class CollectorDashboard extends StatelessWidget {
   // تمرير بيانات الفرع الخاص بالمحصل
@@ -77,17 +78,19 @@ class CollectorDashboard extends StatelessWidget {
                         // سننتقل إلى شاشة التعديل
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                              content: Text(
-                                  'سننتقل إلى شاشة السندات المعادة للتعديل...')),
+                            content: Text(
+                              'سننتقل إلى شاشة السندات المعادة للتعديل...',
+                            ),
+                          ),
                         );
 
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) =>
-                                CollectorEditRequestsScreen(
-                                    branchId: branchId,
-                                    branchName: branchName),
+                            builder: (context) => CollectorEditRequestsScreen(
+                              branchId: branchId,
+                              branchName: branchName,
+                            ),
                           ),
                         );
                       },
@@ -124,8 +127,7 @@ class CollectorDashboard extends StatelessWidget {
                     RecentTransactionsList(
                       branchId: branchId,
                       color: AppTheme.collectorColor,
-                      collectorId:
-                          collectorId.isNotEmpty ? collectorId : null,
+                      collectorId: collectorId.isNotEmpty ? collectorId : null,
                     ),
                   ],
                 ),
@@ -146,6 +148,7 @@ class CollectorDashboard extends StatelessWidget {
       backgroundColor: AppTheme.collectorColor,
       automaticallyImplyLeading: false,
       actions: [
+        const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',
@@ -182,14 +185,14 @@ class CollectorDashboard extends StatelessWidget {
   Widget _buildCollectorStats(String collectorId) {
     final query = collectorId.isNotEmpty
         ? FirebaseFirestore.instance
-            .collection('transactions')
-            .where('branchId', isEqualTo: branchId)
-            .where('collectorId', isEqualTo: collectorId)
-            .snapshots()
+              .collection('transactions')
+              .where('branchId', isEqualTo: branchId)
+              .where('collectorId', isEqualTo: collectorId)
+              .snapshots()
         : FirebaseFirestore.instance
-            .collection('transactions')
-            .where('branchId', isEqualTo: branchId)
-            .snapshots();
+              .collection('transactions')
+              .where('branchId', isEqualTo: branchId)
+              .snapshots();
 
     return StreamBuilder<QuerySnapshot>(
       stream: query,
@@ -200,10 +203,12 @@ class CollectorDashboard extends StatelessWidget {
           final docs = snapshot.data!.docs;
           total = docs.length;
           inProgress = docs
-              .where((d) =>
-                  d['status'] == 'pending' ||
-                  d['status'] == 'approvedByCollector' ||
-                  d['status'] == 'approvedByManager')
+              .where(
+                (d) =>
+                    d['status'] == 'pending' ||
+                    d['status'] == 'approvedByCollector' ||
+                    d['status'] == 'approvedByManager',
+              )
               .length;
           completed = docs
               .where((d) => d['status'] == 'approvedByAccountant')
