@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:store_collection_app/services/app_navigation_service.dart';
 
 enum DeviceNotificationPermissionState {
   enabled,
@@ -15,6 +16,7 @@ enum DeviceNotificationPermissionState {
 
 class DeviceNotificationService {
   static StreamSubscription<String>? _tokenSubscription;
+  static StreamSubscription<RemoteMessage>? _messageOpenedSubscription;
   static bool _initialized = false;
 
   bool get supportsAutomaticRequest {
@@ -47,6 +49,11 @@ class DeviceNotificationService {
       _tokenSubscription ??= FirebaseMessaging.instance.onTokenRefresh.listen(
         _saveToken,
       );
+      _messageOpenedSubscription ??= FirebaseMessaging.onMessageOpenedApp
+          .listen((_) => AppNavigationService.openNotifications());
+      final initialMessage = await FirebaseMessaging.instance
+          .getInitialMessage();
+      if (initialMessage != null) AppNavigationService.openNotifications();
       if (supportsAutomaticRequest) {
         await requestPermission();
       } else {
@@ -60,7 +67,9 @@ class DeviceNotificationService {
   Future<void> resetForSignedOutUser() async {
     _initialized = false;
     await _tokenSubscription?.cancel();
+    await _messageOpenedSubscription?.cancel();
     _tokenSubscription = null;
+    _messageOpenedSubscription = null;
   }
 
   Future<DeviceNotificationPermissionState> getPermissionState() async {

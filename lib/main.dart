@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:store_collection_app/screens/auth/auth_gate.dart';
+import 'package:store_collection_app/services/app_navigation_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/device_notification_initializer.dart';
 
@@ -18,6 +19,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'نظام تحصيل المتاجر',
       debugShowCheckedModeBanner: false,
+      navigatorKey: AppNavigationService.navigatorKey,
       theme: AppTheme.lightTheme,
       home: const DeviceNotificationInitializer(child: AuthGate()),
     );
