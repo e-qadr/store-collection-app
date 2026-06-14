@@ -40,6 +40,8 @@ dependencies:
   intl: ^0.20.2
   pdf: ^3.10.8
   printing: ^5.12.0
+  firebase_messaging: ^16.3.0
+  app_settings: ^7.0.0
 
 dev_dependencies:
   flutter_test:
