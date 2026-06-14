@@ -3,43 +3,66 @@ require("dotenv").config();
 const express = require("express");
 const admin = require("firebase-admin");
 
-const requiredEnvironmentVariables = [
-  "FIREBASE_PROJECT_ID",
-  "FIREBASE_CLIENT_EMAIL",
-  "FIREBASE_PRIVATE_KEY",
-];
-
-for (const variable of requiredEnvironmentVariables) {
-  if (!process.env[variable]) {
-    throw new Error(`Missing required environment variable: ${variable}`);
-  }
-}
-
-admin.initializeApp({
-  credential: admin.credential.cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-  }),
-});
-
-const firestore = admin.firestore();
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS || 5000);
 
 let workerRunning = false;
+let firestore;
+let firebaseConfigurationError;
+
+function loadFirebaseCredential() {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    const json = Buffer.from(
+        process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
+        "base64",
+    ).toString("utf8");
+    return JSON.parse(json);
+  }
+
+  const requiredEnvironmentVariables = [
+    "FIREBASE_PROJECT_ID",
+    "FIREBASE_CLIENT_EMAIL",
+    "FIREBASE_PRIVATE_KEY",
+  ];
+  const missing = requiredEnvironmentVariables.filter(
+      (variable) => !process.env[variable],
+  );
+  if (missing.length > 0) {
+    throw new Error(`Missing environment variables: ${missing.join(", ")}`);
+  }
+
+  return {
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY
+        .replace(/^["']|["']$/g, "")
+        .replace(/\\n/g, "\n"),
+  };
+}
+
+try {
+  admin.initializeApp({
+    credential: admin.credential.cert(loadFirebaseCredential()),
+  });
+  firestore = admin.firestore();
+} catch (error) {
+  firebaseConfigurationError = String(error?.message ?? error);
+  console.error("Firebase configuration failed", error);
+}
 
 app.get("/", (_request, response) => {
   response.json({
     service: "store-collection-push-server",
-    status: "running",
+    status: firebaseConfigurationError ? "configuration_error" : "running",
   });
 });
 
 app.get("/health", (_request, response) => {
-  response.json({
-    status: "ok",
+  response.status(firebaseConfigurationError ? 500 : 200).json({
+    status: firebaseConfigurationError ? "configuration_error" : "ok",
+    firebaseReady: !firebaseConfigurationError,
+    configurationError: firebaseConfigurationError ?? null,
     workerRunning,
     timestamp: new Date().toISOString(),
   });
@@ -132,7 +155,7 @@ async function processNotification(reference) {
 }
 
 async function processPendingNotifications() {
-  if (workerRunning) return;
+  if (workerRunning || !firestore) return;
   workerRunning = true;
 
   try {

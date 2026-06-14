@@ -20,6 +20,26 @@ Web App وخطط Business أو أعلى. يمكن أيضًا تشغيلها عل
    - `private_key` ← `FIREBASE_PRIVATE_KEY`
 5. لا ترفع ملف JSON إلى Git أو ملفات الموقع العامة.
 
+### الطريقة الموصى بها: متغير Base64 واحد
+
+لتجنب مشاكل الأسطر الجديدة في المفتاح الخاص، حوّل ملف JSON الكامل إلى Base64
+في PowerShell:
+
+```powershell
+[Convert]::ToBase64String(
+  [IO.File]::ReadAllBytes("C:\path\to\service-account.json")
+) | Set-Clipboard
+```
+
+ثم أضف في Hostinger متغيرًا واحدًا باسم:
+
+```text
+FIREBASE_SERVICE_ACCOUNT_BASE64
+```
+
+والصق القيمة من الحافظة. عند استخدام هذه الطريقة احذف:
+`FIREBASE_PROJECT_ID` و`FIREBASE_CLIENT_EMAIL` و`FIREBASE_PRIVATE_KEY`.
+
 ## إعداد Hostinger Node.js Web App
 
 1. ارفع محتويات مجلد `hostinger-push-server` أو اربطه بمستودع Git خاص.
@@ -30,6 +50,7 @@ npm start
 ```
 
 3. أضف متغيرات البيئة الموجودة في `.env.example`.
+   لا تضف متغير `PORT` في Hostinger، لأنه يعيّنه تلقائيًا.
 4. انشر التطبيق، ثم افتح:
 
 ```text
@@ -37,6 +58,7 @@ https://YOUR-DOMAIN/health
 ```
 
 يجب أن تظهر نتيجة تحتوي على `"status":"ok"`.
+إذا ظهرت `"configuration_error"` فستحتوي النتيجة على سبب إعداد Firebase الخاطئ.
 
 ## الاختبار
 
