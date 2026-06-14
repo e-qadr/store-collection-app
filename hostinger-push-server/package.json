@@ -1,0 +1,20 @@
+{
+  "name": "store-collection-push-server",
+  "version": "1.0.0",
+  "description": "خادم Hostinger لإرسال إشعارات FCM لتطبيق التحصيل",
+  "private": true,
+  "main": "server.js",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.6",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.4.0"
+  }
+}

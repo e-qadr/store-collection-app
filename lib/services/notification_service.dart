@@ -172,6 +172,7 @@ class NotificationService {
         'title': title,
         'message': message,
         'is_read': false,
+        'push_status': 'pending',
         'created_at': FieldValue.serverTimestamp(),
       });
     }
