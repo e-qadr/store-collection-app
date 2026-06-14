@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:store_collection_app/screens/auth/auth_gate.dart'; // تأكد من استدعاء ملف البوابة
+import 'package:store_collection_app/screens/auth/auth_gate.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,13 +15,10 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Store Collection App',
+      title: 'نظام تحصيل المتاجر',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      // جعلنا البوابة هي الشاشة الافتراضية للتطبيق
-      home: const AuthGate(), 
+      theme: AppTheme.lightTheme,
+      home: const AuthGate(),
     );
   }
 }

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
-// إضافة استدعاء خدمة الـ PDF
 import 'package:store_collection_app/services/pdf_service.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 
 class TransactionDetailsScreen extends StatelessWidget {
   final Map<String, dynamic> transactionData;
@@ -40,7 +40,6 @@ class TransactionDetailsScreen extends StatelessWidget {
     final dateTo = (transactionData['dateTo'] as Timestamp?)?.toDate();
     final creationDate = (transactionData['timestamp'] as Timestamp?)?.toDate();
 
-    // استخراج السجل التاريخي وترتيبه من الأحدث إلى الأقدم
     List<dynamic> history = transactionData['history'] ?? [];
     List<Map<String, dynamic>> sortedHistory = List<Map<String, dynamic>>.from(history);
     sortedHistory.sort((a, b) {
@@ -49,116 +48,176 @@ class TransactionDetailsScreen extends StatelessWidget {
       return tB.compareTo(tA);
     });
 
+    final Color statusColor = AppTheme.statusColor(status);
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
+        backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: const Text('تفاصيل السند'),
-          backgroundColor: Colors.blueGrey,
+          title: const Text('تفاصيل السند', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          backgroundColor: Colors.blueGrey.shade800,
+          elevation: 0,
           actions: [
-            // إضافة زر الطباعة هنا
             IconButton(
-              icon: const Icon(Icons.print),
+              icon: const Icon(Icons.print_rounded),
               tooltip: 'طباعة السند كـ PDF',
               onPressed: () async {
-                // استدعاء دالة الطباعة وتمرير بيانات السند
                 await PdfService.printSingleTransaction(
                   data: transactionData,
-                  branchName: 'الفرع المختار', // يمكنك مستقبلاً جلب اسم الفرع الفعلي وتمريره
+                  branchName: 'الفرع المختار',
                 );
               },
             )
           ],
         ),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // البطاقة المالية
-              Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      Text('رقم السند: $trnNumber', style: const TextStyle(color: Colors.grey, fontSize: 16)),
-                      const SizedBox(height: 10),
-                      Text(
-                        '${NumberFormat('#,##0.##', 'en_US').format(amount)} $currency',
-                        style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.blue),
-                      ),
-                      const SizedBox(height: 10),
-                      Chip(
-                        label: Text(_getStatusText(status), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        backgroundColor: status.contains('approved') ? Colors.green : (status == 'rejectedByManager' ? Colors.red : Colors.orange),
-                      ),
-                    ],
-                  ),
+        body: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+              decoration: BoxDecoration(
+                color: Colors.blueGrey.shade800,
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(24),
+                  bottomRight: Radius.circular(24),
                 ),
               ),
-              const SizedBox(height: 20),
+              child: Column(
+                children: [
+                  Text('سند #$trnNumber', style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${NumberFormat('#,##0.##', 'en_US').format(amount)} $currency',
+                    style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _getStatusText(status),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
-              // بطاقة التواريخ
-              const Text('التواريخ والفترة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Card(
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    ListTile(
-                      leading: const Icon(Icons.date_range, color: Colors.teal),
-                      title: const Text('فترة التحصيل (من - إلى)'),
-                      subtitle: Text(
-                        '${dateFrom != null ? DateFormat('yyyy/MM/dd').format(dateFrom) : ''}  -  ${dateTo != null ? DateFormat('yyyy/MM/dd').format(dateTo) : ''}',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    // بطاقة التواريخ
+                    const Text('التواريخ والفترة', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: AppTheme.cardShadow(),
+                      child: Material(
+                        color: AppTheme.cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Column(
+                          children: [
+                            ListTile(
+                              leading: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(color: Colors.teal.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                                child: const Icon(Icons.date_range_rounded, color: Colors.teal, size: 20),
+                              ),
+                              title: const Text('فترة التحصيل (من - إلى)', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                              subtitle: Text(
+                                '${dateFrom != null ? DateFormat('yyyy/MM/dd').format(dateFrom) : ''}  -  ${dateTo != null ? DateFormat('yyyy/MM/dd').format(dateTo) : ''}',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary),
+                              ),
+                            ),
+                            const Divider(height: 1, indent: 60),
+                            ListTile(
+                              leading: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(color: Colors.grey.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                                child: const Icon(Icons.access_time_rounded, color: Colors.grey, size: 20),
+                              ),
+                              title: const Text('تاريخ ووقت الإدخال في النظام', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                              subtitle: Text(
+                                creationDate != null ? DateFormat('yyyy/MM/dd - hh:mm a').format(creationDate) : '',
+                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: AppTheme.textPrimary),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.access_time, color: Colors.grey),
-                      title: const Text('تاريخ ووقت الإدخال في النظام'),
-                      subtitle: Text(creationDate != null ? DateFormat('yyyy/MM/dd - hh:mm a').format(creationDate) : ''),
+                    const SizedBox(height: 24),
+
+                    // بطاقة الملاحظات
+                    const Text('الملاحظات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: AppTheme.cardShadow(),
+                      child: Material(
+                        color: AppTheme.cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.notes_rounded, color: AppTheme.textHint, size: 20),
+                                  const SizedBox(width: 8),
+                                  const Text('ملاحظات المحصل:', style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(notes, style: const TextStyle(fontSize: 15, color: AppTheme.textPrimary, height: 1.4)),
+                              
+                              if (managerNotes.isNotEmpty) ...[
+                                const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider(height: 1)),
+                                Row(
+                                  children: [
+                                    Icon(Icons.admin_panel_settings_rounded, color: Colors.red.shade400, size: 20),
+                                    const SizedBox(width: 8),
+                                    const Text('رد / ملاحظات الإدارة:', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(managerNotes, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppTheme.textPrimary, height: 1.4)),
+                              ]
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
+                    const SizedBox(height: 32),
+
+                    // القسم الجديد: سجل حركات السند (Audit Trail)
+                    const Text('سجل الحركات (Audit Trail)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                    const SizedBox(height: 12),
+                    if (sortedHistory.isEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(32),
+                        alignment: Alignment.center,
+                        child: Column(
+                          children: [
+                            Icon(Icons.history_rounded, size: 48, color: AppTheme.textHint.withValues(alpha: 0.5)),
+                            const SizedBox(height: 8),
+                            const Text('لا يوجد سجل حركات لهذا السند', style: TextStyle(color: AppTheme.textSecondary)),
+                          ],
+                        ),
+                      )
+                    else
+                      ...sortedHistory.map((item) => _buildTimelineItem(item)),
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
-
-              // بطاقة الملاحظات
-              const Text('الملاحظات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(15),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('ملاحظات المحصل:', style: TextStyle(color: Colors.grey)),
-                      Text(notes, style: const TextStyle(fontSize: 16)),
-                      if (managerNotes.isNotEmpty) ...[
-                        const Divider(height: 20),
-                        const Text('رد / ملاحظات الإدارة:', style: TextStyle(color: Colors.red)),
-                        Text(managerNotes, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      ]
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 30),
-
-              // القسم الجديد: سجل حركات السند (Audit Trail)
-              const Text('سجل حركات السند (Audit Trail)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              if (sortedHistory.isEmpty)
-                const Center(child: Padding(
-                  padding: EdgeInsets.all(20.0),
-                  child: Text('لا يوجد سجل حركات لهذا السند', style: TextStyle(color: Colors.grey)),
-                ))
-              else
-                ...sortedHistory.map((item) => _buildTimelineItem(item)).toList(),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -174,37 +233,50 @@ class TransactionDetailsScreen extends StatelessWidget {
     IconData icon;
     Color color;
     
-    // تخصيص الألوان والأيقونات بناءً على نوع الحركة
     switch(action) {
-      case 'created': icon = Icons.add_circle; color = Colors.blue; break;
-      case 'status_update': icon = Icons.sync; color = Colors.orange; break;
-      case 'edit_requested': icon = Icons.edit_note; color = Colors.purple; break;
-      case 'edit_approved': icon = Icons.check_circle; color = Colors.green; break;
-      case 'edit_requested_by_accountant': icon = Icons.assignment_return; color = Colors.redAccent; break;
-      case 'approved_by_accountant': icon = Icons.verified_user; color = Colors.green.shade800; break;
-      case 'edit_request_rejected': icon = Icons.cancel; color = Colors.red; break;
-      default: icon = Icons.info; color = Colors.grey;
+      case 'created': icon = Icons.add_circle_rounded; color = Colors.blue; break;
+      case 'status_update': icon = Icons.sync_rounded; color = Colors.orange; break;
+      case 'edit_requested': icon = Icons.edit_note_rounded; color = Colors.purple; break;
+      case 'edit_approved': icon = Icons.check_circle_rounded; color = Colors.green; break;
+      case 'edit_requested_by_accountant': icon = Icons.assignment_return_rounded; color = Colors.redAccent; break;
+      case 'approved_by_accountant': icon = Icons.verified_user_rounded; color = Colors.green.shade800; break;
+      case 'edit_request_rejected': icon = Icons.cancel_rounded; color = Colors.red; break;
+      default: icon = Icons.info_outline_rounded; color = Colors.grey;
     }
 
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: color.withOpacity(0.3))),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 6, offset: const Offset(0, 2)),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(12.0),
+        padding: const EdgeInsets.all(16.0),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(backgroundColor: color.withOpacity(0.1), child: Icon(icon, color: color)),
-            const SizedBox(width: 15),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(message, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  const SizedBox(height: 5),
+                  Text(message, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary)),
+                  const SizedBox(height: 6),
                   if (timestamp != null)
-                    Text(DateFormat('yyyy/MM/dd - hh:mm a').format(timestamp), style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                  // إذا كان الحدث "تعديل"، نعرض المربع الذي يوضح تفاصيل التغيير
+                    Text(DateFormat('yyyy/MM/dd - hh:mm a').format(timestamp), style: const TextStyle(color: AppTheme.textHint, fontSize: 12)),
+                  
                   if (changes != null)
                     _buildChangesDetails(changes),
                 ],
@@ -216,7 +288,7 @@ class TransactionDetailsScreen extends StatelessWidget {
     );
   }
 
-  // بناء مربع تفاصيل التعديل (ماذا كان -> وماذا أصبح)
+  // بناء مربع تفاصيل التعديل
   Widget _buildChangesDetails(Map<String, dynamic> changes) {
     final oldAmount = (changes['oldAmount'] as num?)?.toDouble() ?? 0.0;
     final newAmount = (changes['newAmount'] as num?)?.toDouble() ?? 0.0;
@@ -233,15 +305,17 @@ class TransactionDetailsScreen extends StatelessWidget {
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.purple.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.purple.shade100)
+        color: Colors.purple.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.purple.withValues(alpha: 0.15))
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('تفاصيل التعديل المقترح:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple, fontSize: 12)),
-          const Divider(color: Colors.black12),
+          const SizedBox(height: 6),
+          const Divider(height: 1, color: Colors.black12),
+          const SizedBox(height: 6),
           
           if (oldAmount != newAmount || oldCur != newCur)
             _buildChangeRow('المبلغ:', '${NumberFormat('#,##0.##', 'en_US').format(oldAmount)} $oldCur', '${NumberFormat('#,##0.##', 'en_US').format(newAmount)} $newCur'),
@@ -256,16 +330,15 @@ class TransactionDetailsScreen extends StatelessWidget {
     );
   }
 
-  // صف يعرض القيمة القديمة مشطوبة، وسهم، ثم القيمة الجديدة
   Widget _buildChangeRow(String label, String oldVal, String newVal) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppTheme.textSecondary)),
           const SizedBox(width: 8),
           Expanded(child: Text(oldVal, style: const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.red, fontSize: 12))),
-          const Icon(Icons.arrow_back, size: 14, color: Colors.grey),
+          const Icon(Icons.arrow_back_rounded, size: 14, color: AppTheme.textHint),
           const SizedBox(width: 8),
           Expanded(child: Text(newVal, style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12))),
         ],

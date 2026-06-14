@@ -6,6 +6,7 @@ import 'package:store_collection_app/models/transaction_model.dart';
 import 'package:store_collection_app/services/database_service.dart'; 
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:flutter/services.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 
 class NewTransactionScreen extends StatefulWidget {
   final String branchId;
@@ -32,13 +33,12 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
     DateTime firstDate = DateTime(2020);
     DateTime lastDate = DateTime.now().add(const Duration(days: 365));
 
-    // تقييد التواريخ المسموحة بناءً على الاختيار الآخر
     if (isFromDate) {
-      if (_dateTo != null) lastDate = _dateTo!; // تاريخ البداية لا يمكن أن يتجاوز تاريخ النهاية
+      if (_dateTo != null) lastDate = _dateTo!; 
       initialDate = _dateFrom ?? DateTime.now();
       if (initialDate.isAfter(lastDate)) initialDate = lastDate;
     } else {
-      if (_dateFrom != null) firstDate = _dateFrom!; // تاريخ النهاية لا يمكن أن يكون قبل تاريخ البداية
+      if (_dateFrom != null) firstDate = _dateFrom!; 
       initialDate = _dateTo ?? _dateFrom ?? DateTime.now();
       if (initialDate.isBefore(firstDate)) initialDate = firstDate;
     }
@@ -48,6 +48,16 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
       initialDate: initialDate,
       firstDate: firstDate,
       lastDate: lastDate,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppTheme.collectorColor,
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
     
     if (picked != null) {
@@ -70,7 +80,6 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
       return;
     }
 
-    // فحص احتياطي (وإن كانت واجهة التقويم تمنع ذلك الآن)
     if (_dateTo!.isBefore(_dateFrom!)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تاريخ (إلى) يجب أن يكون بعد أو يساوي تاريخ (من)')),
@@ -133,129 +142,213 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
+        backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: Text('تحصيل جديد - ${widget.branchName}'),
-          backgroundColor: Colors.blue,
+          title: const Text('إضافة سند تحصيل', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          backgroundColor: AppTheme.collectorColor,
+          elevation: 0,
         ),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Card(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(15.0),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 2,
-                        child: TextField(
-                          controller: _amountController,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [ThousandsSeparatorInputFormatter()], 
-                          decoration: const InputDecoration(
-                            hintText: '0.00',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.attach_money),
-                          ),
-                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        flex: 1,
-                        child: DropdownButtonFormField<String>(
-                          value: _selectedCurrency,
-                          decoration: const InputDecoration(border: OutlineInputBorder()),
-                          items: const [
-                            DropdownMenuItem(value: 'YER', child: Text('ر.ي')),
-                            DropdownMenuItem(value: 'SAR', child: Text('ر.س')),
-                            DropdownMenuItem(value: 'USD', child: Text('دولار')),
-                          ],
-                          onChanged: (value) => setState(() => _selectedCurrency = value!),
-                        ),
-                      ),
-                    ],
-                  ),
+        body: Column(
+          children: [
+            // Decorative Header Background
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+              decoration: const BoxDecoration(
+                color: AppTheme.collectorColor,
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(24),
+                  bottomRight: Radius.circular(24),
                 ),
               ),
-              const SizedBox(height: 20),
-
-              Card(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(15.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('فترة المبيعات المحصلة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      const SizedBox(height: 15),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () => _selectDate(context, true),
-                              icon: const Icon(Icons.calendar_today, size: 18),
-                              label: Text(_dateFrom == null ? 'من تاريخ' : DateFormat('yyyy-MM-dd').format(_dateFrom!)),
-                              style: ElevatedButton.styleFrom(
-                                foregroundColor: Colors.black87,
-                                backgroundColor: Colors.grey.shade200,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () => _selectDate(context, false),
-                              icon: const Icon(Icons.calendar_today, size: 18),
-                              label: Text(_dateTo == null ? 'إلى تاريخ' : DateFormat('yyyy-MM-dd').format(_dateTo!)),
-                              style: ElevatedButton.styleFrom(
-                                foregroundColor: Colors.black87,
-                                backgroundColor: Colors.grey.shade200,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+              child: Text(
+                'الفرع: ${widget.branchName}',
+                style: const TextStyle(color: Colors.white, fontSize: 15),
               ),
-              const SizedBox(height: 20),
-
-              Card(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(15.0),
-                  child: TextField(
-                    controller: _notesController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'ملاحظات إضافية (اختياري)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.notes),
+            ),
+            
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // --- Amount & Currency Section ---
+                    Container(
+                      decoration: AppTheme.cardShadow(),
+                      child: Material(
+                        color: AppTheme.cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('المبلغ المحصل', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary)),
+                              const SizedBox(height: 16),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    flex: 2,
+                                    child: TextField(
+                                      controller: _amountController,
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      inputFormatters: [ThousandsSeparatorInputFormatter()], 
+                                      decoration: const InputDecoration(
+                                        hintText: '0.00',
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                                        prefixIcon: Icon(Icons.attach_money_rounded, color: AppTheme.collectorColor),
+                                      ),
+                                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    flex: 1,
+                                    child: InputDecorator(
+                                      decoration: const InputDecoration(
+                                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+                                      ),
+                                      child: DropdownButtonHideUnderline(
+                                        child: DropdownButton<String>(
+                                          value: _selectedCurrency,
+                                          isExpanded: true,
+                                          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppTheme.textSecondary),
+                                          style: const TextStyle(fontSize: 16, color: AppTheme.textPrimary, fontWeight: FontWeight.bold),
+                                          items: const [
+                                            DropdownMenuItem(value: 'YER', child: Text('ر.ي')),
+                                            DropdownMenuItem(value: 'SAR', child: Text('ر.س')),
+                                            DropdownMenuItem(value: 'USD', child: Text('دولار')),
+                                          ],
+                                          onChanged: (value) => setState(() => _selectedCurrency = value!),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 30),
+                    const SizedBox(height: 20),
 
-              SizedBox(
-                height: 55,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _saveTransaction,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text('تسجيل واعتماد السند', style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold)),
+                    // --- Date Period Section ---
+                    Container(
+                      decoration: AppTheme.cardShadow(),
+                      child: Material(
+                        color: AppTheme.cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('فترة المبيعات المحصلة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary)),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: () => _selectDate(context, true),
+                                      icon: const Icon(Icons.calendar_today_rounded, size: 18, color: AppTheme.collectorColor),
+                                      label: Text(
+                                        _dateFrom == null ? 'من تاريخ' : DateFormat('yyyy/MM/dd').format(_dateFrom!),
+                                        style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w600),
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(vertical: 14),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        side: BorderSide(color: Colors.grey.shade300),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: () => _selectDate(context, false),
+                                      icon: const Icon(Icons.calendar_today_rounded, size: 18, color: AppTheme.collectorColor),
+                                      label: Text(
+                                        _dateTo == null ? 'إلى تاريخ' : DateFormat('yyyy/MM/dd').format(_dateTo!),
+                                        style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w600),
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(vertical: 14),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        side: BorderSide(color: Colors.grey.shade300),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // --- Notes Section ---
+                    Container(
+                      decoration: AppTheme.cardShadow(),
+                      child: Material(
+                        color: AppTheme.cardColor,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('ملاحظات إضافية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary)),
+                              const SizedBox(height: 16),
+                              TextField(
+                                controller: _notesController,
+                                maxLines: 3,
+                                decoration: const InputDecoration(
+                                  hintText: 'اكتب أي ملاحظات هنا (اختياري)...',
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                                  prefixIcon: Icon(Icons.notes_rounded, color: AppTheme.textHint),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // --- Submit Button ---
+                    SizedBox(
+                      height: 56,
+                      child: ElevatedButton.icon(
+                        onPressed: _isLoading ? null : _saveTransaction,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.collectorColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          elevation: 2,
+                        ),
+                        icon: _isLoading
+                            ? const SizedBox.shrink()
+                            : const Icon(Icons.check_circle_outline_rounded, size: 22),
+                        label: _isLoading
+                            ? const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                              )
+                            : const Text('تسجيل واعتماد السند', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

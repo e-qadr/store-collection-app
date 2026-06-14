@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 
 class ManagerApprovalsScreen extends StatefulWidget {
   final String branchId;
@@ -41,20 +42,31 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text(isReject ? 'رفض السند' : 'طلب تعديل السند', 
-                      style: TextStyle(color: isReject ? Colors.red : Colors.orange)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(isReject ? Icons.cancel_rounded : Icons.edit_note_rounded, color: isReject ? Colors.red : Colors.orange),
+              const SizedBox(width: 8),
+              Text(isReject ? 'رفض السند' : 'طلب تعديل السند', 
+                  style: TextStyle(color: isReject ? Colors.red : Colors.orange, fontSize: 18)),
+            ],
+          ),
           content: TextField(
             controller: notesController,
             maxLines: 3,
             decoration: InputDecoration(
-              hintText: isReject ? 'اكتب سبب الرفض هنا...' : 'اكتب التعديلات المطلوبة (مثال: تأكد من المبلغ)...',
-              border: const OutlineInputBorder(),
+              hintText: isReject ? 'اكتب سبب الرفض هنا...' : 'اكتب التعديلات المطلوبة...',
+              border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
             ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: isReject ? Colors.red : Colors.orange),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isReject ? Colors.red : Colors.orange,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
               onPressed: () async {
                 if (notesController.text.trim().isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء إدخال السبب/الملاحظة')));
@@ -78,7 +90,8 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                   _closeLoadingAndShowSnackBar('حدث خطأ أثناء تنفيذ العملية', Colors.red);
                 }
               },
-              child: Text(isReject ? 'تأكيد الرفض' : 'إرسال للمحصل', style: const TextStyle(color: Colors.white)),
+              icon: Icon(isReject ? Icons.block_rounded : Icons.send_rounded, size: 18),
+              label: Text(isReject ? 'تأكيد الرفض' : 'إرسال للمحصل'),
             ),
           ],
         );
@@ -102,7 +115,6 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
   }
 
   Future<void> _rejectEdit(String transactionId, String trnNumber) async {
-    // إذا رفض المدير التعديل، نعيد السند إلى المحصل ليقوم بتعديله مجدداً
     _showLoadingDialog();
     try {
       await _dbService.updateTransactionStatus(
@@ -122,7 +134,13 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
+      builder: (context) => Center(
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+          child: const CircularProgressIndicator(color: AppTheme.managerColor),
+        ),
+      ),
     );
   }
 
@@ -137,20 +155,22 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
-      // استخدام DefaultTabController لإدارة التبويبات بسهولة
       child: DefaultTabController(
         length: 2,
         child: Scaffold(
+          backgroundColor: AppTheme.surfaceColor,
           appBar: AppBar(
-            title: Text('طلبات الاعتماد - ${widget.branchName}'),
-            backgroundColor: Colors.amber.shade800,
+            title: Text('الاعتمادات - ${widget.branchName}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            backgroundColor: AppTheme.managerColor,
+            elevation: 0,
             bottom: const TabBar(
               indicatorColor: Colors.white,
-              indicatorWeight: 3,
+              indicatorWeight: 4,
               labelStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              unselectedLabelStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.normal),
               tabs: [
-                Tab(text: 'سندات جديدة', icon: Icon(Icons.new_releases)),
-                Tab(text: 'طلبات تعديل', icon: Icon(Icons.edit_notifications)),
+                Tab(text: 'سندات جديدة', icon: Icon(Icons.new_releases_rounded)),
+                Tab(text: 'طلبات تعديل', icon: Icon(Icons.edit_notifications_rounded)),
               ],
             ),
           ),
@@ -173,16 +193,25 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
         status: 'pending', // السندات الجديدة
       ),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: AppTheme.managerColor));
         if (snapshot.hasError) return const Center(child: Text('حدث خطأ في جلب البيانات.', style: TextStyle(color: Colors.red)));
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('لا توجد طلبات اعتماد معلقة حالياً!', style: TextStyle(fontSize: 18, color: Colors.grey)));
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.done_all_rounded, size: 64, color: AppTheme.textHint.withValues(alpha: 0.5)),
+                const SizedBox(height: 16),
+                const Text('لا توجد طلبات اعتماد معلقة حالياً!', style: TextStyle(fontSize: 16, color: AppTheme.textSecondary)),
+              ],
+            ),
+          );
         }
 
         final transactions = snapshot.data!.docs;
 
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(16),
           itemCount: transactions.length,
           itemBuilder: (context, index) {
             final doc = transactions[index];
@@ -192,54 +221,85 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
             final String currency = data['currency'] ?? 'YER';
             final String trnNumber = data['transaction_number'] ?? '#';
 
-            return Card(
-              elevation: 3,
-              margin: const EdgeInsets.only(bottom: 15),
-              child: Padding(
-                padding: const EdgeInsets.all(15.0),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('رقم السند: $trnNumber', style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-                        Text('${NumberFormat('#,##0.##', 'en_US').format(amount)} $currency',
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () => _approveNewTransaction(doc.id, trnNumber),
-                            icon: const Icon(Icons.check, color: Colors.white),
-                            label: const Text('اعتماد', style: TextStyle(color: Colors.white)),
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: AppTheme.cardShadow(),
+              child: Material(
+                color: AppTheme.cardColor,
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.all(20.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('سند #$trnNumber', style: const TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold, fontSize: 13)),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppTheme.managerColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text('جديد', style: TextStyle(color: AppTheme.managerColor, fontSize: 11, fontWeight: FontWeight.bold)),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _rejectTransaction(doc.id, trnNumber, 'reject'),
-                            icon: const Icon(Icons.close, color: Colors.red),
-                            label: const Text('رفض', style: TextStyle(color: Colors.red)),
-                            style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red)),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () => _rejectTransaction(doc.id, trnNumber, 'edit'),
-                        icon: const Icon(Icons.edit_note, color: Colors.white),
-                        label: const Text('طلب تعديل من المحصل', style: TextStyle(color: Colors.white)),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                        ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      Text(
+                        '${NumberFormat('#,##0.##', 'en_US').format(amount)} $currency',
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      ),
+                      const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1, thickness: 1)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () => _approveNewTransaction(doc.id, trnNumber),
+                              icon: const Icon(Icons.check_circle_rounded, size: 18),
+                              label: const Text('اعتماد'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _rejectTransaction(doc.id, trnNumber, 'reject'),
+                              icon: const Icon(Icons.cancel_rounded, size: 18),
+                              label: const Text('رفض'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.red,
+                                side: BorderSide(color: Colors.red.withValues(alpha: 0.5)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _rejectTransaction(doc.id, trnNumber, 'edit'),
+                          icon: const Icon(Icons.edit_note_rounded, size: 18),
+                          label: const Text('طلب تعديل من المحصل'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.orange,
+                            side: BorderSide(color: Colors.orange.withValues(alpha: 0.5)),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -257,16 +317,25 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
         status: 'pendingApprovalOfEdit', // السندات التي تم تعديلها وبانتظار الموافقة
       ),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: AppTheme.managerColor));
         if (snapshot.hasError) return const Center(child: Text('حدث خطأ في جلب البيانات.', style: TextStyle(color: Colors.red)));
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('لا توجد طلبات تعديل للمراجعة.', style: TextStyle(fontSize: 18, color: Colors.grey)));
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.fact_check_outlined, size: 64, color: AppTheme.textHint.withValues(alpha: 0.5)),
+                const SizedBox(height: 16),
+                const Text('لا توجد طلبات تعديل للمراجعة.', style: TextStyle(fontSize: 16, color: AppTheme.textSecondary)),
+              ],
+            ),
+          );
         }
 
         final transactions = snapshot.data!.docs;
 
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(16),
           itemCount: transactions.length,
           itemBuilder: (context, index) {
             final doc = transactions[index];
@@ -284,77 +353,123 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
             final String newCurrency = pendingData['currency'] ?? oldCurrency;
             final String newNotes = pendingData['notes'] ?? 'لا توجد ملاحظات للتعديل';
 
-            return Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.amber.shade300, width: 2),
+            return Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: AppTheme.cardColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.orange.withValues(alpha: 0.3), width: 1.5),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                ],
               ),
-              margin: const EdgeInsets.only(bottom: 15),
               child: Padding(
-                padding: const EdgeInsets.all(15.0),
+                padding: const EdgeInsets.all(20.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('رقم السند: $trnNumber', style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-                    const Divider(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('سند #$trnNumber', style: const TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold, fontSize: 13)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text('مراجعة تعديل', style: TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1, thickness: 1)),
                     
                     // المقارنة بين القديم والجديد
                     Row(
                       children: [
                         Expanded(
                           child: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8)),
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                            decoration: BoxDecoration(color: Colors.red.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.withValues(alpha: 0.1))),
                             child: Column(
                               children: [
-                                const Text('المبلغ القديم', style: TextStyle(color: Colors.red, fontSize: 12)),
+                                const Text('المبلغ القديم', style: TextStyle(color: Colors.red, fontSize: 11, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 4),
                                 Text('${NumberFormat('#,##0.##', 'en_US').format(oldAmount)} $oldCurrency',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, decoration: TextDecoration.lineThrough)),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textSecondary, decoration: TextDecoration.lineThrough, fontSize: 14)),
                               ],
                             ),
                           ),
                         ),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 8.0),
-                          child: Icon(Icons.arrow_forward, color: Colors.grey),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10.0),
+                          child: Icon(Icons.arrow_forward_rounded, color: Colors.grey.shade400, size: 20),
                         ),
                         Expanded(
                           child: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                            decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green.withValues(alpha: 0.1))),
                             child: Column(
                               children: [
-                                const Text('المبلغ المقترح', style: TextStyle(color: Colors.green, fontSize: 12)),
+                                const Text('المبلغ المقترح', style: TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 4),
                                 Text('${NumberFormat('#,##0.##', 'en_US').format(newAmount)} $newCurrency',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 15)),
                               ],
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    Text('ملاحظات المحصل للتعديل: $newNotes', style: const TextStyle(fontSize: 14)),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(10)),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.notes_rounded, color: Colors.grey.shade600, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'ملاحظات المحصل: $newNotes', 
+                              style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
                     Row(
                       children: [
                         Expanded(
+                          flex: 3,
                           child: ElevatedButton.icon(
                             onPressed: () => _approveEdit(doc.id, trnNumber, pendingData),
-                            icon: const Icon(Icons.check_circle, color: Colors.white),
-                            label: const Text('اعتماد التعديل', style: TextStyle(color: Colors.white)),
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                            icon: const Icon(Icons.check_circle_rounded, size: 18),
+                            label: const Text('اعتماد التعديل'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.teal,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         Expanded(
+                          flex: 2,
                           child: OutlinedButton.icon(
                             onPressed: () => _rejectEdit(doc.id, trnNumber),
-                            icon: const Icon(Icons.cancel, color: Colors.red),
-                            label: const Text('رفض وإعادة', style: TextStyle(color: Colors.red)),
-                            style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red)),
+                            icon: const Icon(Icons.cancel_rounded, size: 18),
+                            label: const Text('رفض وإعادة'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: BorderSide(color: Colors.red.withValues(alpha: 0.5)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
                           ),
                         ),
                       ],

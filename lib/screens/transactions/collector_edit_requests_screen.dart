@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 
 class CollectorEditRequestsScreen extends StatefulWidget {
   final String branchId;
@@ -37,6 +38,16 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
       initialDate: initialDate,
       firstDate: firstDate,
       lastDate: lastDate,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Colors.orange,
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
     if (picked != null) onPicked(picked);
   }
@@ -58,46 +69,80 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('تعديل السند وإعادة إرساله', style: TextStyle(color: Colors.teal)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.edit_document, color: Colors.teal),
+                  SizedBox(width: 8),
+                  Text('تعديل السند', style: TextStyle(color: Colors.teal, fontSize: 18)),
+                ],
+              ),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextField(controller: amountController, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المبلغ', border: OutlineInputBorder())),
+                    TextField(
+                      controller: amountController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'المبلغ',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                      )
+                    ),
                     const SizedBox(height: 15),
-                    DropdownButtonFormField<String>(
-                      decoration: const InputDecoration(labelText: 'العملة', border: OutlineInputBorder()),
-                      value: selectedCurrency,
-                      items: const [
-                        DropdownMenuItem(value: 'YER', child: Text('ريال يمني (YER)')),
-                        DropdownMenuItem(value: 'SAR', child: Text('ريال سعودي (SAR)')),
-                        DropdownMenuItem(value: 'USD', child: Text('دولار (USD)')),
-                      ],
-                      onChanged: (val) { if (val != null) setDialogState(() => selectedCurrency = val); },
+                    InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'العملة',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: selectedCurrency,
+                          isExpanded: true,
+                          items: const [
+                            DropdownMenuItem(value: 'YER', child: Text('ريال يمني (YER)')),
+                            DropdownMenuItem(value: 'SAR', child: Text('ريال سعودي (SAR)')),
+                            DropdownMenuItem(value: 'USD', child: Text('دولار (USD)')),
+                          ],
+                          onChanged: (val) { if (val != null) setDialogState(() => selectedCurrency = val); },
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 15),
                     ListTile(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5), side: BorderSide(color: Colors.grey.shade400)),
-                      title: Text('من: ${DateFormat('yyyy/MM/dd').format(dateFrom)}'),
-                      trailing: const Icon(Icons.calendar_today),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade300)),
+                      title: Text('من: ${DateFormat('yyyy/MM/dd').format(dateFrom)}', style: const TextStyle(fontSize: 14)),
+                      trailing: const Icon(Icons.calendar_today_rounded, size: 20),
                       onTap: () => _pickDate(context, true, dateFrom, dateTo, (picked) => setDialogState(() => dateFrom = picked)),
                     ),
                     const SizedBox(height: 10),
                     ListTile(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5), side: BorderSide(color: Colors.grey.shade400)),
-                      title: Text('إلى: ${DateFormat('yyyy/MM/dd').format(dateTo)}'),
-                      trailing: const Icon(Icons.calendar_today),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade300)),
+                      title: Text('إلى: ${DateFormat('yyyy/MM/dd').format(dateTo)}', style: const TextStyle(fontSize: 14)),
+                      trailing: const Icon(Icons.calendar_today_rounded, size: 20),
                       onTap: () => _pickDate(context, false, dateFrom, dateTo, (picked) => setDialogState(() => dateTo = picked)),
                     ),
                     const SizedBox(height: 15),
-                    TextField(controller: notesController, maxLines: 2, decoration: const InputDecoration(labelText: 'ملاحظات المحصل', border: OutlineInputBorder())),
+                    TextField(
+                      controller: notesController,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'ملاحظات المحصل',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                      )
+                    ),
                   ],
                 ),
               ),
               actions: [
                 TextButton(onPressed: isSaving ? null : () => Navigator.pop(context), child: const Text('إلغاء', style: TextStyle(color: Colors.red))),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
                   onPressed: isSaving ? null : () async {
                     if (amountController.text.trim().isEmpty) return;
                     
@@ -130,7 +175,8 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
                       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('حدث خطأ أثناء التعديل'), backgroundColor: Colors.red));
                     }
                   },
-                  child: isSaving ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Text('حفظ وإرسال', style: TextStyle(color: Colors.white)),
+                  icon: isSaving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.send_rounded, size: 18),
+                  label: const Text('حفظ وإرسال'),
                 ),
               ],
             );
@@ -140,7 +186,7 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
     );
   }
 
-  // 2. دالة رفض طلب التعديل (في حال كان السند صحيحاً من وجهة نظر المحصل)
+  // 2. دالة رفض طلب التعديل
   Future<void> _rejectEditRequest(String transactionId, Map<String, dynamic> data) async {
     TextEditingController reasonController = TextEditingController();
     bool isSubmitting = false;
@@ -152,19 +198,33 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('رفض طلب التعديل', style: TextStyle(color: Colors.red)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_rounded, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('رفض طلب التعديل', style: TextStyle(color: Colors.red, fontSize: 18)),
+                ],
+              ),
               content: TextField(
                 controller: reasonController,
                 maxLines: 2,
-                decoration: const InputDecoration(hintText: 'اكتب سبب رفضك (مثلاً: السند والمبلغ صحيح)...', border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  hintText: 'اكتب سبب رفضك (مثلاً: السند والمبلغ صحيح)...',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                ),
               ),
               actions: [
                 TextButton(
                   onPressed: isSubmitting ? null : () => Navigator.pop(context), 
                   child: const Text('إلغاء')
                 ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
                   onPressed: isSubmitting ? null : () async {
                     if (reasonController.text.trim().isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء كتابة السبب')));
@@ -173,7 +233,7 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
                     
                     setDialogState(() => isSubmitting = true);
                     
-                    // العودة للحالة السابقة (إذا كان الطلب من المحاسب يعود للمحاسب، وإذا من المدير يعود للمدير)
+                    // العودة للحالة السابقة
                     String returnStatus = data['previous_status'] ?? 'pending'; 
                     
                     try {
@@ -191,9 +251,8 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
                       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('حدث خطأ'), backgroundColor: Colors.red));
                     }
                   },
-                  child: isSubmitting 
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('تأكيد الرفض', style: TextStyle(color: Colors.white)),
+                  icon: isSubmitting ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('تأكيد الرفض'),
                 )
               ]
             );
@@ -208,20 +267,27 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        appBar: AppBar(title: const Text('سندات تتطلب تعديلاً'), backgroundColor: Colors.orange.shade700),
+        backgroundColor: AppTheme.surfaceColor,
+        appBar: AppBar(
+          title: const Text('سندات تتطلب تعديلاً', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          backgroundColor: Colors.orange.shade700,
+          elevation: 0,
+        ),
         body: StreamBuilder<QuerySnapshot>(
           stream: _dbService.getBranchTransactions(branchId: widget.branchId, status: 'editRequestedByCollector'),
           builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+            if (snapshot.connectionState == ConnectionState.waiting) return Center(child: CircularProgressIndicator(color: Colors.orange.shade700));
             if (snapshot.hasError) return const Center(child: Text('حدث خطأ في جلب البيانات.', style: TextStyle(color: Colors.red)));
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.thumb_up_alt_outlined, size: 80, color: Colors.green.shade300),
-                    const SizedBox(height: 15),
-                    const Text('عمل ممتاز! لا توجد أي سندات تتطلب التعديل.', style: TextStyle(fontSize: 18, color: Colors.grey)),
+                    Icon(Icons.task_alt_rounded, size: 80, color: Colors.green.shade300),
+                    const SizedBox(height: 16),
+                    const Text('عمل ممتاز!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                    const SizedBox(height: 8),
+                    const Text('لا توجد أي سندات تتطلب التعديل حالياً.', style: TextStyle(fontSize: 16, color: AppTheme.textSecondary)),
                   ],
                 ),
               );
@@ -230,7 +296,7 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
             final transactions = snapshot.data!.docs;
 
             return ListView.builder(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(16),
               itemCount: transactions.length,
               itemBuilder: (context, index) {
                 final doc = transactions[index];
@@ -242,63 +308,95 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
                 final String trnNumber = data['transaction_number'] ?? '#';
                 final String managerNotes = data['manager_notes'] ?? 'لا توجد ملاحظات مرفقة';
                 
-                return Card(
-                  elevation: 3,
-                  margin: const EdgeInsets.only(bottom: 15),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.orange.shade300, width: 1)),
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.cardColor,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.orange.withValues(alpha: 0.4), width: 1.5),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                    ],
+                  ),
                   child: Padding(
-                    padding: const EdgeInsets.all(15.0),
+                    padding: const EdgeInsets.all(20.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('رقم السند: $trnNumber', style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-                            Text('$formattedAmount $currency', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            Text('سند #$trnNumber', style: const TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold, fontSize: 13)),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text('مطلوب تعديل', style: TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
                           ],
                         ),
-                        const Divider(height: 20),
+                        const SizedBox(height: 8),
+                        Text(
+                          '$formattedAmount $currency',
+                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                        ),
+                        const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1, thickness: 1)),
                         Container(
                           width: double.infinity,
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.orange.shade200)),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+                          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
                                 children: [
-                                  Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800, size: 20),
+                                  Icon(Icons.info_outline_rounded, color: Colors.orange.shade800, size: 18),
                                   const SizedBox(width: 8),
-                                  Text('السبب / ملاحظات التعديل:', style: TextStyle(color: Colors.orange.shade800, fontWeight: FontWeight.bold)),
+                                  Text('ملاحظات الإدارة:', style: TextStyle(color: Colors.orange.shade800, fontWeight: FontWeight.bold, fontSize: 13)),
                                 ],
                               ),
-                              const SizedBox(height: 5),
-                              Text(managerNotes, style: const TextStyle(fontSize: 14)),
+                              const SizedBox(height: 6),
+                              Text(managerNotes, style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary, height: 1.4)),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 15),
-                        // أزرار الإجراءات (تعديل أو رفض)
+                        const SizedBox(height: 16),
+                        // أزرار الإجراءات
                         Row(
                           children: [
                             Expanded(
-                              flex: 2,
+                              flex: 3,
                               child: ElevatedButton.icon(
                                 onPressed: () => _showEditDialog(context, doc.id, data),
-                                icon: const Icon(Icons.edit, color: Colors.white, size: 20),
-                                label: const Text('تعديل وإرسال', style: TextStyle(color: Colors.white)),
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                                icon: const Icon(Icons.edit_rounded, size: 18),
+                                label: const Text('تعديل وإرسال'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.teal,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
                               ),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
-                              flex: 1,
+                              flex: 2,
                               child: OutlinedButton.icon(
                                 onPressed: () => _rejectEditRequest(doc.id, data),
-                                icon: const Icon(Icons.cancel, color: Colors.red, size: 20),
-                                label: const Text('أرفض', style: TextStyle(color: Colors.red)),
-                                style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red), padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                                icon: const Icon(Icons.close_rounded, size: 18),
+                                label: const Text('السند صحيح'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                  side: BorderSide(color: Colors.red.withValues(alpha: 0.5)),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
                               ),
                             ),
                           ],

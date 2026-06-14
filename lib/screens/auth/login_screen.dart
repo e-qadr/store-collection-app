@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/services/auth_service.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -13,6 +14,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   final AuthService _authService = AuthService();
   bool _isLoading = false;
+  bool _obscurePassword = true;
 
   Future<void> _login() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
@@ -35,7 +37,8 @@ class _LoginScreenState extends State<LoginScreen> {
     if (user == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('البريد الإلكتروني أو كلمة المرور غير صحيحة')),
+          const SnackBar(
+              content: Text('البريد الإلكتروني أو كلمة المرور غير صحيحة')),
         );
       }
     }
@@ -43,33 +46,192 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('تسجيل الدخول')),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TextField(
-              controller: _emailController,
-              decoration: const InputDecoration(labelText: 'البريد الإلكتروني'),
-              keyboardType: TextInputType.emailAddress,
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topRight,
+              end: Alignment.bottomLeft,
+              colors: AppTheme.managerGradient,
             ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: _passwordController,
-              decoration: const InputDecoration(labelText: 'كلمة المرور'),
-              obscureText: true,
-            ),
-            const SizedBox(height: 30),
-            _isLoading
-                ? const CircularProgressIndicator()
-                : ElevatedButton(
-                    onPressed: _login,
-                    child: const Text('دخول'),
+          ),
+          child: SafeArea(
+            child: Column(
+              children: [
+                // ── Logo & Branding ─────────────────────────────────────
+                Expanded(
+                  flex: 5,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // App icon
+                        Container(
+                          width: 90,
+                          height: 90,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(26),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.3),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.account_balance_wallet_rounded,
+                            size: 46,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 22),
+                        const Text(
+                          'نظام تحصيل المتاجر',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'منصة إدارة سندات التحصيل المالي',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.75),
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-          ],
+                ),
+
+                // ── Login Form Card ─────────────────────────────────────
+                Expanded(
+                  flex: 7,
+                  child: Container(
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      color: AppTheme.surfaceColor,
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(32),
+                      ),
+                    ),
+                    padding:
+                        const EdgeInsets.fromLTRB(24, 32, 24, 24),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Text(
+                            'تسجيل الدخول',
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.textPrimary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'أدخل بياناتك للمتابعة',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.textSecondary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 30),
+
+                          // Email field
+                          TextField(
+                            controller: _emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            textDirection: TextDirection.ltr,
+                            decoration: const InputDecoration(
+                              labelText: 'البريد الإلكتروني',
+                              hintText: 'example@domain.com',
+                              prefixIcon:
+                                  Icon(Icons.email_outlined, size: 20),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+
+                          // Password field
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: _obscurePassword,
+                            textDirection: TextDirection.ltr,
+                            decoration: InputDecoration(
+                              labelText: 'كلمة المرور',
+                              prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  size: 20,
+                                ),
+                                onPressed: () => setState(
+                                    () => _obscurePassword = !_obscurePassword),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 30),
+
+                          // Login Button
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 250),
+                            child: _isLoading
+                                ? const SizedBox(
+                                    height: 52,
+                                    child: Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  )
+                                : ElevatedButton.icon(
+                                    onPressed: _login,
+                                    icon: const Icon(Icons.login_rounded, size: 20),
+                                    label: const Text('دخول إلى النظام'),
+                                  ),
+                          ),
+                          const SizedBox(height: 20),
+
+                          // Footer note
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.shield_outlined,
+                                  size: 14, color: AppTheme.textHint),
+                              const SizedBox(width: 6),
+                              Text(
+                                'بيانات محمية وآمنة',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.textHint,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

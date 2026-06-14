@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -117,8 +116,9 @@ class PdfService {
       final dTo = (t['dateTo'] as Timestamp?)?.toDate();
       
       String status = 'غير معروف';
-      if(t['status'] == 'approvedByAccountant') status = 'معتمد محاسب';
-      else if(t['status'] == 'approvedByManager') status = 'معتمد مدير';
+      if(t['status'] == 'approvedByAccountant') {
+        status = 'معتمد محاسب';
+      } else if(t['status'] == 'approvedByManager') status = 'معتمد مدير';
       else if(t['status'] == 'pending') status = 'قيد الانتظار';
       else status = 'مراجعة/تعديل';
 

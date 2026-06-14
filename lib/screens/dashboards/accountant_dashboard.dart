@@ -1,14 +1,17 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 
 class AccountantDashboard extends StatelessWidget {
   final String branchId;
   final String branchName;
 
-  const AccountantDashboard({super.key, required this.branchId, required this.branchName});
+  const AccountantDashboard(
+      {super.key, required this.branchId, required this.branchName});
 
   // دالة لإظهار نافذة اختيار التواريخ ثم استخراج التقرير
   Future<void> _generateReportDialog(BuildContext context) async {
@@ -22,31 +25,70 @@ class AccountantDashboard extends StatelessWidget {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('استخراج تقرير السندات', style: TextStyle(color: Colors.indigo)),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accountantColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.picture_as_pdf_rounded,
+                        color: AppTheme.accountantColor, size: 22),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('استخراج تقرير السندات'),
+                  ),
+                ],
+              ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text('حدد الفترة الزمنية لتاريخ إدخال السندات:'),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Expanded(
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.calendar_today_rounded,
+                              size: 15),
+                          label: Text(
+                            'من: ${startDate.year}/${startDate.month}/${startDate.day}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
                           onPressed: () async {
-                            final picked = await showDatePicker(context: context, initialDate: startDate, firstDate: DateTime(2020), lastDate: DateTime.now());
-                            if(picked != null) setDialogState(() => startDate = picked);
+                            final picked = await showDatePicker(
+                                context: context,
+                                initialDate: startDate,
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime.now());
+                            if (picked != null) {
+                              setDialogState(() => startDate = picked);
+                            }
                           },
-                          child: Text('من: ${startDate.year}/${startDate.month}/${startDate.day}'),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.calendar_today_rounded,
+                              size: 15),
+                          label: Text(
+                            'إلى: ${endDate.year}/${endDate.month}/${endDate.day}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
                           onPressed: () async {
-                            final picked = await showDatePicker(context: context, initialDate: endDate, firstDate: DateTime(2020), lastDate: DateTime.now());
-                            if(picked != null) setDialogState(() => endDate = picked);
+                            final picked = await showDatePicker(
+                                context: context,
+                                initialDate: endDate,
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime.now());
+                            if (picked != null) {
+                              setDialogState(() => endDate = picked);
+                            }
                           },
-                          child: Text('إلى: ${endDate.year}/${endDate.month}/${endDate.day}'),
                         ),
                       ),
                     ],
@@ -54,48 +96,81 @@ class AccountantDashboard extends StatelessWidget {
                 ],
               ),
               actions: [
-                TextButton(onPressed: isGenerating ? null : () => Navigator.pop(context), child: const Text('إلغاء')),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo),
-                  onPressed: isGenerating ? null : () async {
-                    setDialogState(() => isGenerating = true);
-                    try {
-                      // جلب السندات لهذه الفترة من فايربيس
-                      final querySnapshot = await FirebaseFirestore.instance
-                          .collection('transactions')
-                          .where('branchId', isEqualTo: branchId)
-                          .where('timestamp', isGreaterThanOrEqualTo: startDate)
-                          .where('timestamp', isLessThanOrEqualTo: endDate.add(const Duration(days: 1)))
-                          .orderBy('timestamp', descending: true)
-                          .get();
+                TextButton(
+                  onPressed:
+                      isGenerating ? null : () => Navigator.pop(context),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton.icon(
+                  icon: isGenerating
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download_rounded, size: 18),
+                  label: const Text('استخراج PDF'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accountantColor,
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                  ),
+                  onPressed: isGenerating
+                      ? null
+                      : () async {
+                          setDialogState(() => isGenerating = true);
+                          try {
+                            // جلب السندات لهذه الفترة من فايربيس
+                            final querySnapshot = await FirebaseFirestore
+                                .instance
+                                .collection('transactions')
+                                .where('branchId', isEqualTo: branchId)
+                                .where('timestamp',
+                                    isGreaterThanOrEqualTo: startDate)
+                                .where('timestamp',
+                                    isLessThanOrEqualTo:
+                                        endDate.add(const Duration(days: 1)))
+                                .orderBy('timestamp', descending: true)
+                                .get();
 
-                      if (querySnapshot.docs.isEmpty) {
-                        setDialogState(() => isGenerating = false);
-                        if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا توجد سندات في هذه الفترة')));
-                        return;
-                      }
+                            if (querySnapshot.docs.isEmpty) {
+                              setDialogState(() => isGenerating = false);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text(
+                                          'لا توجد سندات في هذه الفترة')),
+                                );
+                              }
+                              return;
+                            }
 
-                      // إرسال البيانات لدالة الطباعة
-                      await PdfService.printTransactionsReport(
-                        transactions: querySnapshot.docs,
-                        branchName: branchName,
-                        startDate: startDate,
-                        endDate: endDate,
-                      );
-                      
-                      if(context.mounted) Navigator.pop(context);
-                    } catch (e) {
-                      setDialogState(() => isGenerating = false);
-                      if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
-                    }
-                  },
-                  child: isGenerating ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white)) : const Text('استخراج PDF', style: TextStyle(color: Colors.white)),
+                            // إرسال البيانات لدالة الطباعة
+                            await PdfService.printTransactionsReport(
+                              transactions: querySnapshot.docs,
+                              branchName: branchName,
+                              startDate: startDate,
+                              endDate: endDate,
+                            );
+
+                            if (context.mounted) Navigator.pop(context);
+                          } catch (e) {
+                            setDialogState(() => isGenerating = false);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('حدث خطأ: $e')),
+                              );
+                            }
+                          }
+                        },
                 ),
               ],
             );
-          }
+          },
         );
-      }
+      },
     );
   }
 
@@ -104,74 +179,169 @@ class AccountantDashboard extends StatelessWidget {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        appBar: AppBar(
-          title: Text('لوحة المحاسب - $branchName'),
-          backgroundColor: Colors.indigo,
-          centerTitle: true,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.logout),
-              tooltip: 'تسجيل الخروج',
-              onPressed: () async {
-                await FirebaseAuth.instance.signOut();
-                if (context.mounted) Navigator.of(context).popUntil((route) => route.isFirst);
-              },
-            )
+        backgroundColor: AppTheme.surfaceColor,
+        body: CustomScrollView(
+          slivers: [
+            _buildSliverAppBar(context),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ── Summary Stats ──────────────────────────────────
+                    _buildAccountantStats(),
+                    const SizedBox(height: 28),
+
+                    // ── Quick Actions ──────────────────────────────────
+                    const SectionHeader(
+                      title: 'الإجراءات السريعة',
+                      icon: Icons.flash_on_rounded,
+                      color: AppTheme.accountantColor,
+                    ),
+                    const SizedBox(height: 14),
+                    ActionCard(
+                      title: 'سجل السندات والاعتماد',
+                      subtitle:
+                          'مراجعة السندات، واعتمادها نهائياً أو طلب تعديلها',
+                      icon: Icons.fact_check_rounded,
+                      color: const Color(0xFF00695C),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BranchTransactionsScreen(
+                                branchId: branchId, branchName: branchName),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    ActionCard(
+                      title: 'استخراج تقارير PDF',
+                      subtitle: 'تحديد فترة زمنية وتصدير جدول بالسندات',
+                      icon: Icons.picture_as_pdf_rounded,
+                      color: const Color(0xFFC62828),
+                      onTap: () => _generateReportDialog(context),
+                    ),
+                    const SizedBox(height: 28),
+
+                    // ── Recent Activity ────────────────────────────────
+                    const SectionHeader(
+                      title: 'آخر المعاملات',
+                      icon: Icons.history_rounded,
+                      color: AppTheme.accountantColor,
+                    ),
+                    const SizedBox(height: 14),
+                    RecentTransactionsList(
+                      branchId: branchId,
+                      color: AppTheme.accountantColor,
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 10),
-              Text('المراجعة المالية للفرع', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.indigo.shade800), textAlign: TextAlign.center),
-              const SizedBox(height: 30),
-
-              _buildDashboardCard(
-                context,
-                title: 'سجل السندات والاعتماد',
-                subtitle: 'مراجعة السندات، واعتمادها نهائياً أو طلب تعديلها',
-                icon: Icons.fact_check,
-                color: Colors.teal,
-                onTap: () {
-                  Navigator.push(context, MaterialPageRoute(builder: (context) => BranchTransactionsScreen(branchId: branchId, branchName: branchName)));
-                },
-              ),
-              
-              const SizedBox(height: 20),
-
-              _buildDashboardCard(
-                context,
-                title: 'استخراج تقارير PDF',
-                subtitle: 'تحديد فترة زمنية وتصدير جدول بالسندات',
-                icon: Icons.picture_as_pdf,
-                color: Colors.red.shade700,
-                onTap: () => _generateReportDialog(context),
-              ),
-            ],
-          ),
         ),
       ),
     );
   }
 
-  Widget _buildDashboardCard(BuildContext context, {required String title, required String subtitle, required IconData icon, required Color color, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(15),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), border: Border.all(color: color.withOpacity(0.3), width: 1.5)),
-        child: Row(
-          children: [
-            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, size: 35, color: color)),
-            const SizedBox(width: 20),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)), const SizedBox(height: 5), Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade600))])),
-            Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey.shade400),
-          ],
+  // ── Sliver App Bar with gradient ──────────────────────────────────────────
+  SliverAppBar _buildSliverAppBar(BuildContext context) {
+    return SliverAppBar(
+      expandedHeight: 160,
+      floating: false,
+      pinned: true,
+      backgroundColor: AppTheme.accountantColor,
+      automaticallyImplyLeading: false,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.logout_rounded),
+          tooltip: 'تسجيل الخروج',
+          onPressed: () async {
+            await FirebaseAuth.instance.signOut();
+            if (context.mounted) {
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            }
+          },
+        ),
+      ],
+      flexibleSpace: FlexibleSpaceBar(
+        centerTitle: true,
+        title: const Text(
+          'لوحة المحاسب',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        background: RoleAppBarBackground(
+          gradientColors: AppTheme.accountantGradient,
+          title: branchName,
+          subtitle: 'المراجعة المالية',
+          icon: Icons.calculate_rounded,
         ),
       ),
+    );
+  }
+
+  // ── Live Summary Stats Section ────────────────────────────────────────────
+  Widget _buildAccountantStats() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('transactions')
+          .where('branchId', isEqualTo: branchId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        int total = 0, awaitingApproval = 0, fullyApproved = 0;
+
+        if (snapshot.hasData) {
+          final docs = snapshot.data!.docs;
+          total = docs.length;
+          awaitingApproval = docs
+              .where((d) => d['status'] == 'approvedByManager')
+              .length;
+          fullyApproved = docs
+              .where((d) => d['status'] == 'approvedByAccountant')
+              .length;
+        }
+
+        return Row(
+          children: [
+            Expanded(
+              child: StatCard(
+                label: 'إجمالي السندات',
+                value: '$total',
+                icon: Icons.receipt_long_rounded,
+                color: AppTheme.accountantColor,
+                bgColor: const Color(0xFFEDE7F6),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: StatCard(
+                label: 'بانتظار مراجعتي',
+                value: '$awaitingApproval',
+                icon: Icons.pending_actions_rounded,
+                color: const Color(0xFFE65100),
+                bgColor: const Color(0xFFFFF3E0),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: StatCard(
+                label: 'مكتملة نهائياً',
+                value: '$fullyApproved',
+                icon: Icons.verified_rounded,
+                color: const Color(0xFF2E7D32),
+                bgColor: const Color(0xFFE8F5E9),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
