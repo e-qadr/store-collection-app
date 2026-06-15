@@ -11,18 +11,25 @@ class BranchManagementScreen extends StatefulWidget {
 
 class _BranchManagementScreenState extends State<BranchManagementScreen> {
   final TextEditingController _branchNameController = TextEditingController();
-  final TextEditingController _companyNameController = TextEditingController();
   final TextEditingController _branchCodeController = TextEditingController();
+  String? _selectedBrandId;
+  String? _selectedBrandName;
 
-  Future<void> _saveBranch({String? branchId, String managerId = ''}) async {
+  Future<void> _saveBranch({
+    String? branchId,
+    String managerId = '',
+    String oldBranchCode = '',
+  }) async {
     final name = _branchNameController.text.trim();
-    final companyName = _companyNameController.text.trim();
     final branchCode = _branchCodeController.text.trim().toUpperCase();
 
-    if (name.isEmpty || companyName.isEmpty || branchCode.isEmpty) {
+    if (name.isEmpty ||
+        _selectedBrandId == null ||
+        _selectedBrandName == null ||
+        branchCode.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('الرجاء إدخال اسم الشركة واسم الفرع ورمز الفرع'),
+          content: Text('الرجاء اختيار العلامة وإدخال اسم الفرع ورمزه'),
         ),
       );
       return;
@@ -61,7 +68,8 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
         transaction.set(branchRef, {
           'id': branchRef.id,
           'name': name,
-          'company_name': companyName,
+          'brand_id': _selectedBrandId,
+          'company_name': _selectedBrandName,
           'branch_code': branchCode,
           'branch_manager_id': managerId,
         }, SetOptions(merge: true));
@@ -69,11 +77,17 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           'branch_id': branchRef.id,
           'branch_name': name,
         });
+        if (oldBranchCode.isNotEmpty && oldBranchCode != branchCode) {
+          transaction.delete(
+            firestore.collection('branch_codes').doc(oldBranchCode),
+          );
+        }
       });
 
       _branchNameController.clear();
-      _companyNameController.clear();
       _branchCodeController.clear();
+      _selectedBrandId = null;
+      _selectedBrandName = null;
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -100,7 +114,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
   }
 
   // حذف فرع
-  Future<void> _deleteBranch(String branchId) async {
+  Future<void> _deleteBranch(String branchId, String branchCode) async {
     // تأكيد الحذف
     await showDialog(
       context: context,
@@ -135,10 +149,15 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
             ),
             onPressed: () async {
               Navigator.pop(context);
-              await FirebaseFirestore.instance
-                  .collection('branches')
-                  .doc(branchId)
-                  .delete();
+              final firestore = FirebaseFirestore.instance;
+              final batch = firestore.batch();
+              batch.delete(firestore.collection('branches').doc(branchId));
+              if (branchCode.isNotEmpty) {
+                batch.delete(
+                  firestore.collection('branch_codes').doc(branchCode),
+                );
+              }
+              await batch.commit();
               if (mounted)
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -318,98 +337,129 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
   // نافذة إضافة فرع
   void _showAddBranchDialog() {
     _branchNameController.clear();
-    _companyNameController.clear();
     _branchCodeController.clear();
+    _selectedBrandId = null;
+    _selectedBrandName = null;
     _showBranchDialog();
   }
 
   void _showEditBranchDialog(String branchId, Map<String, dynamic> data) {
     _branchNameController.text = data['name'] ?? '';
-    _companyNameController.text = data['company_name'] ?? '';
     _branchCodeController.text = data['branch_code'] ?? '';
+    _selectedBrandId = data['brand_id'];
+    _selectedBrandName = data['company_name'];
     _showBranchDialog(
       branchId: branchId,
       managerId: data['branch_manager_id'] ?? '',
+      oldBranchCode: data['branch_code'] ?? '',
     );
   }
 
-  void _showBranchDialog({String? branchId, String managerId = ''}) {
+  void _showBranchDialog({
+    String? branchId,
+    String managerId = '',
+    String oldBranchCode = '',
+  }) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.store_rounded, color: AppTheme.adminColor),
-            SizedBox(width: 8),
-            Text(
-              'بيانات الفرع',
-              style: TextStyle(color: AppTheme.adminColor, fontSize: 18),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.store_rounded, color: AppTheme.adminColor),
+              SizedBox(width: 8),
+              Text('بيانات الفرع'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('brands')
+                      .orderBy('name')
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    final brands = snapshot.data?.docs ?? [];
+                    final selectedExists = brands.any(
+                      (brand) => brand.id == _selectedBrandId,
+                    );
+                    return DropdownButtonFormField<String>(
+                      initialValue: selectedExists ? _selectedBrandId : null,
+                      decoration: const InputDecoration(
+                        labelText: 'العلامة التجارية',
+                        prefixIcon: Icon(Icons.business_rounded),
+                      ),
+                      hint: Text(
+                        snapshot.connectionState == ConnectionState.waiting
+                            ? 'جاري تحميل العلامات...'
+                            : brands.isEmpty
+                            ? 'أضف علامة تجارية أولاً'
+                            : 'اختر العلامة التجارية',
+                      ),
+                      items: brands.map((brand) {
+                        final data = brand.data() as Map<String, dynamic>;
+                        return DropdownMenuItem(
+                          value: brand.id,
+                          child: Text(data['name'] ?? 'بدون اسم'),
+                        );
+                      }).toList(),
+                      onChanged: brands.isEmpty
+                          ? null
+                          : (value) {
+                              final selected = brands.firstWhere(
+                                (brand) => brand.id == value,
+                              );
+                              final data =
+                                  selected.data() as Map<String, dynamic>;
+                              setDialogState(() {
+                                _selectedBrandId = value;
+                                _selectedBrandName = data['name'];
+                              });
+                            },
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _branchNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'اسم الفرع',
+                    hintText: 'مثل: فرع سيئون',
+                    prefixIcon: Icon(Icons.storefront_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _branchCodeController,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    labelText: 'رمز الفرع الفريد',
+                    hintText: 'مثل: AM',
+                    helperText: 'سيُستخدم في أرقام السندات مثل AM005',
+                    prefixIcon: Icon(Icons.tag_rounded),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton.icon(
+              onPressed: () => _saveBranch(
+                branchId: branchId,
+                managerId: managerId,
+                oldBranchCode: oldBranchCode,
+              ),
+              icon: const Icon(Icons.save_rounded, size: 18),
+              label: const Text('حفظ بيانات الفرع'),
             ),
           ],
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: _companyNameController,
-                decoration: const InputDecoration(
-                  labelText: 'اسم الشركة أو العلامة التجارية',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  prefixIcon: Icon(Icons.business_rounded),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _branchNameController,
-                decoration: const InputDecoration(
-                  labelText: 'اسم الفرع',
-                  hintText: 'مثل: فرع سيئون',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  prefixIcon: Icon(Icons.storefront_rounded),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _branchCodeController,
-                textCapitalization: TextCapitalization.characters,
-                decoration: const InputDecoration(
-                  labelText: 'رمز الفرع الفريد',
-                  hintText: 'مثل: AM',
-                  helperText: 'سيُستخدم في أرقام السندات مثل AM005',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.all(Radius.circular(12)),
-                  ),
-                  prefixIcon: Icon(Icons.tag_rounded),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.adminColor,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            onPressed: () =>
-                _saveBranch(branchId: branchId, managerId: managerId),
-            icon: const Icon(Icons.save_rounded, size: 18),
-            label: const Text('حفظ بيانات الفرع'),
-          ),
-        ],
       ),
     );
   }
@@ -450,7 +500,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                 ),
               ),
               child: const Text(
-                'أضف الشركة واسم الفرع ورمزه الفريد، ثم عيّن مدير الفرع.',
+                'اختر العلامة التجارية، ثم أضف اسم الفرع ورمزه الفريد وعيّن مديره.',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 14,
@@ -640,7 +690,10 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                           Icons.delete_outline_rounded,
                                           color: Colors.red.shade400,
                                         ),
-                                        onPressed: () => _deleteBranch(doc.id),
+                                        onPressed: () => _deleteBranch(
+                                          doc.id,
+                                          data['branch_code'] ?? '',
+                                        ),
                                       ),
                                     ],
                                   ),

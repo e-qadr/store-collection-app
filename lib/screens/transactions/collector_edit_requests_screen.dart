@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/transaction_records.dart';
 
 class CollectorEditRequestsScreen extends StatefulWidget {
   final String branchId;
@@ -274,7 +275,7 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
           elevation: 0,
         ),
         body: StreamBuilder<QuerySnapshot>(
-          stream: _dbService.getBranchTransactions(branchId: widget.branchId, status: 'editRequestedByCollector'),
+          stream: _dbService.getBranchTransactions(branchId: widget.branchId),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) return Center(child: CircularProgressIndicator(color: Colors.orange.shade700));
             if (snapshot.hasError) return const Center(child: Text('حدث خطأ في جلب البيانات.', style: TextStyle(color: Colors.red)));
@@ -293,7 +294,19 @@ class _CollectorEditRequestsScreenState extends State<CollectorEditRequestsScree
               );
             }
 
-            final transactions = snapshot.data!.docs;
+            final transactions = filterAndSortTransactionRecords(
+              records: snapshot.data!.docs,
+              dataOf: (doc) => doc.data() as Map<String, dynamic>,
+              filters: const TransactionRecordFilters(
+                status: 'editRequestedByCollector',
+              ),
+            );
+
+            if (transactions.isEmpty) {
+              return const Center(
+                child: Text('لا توجد أي سندات تتطلب التعديل حالياً.'),
+              );
+            }
 
             return ListView.builder(
               padding: const EdgeInsets.all(16),

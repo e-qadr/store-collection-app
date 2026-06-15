@@ -7,6 +7,7 @@ void main() {
       id: 'branch-1',
       name: 'فرع الرياض',
       companyName: 'شركة المتجر',
+      brandId: 'brand-1',
       branchCode: 'AM',
       branchManagerId: 'manager-1',
     );
@@ -15,6 +16,7 @@ void main() {
       'id': 'branch-1',
       'name': 'فرع الرياض',
       'company_name': 'شركة المتجر',
+      'brand_id': 'brand-1',
       'branch_code': 'AM',
       'branch_manager_id': 'manager-1',
     });

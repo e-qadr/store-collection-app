@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/transaction_records.dart';
 
 class ManagerApprovalsScreen extends StatefulWidget {
   final String branchId;
@@ -263,10 +264,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
   // 1. تبويبة السندات الجديدة
   Widget _buildNewTransactionsTab() {
     return StreamBuilder<QuerySnapshot>(
-      stream: _dbService.getBranchTransactions(
-        branchId: widget.branchId,
-        status: 'pending', // السندات الجديدة
-      ),
+      stream: _dbService.getBranchTransactions(branchId: widget.branchId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting)
           return const Center(
@@ -299,7 +297,17 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
           );
         }
 
-        final transactions = snapshot.data!.docs;
+        final transactions = filterAndSortTransactionRecords(
+          records: snapshot.data!.docs,
+          dataOf: (doc) => doc.data() as Map<String, dynamic>,
+          filters: const TransactionRecordFilters(status: 'pending'),
+        );
+
+        if (transactions.isEmpty) {
+          return const Center(
+            child: Text('لا توجد طلبات اعتماد معلقة حالياً!'),
+          );
+        }
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -462,11 +470,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
   // 2. تبويبة طلبات التعديل
   Widget _buildEditRequestsTab() {
     return StreamBuilder<QuerySnapshot>(
-      stream: _dbService.getBranchTransactions(
-        branchId: widget.branchId,
-        status:
-            'pendingApprovalOfEdit', // السندات التي تم تعديلها وبانتظار الموافقة
-      ),
+      stream: _dbService.getBranchTransactions(branchId: widget.branchId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting)
           return const Center(
@@ -499,7 +503,17 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
           );
         }
 
-        final transactions = snapshot.data!.docs;
+        final transactions = filterAndSortTransactionRecords(
+          records: snapshot.data!.docs,
+          dataOf: (doc) => doc.data() as Map<String, dynamic>,
+          filters: const TransactionRecordFilters(
+            status: 'pendingApprovalOfEdit',
+          ),
+        );
+
+        if (transactions.isEmpty) {
+          return const Center(child: Text('لا توجد طلبات تعديل للمراجعة.'));
+        }
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),

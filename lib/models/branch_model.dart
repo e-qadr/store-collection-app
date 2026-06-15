@@ -2,6 +2,7 @@ class BranchModel {
   final String id;
   final String name;
   final String companyName;
+  final String brandId;
   final String branchCode;
   final String branchManagerId;
 
@@ -9,6 +10,7 @@ class BranchModel {
     required this.id,
     required this.name,
     required this.companyName,
+    this.brandId = '',
     required this.branchCode,
     required this.branchManagerId,
   });
@@ -18,6 +20,7 @@ class BranchModel {
       id: json['id'],
       name: json['name'],
       companyName: json['company_name'] ?? 'بدون شركة',
+      brandId: json['brand_id'] ?? '',
       branchCode: json['branch_code'] ?? '',
       branchManagerId: json['branch_manager_id'] ?? '',
     );
@@ -28,6 +31,7 @@ class BranchModel {
       'id': id,
       'name': name,
       'company_name': companyName,
+      'brand_id': brandId,
       'branch_code': branchCode,
       'branch_manager_id': branchManagerId,
     };

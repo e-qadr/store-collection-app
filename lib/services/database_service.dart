@@ -137,28 +137,11 @@ class DatabaseService {
   }
 
   // 2. جلب السندات مع الفلاتر
-  Stream<QuerySnapshot> getBranchTransactions({
-    required String branchId,
-    String? currency,
-    String? status,
-    DateTime? startDate,
-    DateTime? endDate,
-  }) {
-    Query query = _firestore
+  Stream<QuerySnapshot> getBranchTransactions({required String branchId}) {
+    return _firestore
         .collection('transactions')
-        .where('branchId', isEqualTo: branchId);
-
-    if (currency != null) query = query.where('currency', isEqualTo: currency);
-    if (status != null) query = query.where('status', isEqualTo: status);
-    if (startDate != null)
-      query = query.where('timestamp', isGreaterThanOrEqualTo: startDate);
-    if (endDate != null)
-      query = query.where(
-        'timestamp',
-        isLessThanOrEqualTo: endDate.add(const Duration(days: 1)),
-      );
-
-    return query.orderBy('timestamp', descending: true).snapshots();
+        .where('branchId', isEqualTo: branchId)
+        .snapshots();
   }
 
   // 3. تحديث حالة السند (مع تسجيل الحدث في السجل)

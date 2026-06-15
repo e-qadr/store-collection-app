@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/transaction_records.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
@@ -141,20 +142,18 @@ class AccountantDashboard extends StatelessWidget {
                                 .instance
                                 .collection('transactions')
                                 .where('branchId', isEqualTo: branchId)
-                                .where(
-                                  'timestamp',
-                                  isGreaterThanOrEqualTo: startDate,
-                                )
-                                .where(
-                                  'timestamp',
-                                  isLessThanOrEqualTo: endDate.add(
-                                    const Duration(days: 1),
-                                  ),
-                                )
-                                .orderBy('timestamp', descending: true)
                                 .get();
+                            final transactions =
+                                filterAndSortTransactionRecords(
+                                  records: querySnapshot.docs,
+                                  dataOf: (doc) => doc.data(),
+                                  filters: TransactionRecordFilters(
+                                    createdFrom: startDate,
+                                    createdTo: endDate,
+                                  ),
+                                );
 
-                            if (querySnapshot.docs.isEmpty) {
+                            if (transactions.isEmpty) {
                               setDialogState(() => isGenerating = false);
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -170,7 +169,7 @@ class AccountantDashboard extends StatelessWidget {
 
                             // إرسال البيانات لدالة الطباعة
                             await PdfService.printTransactionsReport(
-                              transactions: querySnapshot.docs,
+                              transactions: transactions,
                               branchName: branchName,
                               startDate: startDate,
                               endDate: endDate,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/screens/admin/branch_management_screen.dart';
+import 'package:store_collection_app/screens/admin/brand_management_screen.dart';
 import 'package:store_collection_app/screens/admin/user_management_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
@@ -24,6 +25,20 @@ class AdminDashboard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 10),
+                    _buildAdminCard(
+                      context,
+                      title: 'إدارة العلامات التجارية',
+                      subtitle: 'إضافة العلامات وربط الفروع التابعة بكل علامة',
+                      icon: Icons.branding_watermark_rounded,
+                      color: AppTheme.adminColor,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const BrandManagementScreen(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
                     _buildAdminCard(
                       context,
                       title: 'إدارة الفروع',

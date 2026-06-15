@@ -5,6 +5,7 @@ import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/screens/transactions/transaction_details_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/transaction_records.dart';
 
 class BranchTransactionsScreen extends StatefulWidget {
   final String branchId;
@@ -17,7 +18,8 @@ class BranchTransactionsScreen extends StatefulWidget {
   });
 
   @override
-  State<BranchTransactionsScreen> createState() => _BranchTransactionsScreenState();
+  State<BranchTransactionsScreen> createState() =>
+      _BranchTransactionsScreenState();
 }
 
 class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
@@ -46,7 +48,10 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   Future<void> _fetchUserRole() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
       if (mounted) {
         setState(() {
           _currentUserRole = doc.data()?['role'];
@@ -59,7 +64,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   }
 
   // --- دوال التقويم الذكية للتعديل ---
-  Future<void> _pickEditDate(BuildContext context, bool isFromDate, DateTime? currentFrom, DateTime? currentTo, Function(DateTime) onPicked) async {
+  Future<void> _pickEditDate(
+    BuildContext context,
+    bool isFromDate,
+    DateTime? currentFrom,
+    DateTime? currentTo,
+    Function(DateTime) onPicked,
+  ) async {
     DateTime initialDate = DateTime.now();
     DateTime firstDate = DateTime(2020);
     DateTime lastDate = DateTime.now().add(const Duration(days: 365));
@@ -81,11 +92,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
       lastDate: lastDate,
       builder: (context, child) {
         return Theme(
-          data: Theme.of(context).copyWith(
-            colorScheme: ColorScheme.light(
-              primary: _getRoleColor(),
-            ),
-          ),
+          data: Theme.of(
+            context,
+          ).copyWith(colorScheme: ColorScheme.light(primary: _getRoleColor())),
           child: child!,
         );
       },
@@ -94,18 +103,26 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   }
 
   // --- طلب التعديل (المدير) ---
-  Future<void> _managerRequestEdit(String transactionId, String trnNumber) async {
+  Future<void> _managerRequestEdit(
+    String transactionId,
+    String trnNumber,
+  ) async {
     TextEditingController notesController = TextEditingController();
     await showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Row(
             children: [
               Icon(Icons.edit_note_rounded, color: Colors.orange),
               SizedBox(width: 8),
-              Text('طلب تعديل السند', style: TextStyle(color: Colors.orange, fontSize: 18)),
+              Text(
+                'طلب تعديل السند',
+                style: TextStyle(color: Colors.orange, fontSize: 18),
+              ),
             ],
           ),
           content: TextField(
@@ -119,33 +136,47 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
               onPressed: () async {
                 if (notesController.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء إدخال المطلوب')));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('الرجاء إدخال المطلوب')),
+                  );
                   return;
                 }
                 Navigator.pop(context);
                 try {
                   await _dbService.updateTransactionStatus(
-                      transactionId: transactionId,
-                      newStatus: 'editRequestedByCollector',
-                      managerNotes: notesController.text.trim());
+                    transactionId: transactionId,
+                    newStatus: 'editRequestedByCollector',
+                    managerNotes: notesController.text.trim(),
+                  );
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('تم طلب التعديل للسند $trnNumber'), backgroundColor: Colors.orange),
+                      SnackBar(
+                        content: Text('تم طلب التعديل للسند $trnNumber'),
+                        backgroundColor: Colors.orange,
+                      ),
                     );
                   }
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('حدث خطأ'), backgroundColor: Colors.red),
+                      const SnackBar(
+                        content: Text('حدث خطأ'),
+                        backgroundColor: Colors.red,
+                      ),
                     );
                   }
                 }
@@ -160,18 +191,26 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   }
 
   // --- دوال المحاسب ---
-  Future<void> _accountantRequestEdit(String transactionId, String trnNumber) async {
+  Future<void> _accountantRequestEdit(
+    String transactionId,
+    String trnNumber,
+  ) async {
     TextEditingController notesController = TextEditingController();
     await showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Row(
             children: [
               Icon(Icons.edit_note_rounded, color: Colors.orange),
               SizedBox(width: 8),
-              Text('طلب تعديل (المحاسب)', style: TextStyle(color: Colors.orange, fontSize: 18)),
+              Text(
+                'طلب تعديل (المحاسب)',
+                style: TextStyle(color: Colors.orange, fontSize: 18),
+              ),
             ],
           ),
           content: TextField(
@@ -185,31 +224,46 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
               ),
               onPressed: () async {
                 if (notesController.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء إدخال المطلوب')));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('الرجاء إدخال المطلوب')),
+                  );
                   return;
                 }
                 Navigator.pop(context);
                 try {
                   await _dbService.requestEditByAccountant(
-                      transactionId: transactionId, accountantNotes: notesController.text.trim());
+                    transactionId: transactionId,
+                    accountantNotes: notesController.text.trim(),
+                  );
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('تم طلب التعديل للسند $trnNumber'), backgroundColor: Colors.orange),
+                      SnackBar(
+                        content: Text('تم طلب التعديل للسند $trnNumber'),
+                        backgroundColor: Colors.orange,
+                      ),
                     );
                   }
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('حدث خطأ'), backgroundColor: Colors.red),
+                      const SnackBar(
+                        content: Text('حدث خطأ'),
+                        backgroundColor: Colors.red,
+                      ),
                     );
                   }
                 }
@@ -223,7 +277,10 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     );
   }
 
-  Future<void> _accountantApprove(String transactionId, String trnNumber) async {
+  Future<void> _accountantApprove(
+    String transactionId,
+    String trnNumber,
+  ) async {
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -232,17 +289,27 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
           children: [
             Icon(Icons.verified_rounded, color: Colors.green),
             SizedBox(width: 8),
-            Text('اعتماد نهائي', style: TextStyle(color: Colors.green, fontSize: 18)),
+            Text(
+              'اعتماد نهائي',
+              style: TextStyle(color: Colors.green, fontSize: 18),
+            ),
           ],
         ),
-        content: Text('هل أنت متأكد من الاعتماد النهائي للسند رقم $trnNumber؟ لا يمكن التراجع بعد الاعتماد.'),
+        content: Text(
+          'هل أنت متأكد من الاعتماد النهائي للسند رقم $trnNumber؟ لا يمكن التراجع بعد الاعتماد.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
             onPressed: () async {
               Navigator.pop(context);
@@ -250,32 +317,47 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                 await _dbService.approveByAccountant(transactionId);
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('تم الاعتماد النهائي بنجاح'), backgroundColor: Colors.green),
+                    const SnackBar(
+                      content: Text('تم الاعتماد النهائي بنجاح'),
+                      backgroundColor: Colors.green,
+                    ),
                   );
                 }
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('حدث خطأ'), backgroundColor: Colors.red),
+                    const SnackBar(
+                      content: Text('حدث خطأ'),
+                      backgroundColor: Colors.red,
+                    ),
                   );
                 }
               }
             },
             icon: const Icon(Icons.check_circle_rounded, size: 18),
             label: const Text('تأكيد الاعتماد'),
-          )
+          ),
         ],
       ),
     );
   }
 
   // --- التعديل المباشر (المحصل) ---
-  Future<void> _collectorProposeEdit(String transactionId, Map<String, dynamic> currentData) async {
-    final TextEditingController amountController = TextEditingController(text: currentData['amount'].toString());
-    final TextEditingController notesController = TextEditingController(text: currentData['notes'] ?? '');
+  Future<void> _collectorProposeEdit(
+    String transactionId,
+    Map<String, dynamic> currentData,
+  ) async {
+    final TextEditingController amountController = TextEditingController(
+      text: currentData['amount'].toString(),
+    );
+    final TextEditingController notesController = TextEditingController(
+      text: currentData['notes'] ?? '',
+    );
     String selectedCurrency = currentData['currency'] ?? 'YER';
-    DateTime dateFrom = (currentData['dateFrom'] as Timestamp?)?.toDate() ?? DateTime.now();
-    DateTime dateTo = (currentData['dateTo'] as Timestamp?)?.toDate() ?? DateTime.now();
+    DateTime dateFrom =
+        (currentData['dateFrom'] as Timestamp?)?.toDate() ?? DateTime.now();
+    DateTime dateTo =
+        (currentData['dateTo'] as Timestamp?)?.toDate() ?? DateTime.now();
     bool isSaving = false;
 
     await showDialog(
@@ -285,12 +367,20 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               title: const Row(
                 children: [
                   Icon(Icons.edit_rounded, color: AppTheme.collectorColor),
                   SizedBox(width: 8),
-                  Text('تعديل بيانات السند', style: TextStyle(color: AppTheme.collectorColor, fontSize: 18)),
+                  Text(
+                    'تعديل بيانات السند',
+                    style: TextStyle(
+                      color: AppTheme.collectorColor,
+                      fontSize: 18,
+                    ),
+                  ),
                 ],
               ),
               content: SingleChildScrollView(
@@ -299,30 +389,49 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                   children: [
                     TextField(
                       controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                       decoration: const InputDecoration(
                         labelText: 'المبلغ',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 15),
                     InputDecorator(
                       decoration: const InputDecoration(
                         labelText: 'العملة',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
                       ),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
                           value: selectedCurrency,
                           isExpanded: true,
                           items: const [
-                            DropdownMenuItem(value: 'YER', child: Text('ريال يمني (YER)')),
-                            DropdownMenuItem(value: 'SAR', child: Text('ريال سعودي (SAR)')),
-                            DropdownMenuItem(value: 'USD', child: Text('دولار (USD)')),
+                            DropdownMenuItem(
+                              value: 'YER',
+                              child: Text('ريال يمني (YER)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'SAR',
+                              child: Text('ريال سعودي (SAR)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'USD',
+                              child: Text('دولار (USD)'),
+                            ),
                           ],
                           onChanged: (val) {
-                            if (val != null) setDialogState(() => selectedCurrency = val);
+                            if (val != null)
+                              setDialogState(() => selectedCurrency = val);
                           },
                         ),
                       ),
@@ -333,9 +442,21 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                         borderRadius: BorderRadius.circular(12),
                         side: BorderSide(color: Colors.grey.shade300),
                       ),
-                      title: Text('من: ${DateFormat('yyyy/MM/dd').format(dateFrom)}', style: const TextStyle(fontSize: 14)),
-                      trailing: const Icon(Icons.calendar_today_rounded, size: 20),
-                      onTap: () => _pickEditDate(context, true, dateFrom, dateTo, (picked) => setDialogState(() => dateFrom = picked)),
+                      title: Text(
+                        'من: ${DateFormat('yyyy/MM/dd').format(dateFrom)}',
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      trailing: const Icon(
+                        Icons.calendar_today_rounded,
+                        size: 20,
+                      ),
+                      onTap: () => _pickEditDate(
+                        context,
+                        true,
+                        dateFrom,
+                        dateTo,
+                        (picked) => setDialogState(() => dateFrom = picked),
+                      ),
                     ),
                     const SizedBox(height: 10),
                     ListTile(
@@ -343,9 +464,21 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                         borderRadius: BorderRadius.circular(12),
                         side: BorderSide(color: Colors.grey.shade300),
                       ),
-                      title: Text('إلى: ${DateFormat('yyyy/MM/dd').format(dateTo)}', style: const TextStyle(fontSize: 14)),
-                      trailing: const Icon(Icons.calendar_today_rounded, size: 20),
-                      onTap: () => _pickEditDate(context, false, dateFrom, dateTo, (picked) => setDialogState(() => dateTo = picked)),
+                      title: Text(
+                        'إلى: ${DateFormat('yyyy/MM/dd').format(dateTo)}',
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      trailing: const Icon(
+                        Icons.calendar_today_rounded,
+                        size: 20,
+                      ),
+                      onTap: () => _pickEditDate(
+                        context,
+                        false,
+                        dateFrom,
+                        dateTo,
+                        (picked) => setDialogState(() => dateTo = picked),
+                      ),
                     ),
                     const SizedBox(height: 15),
                     TextField(
@@ -353,30 +486,44 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                       maxLines: 2,
                       decoration: const InputDecoration(
                         labelText: 'ملاحظات',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
               actions: [
-                TextButton(onPressed: isSaving ? null : () => Navigator.pop(context), child: const Text('إلغاء')),
+                TextButton(
+                  onPressed: isSaving ? null : () => Navigator.pop(context),
+                  child: const Text('إلغاء'),
+                ),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.collectorColor,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   onPressed: isSaving
                       ? null
                       : () async {
                           if (amountController.text.trim().isEmpty) return;
-                          final double? amount = double.tryParse(amountController.text.trim());
+                          final double? amount = double.tryParse(
+                            amountController.text.trim(),
+                          );
                           if (amount == null) return;
 
                           if (dateTo.isBefore(dateFrom)) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('تاريخ (إلى) يجب أن يكون بعد أو يساوي تاريخ (من)'), backgroundColor: Colors.red),
+                              const SnackBar(
+                                content: Text(
+                                  'تاريخ (إلى) يجب أن يكون بعد أو يساوي تاريخ (من)',
+                                ),
+                                backgroundColor: Colors.red,
+                              ),
                             );
                             return;
                           }
@@ -395,20 +542,35 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                             if (context.mounted) {
                               Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('تم إرسال التعديل للمدير للموافقة'), backgroundColor: Colors.green),
+                                const SnackBar(
+                                  content: Text(
+                                    'تم إرسال التعديل للمدير للموافقة',
+                                  ),
+                                  backgroundColor: Colors.green,
+                                ),
                               );
                             }
                           } catch (e) {
                             setDialogState(() => isSaving = false);
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('حدث خطأ'), backgroundColor: Colors.red),
+                                const SnackBar(
+                                  content: Text('حدث خطأ'),
+                                  backgroundColor: Colors.red,
+                                ),
                               );
                             }
                           }
                         },
                   icon: isSaving
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
                       : const Icon(Icons.save_rounded, size: 18),
                   label: Text(isSaving ? 'جاري الحفظ...' : 'حفظ وطلب موافقة'),
                 ),
@@ -421,12 +583,24 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   }
 
   // --- دوال المساعدة للواجهة ---
-  Widget? _buildTrailingAction(String status, String transactionId, String trnNumber, Map<String, dynamic> data) {
+  Widget? _buildTrailingAction(
+    String status,
+    String transactionId,
+    String trnNumber,
+    Map<String, dynamic> data,
+  ) {
     if (status == 'approvedByAccountant') {
       return Container(
         padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.1), shape: BoxShape.circle),
-        child: const Icon(Icons.verified_rounded, color: Colors.green, size: 24),
+        decoration: BoxDecoration(
+          color: Colors.green.withValues(alpha: 0.1),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.verified_rounded,
+          color: Colors.green,
+          size: 24,
+        ),
       );
     }
 
@@ -435,12 +609,20 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            icon: const Icon(Icons.edit_note_rounded, color: Colors.orange, size: 24),
+            icon: const Icon(
+              Icons.edit_note_rounded,
+              color: Colors.orange,
+              size: 24,
+            ),
             tooltip: 'طلب تعديل من المحصل',
             onPressed: () => _accountantRequestEdit(transactionId, trnNumber),
           ),
           IconButton(
-            icon: const Icon(Icons.check_circle_rounded, color: Colors.green, size: 24),
+            icon: const Icon(
+              Icons.check_circle_rounded,
+              color: Colors.green,
+              size: 24,
+            ),
             tooltip: 'اعتماد نهائي',
             onPressed: () => _accountantApprove(transactionId, trnNumber),
           ),
@@ -448,17 +630,28 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
       );
     }
 
-    if (status == 'editRequestedByCollector' || status == 'pendingApprovalOfEdit' || status == 'rejectedByManager') return null;
+    if (status == 'editRequestedByCollector' ||
+        status == 'pendingApprovalOfEdit' ||
+        status == 'rejectedByManager')
+      return null;
 
     if (_currentUserRole == 'manager') {
       return IconButton(
-        icon: const Icon(Icons.edit_note_rounded, color: Colors.orange, size: 24),
+        icon: const Icon(
+          Icons.edit_note_rounded,
+          color: Colors.orange,
+          size: 24,
+        ),
         tooltip: 'إرجاع للمحصل للتعديل',
         onPressed: () => _managerRequestEdit(transactionId, trnNumber),
       );
     } else if (_currentUserRole == 'collector') {
       return IconButton(
-        icon: const Icon(Icons.edit_rounded, color: AppTheme.collectorColor, size: 22),
+        icon: const Icon(
+          Icons.edit_rounded,
+          color: AppTheme.collectorColor,
+          size: 22,
+        ),
         tooltip: 'تعديل السند',
         onPressed: () => _collectorProposeEdit(transactionId, data),
       );
@@ -467,11 +660,23 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   }
 
   // أداة لاختيار التواريخ في شاشة الفلترة
-  Widget _buildDateRangeFilter({required String title, required DateTime? start, required DateTime? end, required Function(DateTime?, DateTime?) onPicked}) {
+  Widget _buildDateRangeFilter({
+    required String title,
+    required DateTime? start,
+    required DateTime? end,
+    required Function(DateTime?, DateTime?) onPicked,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textSecondary, fontSize: 13)),
+        Text(
+          title,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: AppTheme.textSecondary,
+            fontSize: 13,
+          ),
+        ),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -479,7 +684,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
               child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
                 onPressed: () async {
                   final picked = await showDatePicker(
@@ -490,10 +697,19 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                   );
                   onPicked(picked, end);
                 },
-                icon: const Icon(Icons.date_range_rounded, size: 16, color: AppTheme.textHint),
+                icon: const Icon(
+                  Icons.date_range_rounded,
+                  size: 16,
+                  color: AppTheme.textHint,
+                ),
                 label: Text(
-                  start != null ? DateFormat('yyyy/MM/dd').format(start) : 'من تاريخ',
-                  style: const TextStyle(fontSize: 12, color: AppTheme.textPrimary),
+                  start != null
+                      ? DateFormat('yyyy/MM/dd').format(start)
+                      : 'من تاريخ',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textPrimary,
+                  ),
                 ),
               ),
             ),
@@ -502,7 +718,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
               child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
                 onPressed: () async {
                   final picked = await showDatePicker(
@@ -513,10 +731,19 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                   );
                   onPicked(start, picked);
                 },
-                icon: const Icon(Icons.date_range_rounded, size: 16, color: AppTheme.textHint),
+                icon: const Icon(
+                  Icons.date_range_rounded,
+                  size: 16,
+                  color: AppTheme.textHint,
+                ),
                 label: Text(
-                  end != null ? DateFormat('yyyy/MM/dd').format(end) : 'إلى تاريخ',
-                  style: const TextStyle(fontSize: 12, color: AppTheme.textPrimary),
+                  end != null
+                      ? DateFormat('yyyy/MM/dd').format(end)
+                      : 'إلى تاريخ',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textPrimary,
+                  ),
                 ),
               ),
             ),
@@ -533,7 +760,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               title: const Row(
                 children: [
                   Icon(Icons.filter_alt_rounded, color: AppTheme.textSecondary),
@@ -548,8 +777,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                     InputDecorator(
                       decoration: const InputDecoration(
                         labelText: 'العملة',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
                       ),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
@@ -557,11 +791,21 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                           isExpanded: true,
                           items: const [
                             DropdownMenuItem(value: null, child: Text('الكل')),
-                            DropdownMenuItem(value: 'YER', child: Text('ريال يمني (YER)')),
-                            DropdownMenuItem(value: 'SAR', child: Text('ريال سعودي (SAR)')),
-                            DropdownMenuItem(value: 'USD', child: Text('دولار (USD)')),
+                            DropdownMenuItem(
+                              value: 'YER',
+                              child: Text('ريال يمني (YER)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'SAR',
+                              child: Text('ريال سعودي (SAR)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'USD',
+                              child: Text('دولار (USD)'),
+                            ),
                           ],
-                          onChanged: (val) => setDialogState(() => _selectedCurrency = val),
+                          onChanged: (val) =>
+                              setDialogState(() => _selectedCurrency = val),
                         ),
                       ),
                     ),
@@ -569,8 +813,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                     InputDecorator(
                       decoration: const InputDecoration(
                         labelText: 'الحالة',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
                       ),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
@@ -578,12 +827,25 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                           isExpanded: true,
                           items: const [
                             DropdownMenuItem(value: null, child: Text('الكل')),
-                            DropdownMenuItem(value: 'pending', child: Text('قيد الانتظار')),
-                            DropdownMenuItem(value: 'pendingApprovalOfEdit', child: Text('تعديلات بانتظار المدير')),
-                            DropdownMenuItem(value: 'approvedByManager', child: Text('معتمد من المدير')),
-                            DropdownMenuItem(value: 'approvedByAccountant', child: Text('معتمد من المحاسب')),
+                            DropdownMenuItem(
+                              value: 'pending',
+                              child: Text('قيد الانتظار'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'pendingApprovalOfEdit',
+                              child: Text('تعديلات بانتظار المدير'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'approvedByManager',
+                              child: Text('معتمد من المدير'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'approvedByAccountant',
+                              child: Text('معتمد من المحاسب'),
+                            ),
                           ],
-                          onChanged: (val) => setDialogState(() => _selectedStatus = val),
+                          onChanged: (val) =>
+                              setDialogState(() => _selectedStatus = val),
                         ),
                       ),
                     ),
@@ -592,22 +854,24 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                       child: Divider(height: 1, thickness: 1),
                     ),
                     _buildDateRangeFilter(
-                        title: 'تاريخ إدخال السند (متى تم الحفظ):',
-                        start: _filterStartDate,
-                        end: _filterEndDate,
-                        onPicked: (s, e) => setDialogState(() {
-                              _filterStartDate = s;
-                              _filterEndDate = e;
-                            })),
+                      title: 'تاريخ إدخال السند (متى تم الحفظ):',
+                      start: _filterStartDate,
+                      end: _filterEndDate,
+                      onPicked: (s, e) => setDialogState(() {
+                        _filterStartDate = s;
+                        _filterEndDate = e;
+                      }),
+                    ),
                     const SizedBox(height: 15),
                     _buildDateRangeFilter(
-                        title: 'فترة التحصيل (المبيعات من وإلى):',
-                        start: _periodStartDate,
-                        end: _periodEndDate,
-                        onPicked: (s, e) => setDialogState(() {
-                              _periodStartDate = s;
-                              _periodEndDate = e;
-                            })),
+                      title: 'فترة التحصيل (المبيعات من وإلى):',
+                      start: _periodStartDate,
+                      end: _periodEndDate,
+                      onPicked: (s, e) => setDialogState(() {
+                        _periodStartDate = s;
+                        _periodEndDate = e;
+                      }),
+                    ),
                   ],
                 ),
               ),
@@ -624,13 +888,18 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                     });
                     Navigator.pop(context);
                   },
-                  child: const Text('مسح الفلاتر', style: TextStyle(color: Colors.red)),
+                  child: const Text(
+                    'مسح الفلاتر',
+                    style: TextStyle(color: Colors.red),
+                  ),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _getRoleColor(),
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   onPressed: () {
                     setState(() {});
@@ -652,16 +921,148 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     return AppTheme.collectorColor; // Default for collector or unknown
   }
 
+  TransactionRecordFilters get _recordFilters => TransactionRecordFilters(
+    currency: _selectedCurrency,
+    status: _selectedStatus,
+    createdFrom: _filterStartDate,
+    createdTo: _filterEndDate,
+    periodFrom: _periodStartDate,
+    periodTo: _periodEndDate,
+  );
+
+  void _clearFilters() {
+    setState(() {
+      _selectedCurrency = null;
+      _selectedStatus = null;
+      _filterStartDate = null;
+      _filterEndDate = null;
+      _periodStartDate = null;
+      _periodEndDate = null;
+    });
+  }
+
+  String _currencyLabel(String currency) {
+    switch (currency) {
+      case 'YER':
+        return 'ريال يمني';
+      case 'SAR':
+        return 'ريال سعودي';
+      case 'USD':
+        return 'دولار أمريكي';
+      default:
+        return currency;
+    }
+  }
+
+  Widget _buildRecordsSummary(
+    List<QueryDocumentSnapshot<Object?>> transactions,
+  ) {
+    final totals = totalsByCurrency(
+      transactions.map((doc) => doc.data() as Map<String, dynamic>),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'نتائج السجل (${transactions.length})',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+              if (_recordFilters.isActive)
+                TextButton.icon(
+                  onPressed: _clearFilters,
+                  icon: const Icon(Icons.filter_alt_off_rounded, size: 18),
+                  label: const Text('مسح الفلاتر'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (totals.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: AppTheme.cardShadow(),
+              child: const Text('لا توجد مبالغ لعرضها'),
+            )
+          else
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: totals.entries.map((entry) {
+                return Container(
+                  constraints: const BoxConstraints(minWidth: 155),
+                  padding: const EdgeInsets.all(14),
+                  decoration: AppTheme.cardShadow(),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: _getRoleColor().withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          Icons.account_balance_wallet_rounded,
+                          color: _getRoleColor(),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            NumberFormat(
+                              '#,##0.##',
+                              'en_US',
+                            ).format(entry.value),
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            _currencyLabel(entry.key),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isLoadingRole) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_isLoadingRole)
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: Text('سجل السندات', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          title: Text(
+            'سجل السندات',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
           backgroundColor: _getRoleColor(),
           elevation: 0,
           actions: [
@@ -690,44 +1091,82 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                 style: const TextStyle(color: Colors.white, fontSize: 15),
               ),
             ),
+            if (_recordFilters.isActive)
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: _getRoleColor().withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _getRoleColor().withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.filter_alt_rounded,
+                      color: _getRoleColor(),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'تم تطبيق ${_recordFilters.activeCount} من خيارات التصفية',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _showFilterDialog,
+                      child: const Text('تعديل'),
+                    ),
+                  ],
+                ),
+              ),
 
             Expanded(
               child: StreamBuilder<QuerySnapshot>(
                 stream: _dbService.getBranchTransactions(
                   branchId: widget.branchId,
-                  currency: _selectedCurrency,
-                  status: _selectedStatus,
-                  startDate: _filterStartDate,
-                  endDate: _filterEndDate,
                 ),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                  if (snapshot.hasError) return const Center(child: Text('خطأ في جلب البيانات.', style: TextStyle(color: Colors.red)));
+                  if (snapshot.connectionState == ConnectionState.waiting)
+                    return const Center(child: CircularProgressIndicator());
+                  if (snapshot.hasError)
+                    return const Center(
+                      child: Text(
+                        'خطأ في جلب البيانات.',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    );
 
-                  var transactions = snapshot.data!.docs;
-
-                  if (_periodStartDate != null || _periodEndDate != null) {
-                    transactions = transactions.where((doc) {
-                      final data = doc.data() as Map<String, dynamic>;
-                      final dFrom = (data['dateFrom'] as Timestamp?)?.toDate();
-                      final dTo = (data['dateTo'] as Timestamp?)?.toDate();
-                      if (dFrom == null || dTo == null) return false;
-
-                      bool matches = true;
-                      if (_periodStartDate != null && dFrom.isBefore(_periodStartDate!)) matches = false;
-                      if (_periodEndDate != null && dTo.isAfter(_periodEndDate!.add(const Duration(days: 1)))) matches = false;
-                      return matches;
-                    }).toList();
-                  }
+                  final transactions = filterAndSortTransactionRecords(
+                    records: snapshot.data!.docs,
+                    dataOf: (doc) => doc.data() as Map<String, dynamic>,
+                    filters: _recordFilters,
+                  );
 
                   if (transactions.isEmpty) {
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.search_off_rounded, size: 64, color: AppTheme.textHint.withValues(alpha: 0.5)),
+                          Icon(
+                            Icons.search_off_rounded,
+                            size: 64,
+                            color: AppTheme.textHint.withValues(alpha: 0.5),
+                          ),
                           const SizedBox(height: 16),
-                          const Text('لا توجد سندات مطابقة', style: TextStyle(color: AppTheme.textSecondary, fontSize: 16)),
+                          const Text(
+                            'لا توجد سندات مطابقة',
+                            style: TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 16,
+                            ),
+                          ),
                         ],
                       ),
                     );
@@ -735,22 +1174,32 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
 
                   return ListView.builder(
                     padding: const EdgeInsets.all(16),
-                    itemCount: transactions.length,
+                    itemCount: transactions.length + 1,
                     itemBuilder: (context, index) {
-                      final doc = transactions[index];
+                      if (index == 0) {
+                        return _buildRecordsSummary(transactions);
+                      }
+                      final doc = transactions[index - 1];
                       final data = doc.data() as Map<String, dynamic>;
 
-                      final double rawAmount = (data['amount'] as num?)?.toDouble() ?? 0.0;
-                      final String formattedAmount = NumberFormat('#,##0.##', 'en_US').format(rawAmount);
+                      final double rawAmount =
+                          (data['amount'] as num?)?.toDouble() ?? 0.0;
+                      final String formattedAmount = NumberFormat(
+                        '#,##0.##',
+                        'en_US',
+                      ).format(rawAmount);
                       final String currency = data['currency'] ?? 'YER';
-                      final String trnNumber = data['transaction_number'] ?? '#';
+                      final String trnNumber =
+                          data['transaction_number'] ?? '#';
                       final String status = data['status'] ?? 'pending';
 
-                      final dateFrom = (data['dateFrom'] as Timestamp?)?.toDate();
+                      final dateFrom = (data['dateFrom'] as Timestamp?)
+                          ?.toDate();
                       final dateTo = (data['dateTo'] as Timestamp?)?.toDate();
                       String dateRange = 'غير محدد';
                       if (dateFrom != null && dateTo != null) {
-                        dateRange = '${DateFormat('yyyy/MM/dd').format(dateFrom)} - ${DateFormat('yyyy/MM/dd').format(dateTo)}';
+                        dateRange =
+                            '${DateFormat('yyyy/MM/dd').format(dateFrom)} - ${DateFormat('yyyy/MM/dd').format(dateTo)}';
                       }
 
                       final statusColor = AppTheme.statusColor(status);
@@ -767,8 +1216,11 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) => TransactionDetailsScreen(
-                                      transactionData: data, transactionId: doc.id),
+                                  builder: (context) =>
+                                      TransactionDetailsScreen(
+                                        transactionData: data,
+                                        transactionId: doc.id,
+                                      ),
                                 ),
                               );
                             },
@@ -785,43 +1237,69 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                                       color: statusColor.withValues(alpha: 0.1),
                                       borderRadius: BorderRadius.circular(14),
                                     ),
-                                    child: Icon(Icons.receipt_outlined, color: statusColor, size: 24),
+                                    child: Icon(
+                                      Icons.receipt_outlined,
+                                      color: statusColor,
+                                      size: 24,
+                                    ),
                                   ),
                                   const SizedBox(width: 14),
-                                  
+
                                   // Content
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           '$formattedAmount $currency',
-                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.textPrimary),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            color: AppTheme.textPrimary,
+                                          ),
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
                                           'رقم: $trnNumber',
-                                          style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            color: AppTheme.textSecondary,
+                                          ),
                                         ),
                                         const SizedBox(height: 6),
                                         Row(
                                           children: [
                                             Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 6,
+                                                    vertical: 2,
+                                                  ),
                                               decoration: BoxDecoration(
-                                                color: statusColor.withValues(alpha: 0.1),
-                                                borderRadius: BorderRadius.circular(6),
+                                                color: statusColor.withValues(
+                                                  alpha: 0.1,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
                                               ),
                                               child: Text(
                                                 AppTheme.statusLabel(status),
-                                                style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 10),
+                                                style: TextStyle(
+                                                  color: statusColor,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 10,
+                                                ),
                                               ),
                                             ),
                                             const SizedBox(width: 6),
                                             Expanded(
                                               child: Text(
                                                 dateRange,
-                                                style: const TextStyle(fontSize: 11, color: AppTheme.textHint),
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                  color: AppTheme.textHint,
+                                                ),
                                                 overflow: TextOverflow.ellipsis,
                                               ),
                                             ),
@@ -830,11 +1308,22 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                                       ],
                                     ),
                                   ),
-                                  
+
                                   // Trailing Action
-                                  if (_buildTrailingAction(status, doc.id, trnNumber, data) != null) ...[
+                                  if (_buildTrailingAction(
+                                        status,
+                                        doc.id,
+                                        trnNumber,
+                                        data,
+                                      ) !=
+                                      null) ...[
                                     const SizedBox(width: 8),
-                                    _buildTrailingAction(status, doc.id, trnNumber, data)!,
+                                    _buildTrailingAction(
+                                      status,
+                                      doc.id,
+                                      trnNumber,
+                                      data,
+                                    )!,
                                   ],
                                 ],
                               ),

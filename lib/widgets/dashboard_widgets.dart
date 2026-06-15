@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/transaction_records.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StatCard — compact KPI card with icon, value, and label
@@ -147,7 +148,9 @@ class ActionCard extends StatelessWidget {
                               const SizedBox(width: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 7, vertical: 2),
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
                                 decoration: BoxDecoration(
                                   color: color,
                                   borderRadius: BorderRadius.circular(20),
@@ -272,7 +275,9 @@ class RoleAppBarBackground extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.25),
+                  ),
                 ),
                 child: Icon(icon, color: Colors.white, size: 26),
               ),
@@ -294,7 +299,9 @@ class RoleAppBarBackground extends StatelessWidget {
                     const SizedBox(height: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(20),
@@ -340,15 +347,9 @@ class RecentTransactionsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+    final query = FirebaseFirestore.instance
         .collection('transactions')
         .where('branchId', isEqualTo: branchId);
-
-    if (collectorId != null && collectorId!.isNotEmpty) {
-      query = query.where('collectorId', isEqualTo: collectorId);
-    }
-
-    query = query.orderBy('timestamp', descending: true).limit(limit);
 
     return StreamBuilder<QuerySnapshot>(
       stream: query.snapshots(),
@@ -357,9 +358,7 @@ class RecentTransactionsList extends StatelessWidget {
           return Container(
             height: 130,
             decoration: AppTheme.cardShadow(),
-            child: const Center(
-              child: CircularProgressIndicator(),
-            ),
+            child: const Center(child: CircularProgressIndicator()),
           );
         }
 
@@ -377,7 +376,23 @@ class RecentTransactionsList extends StatelessWidget {
           );
         }
 
-        final docs = snapshot.data!.docs;
+        final matchingDocs = snapshot.data!.docs.where((doc) {
+          if (collectorId == null || collectorId!.isEmpty) return true;
+          final data = doc.data() as Map<String, dynamic>;
+          return data['collectorId'] == collectorId;
+        });
+        final docs = filterAndSortTransactionRecords(
+          records: matchingDocs,
+          dataOf: (doc) => doc.data() as Map<String, dynamic>,
+          filters: const TransactionRecordFilters(),
+        ).take(limit).toList();
+
+        if (docs.isEmpty) {
+          return _buildEmptyState(
+            icon: Icons.receipt_long_outlined,
+            message: 'لا توجد معاملات حتى الآن',
+          );
+        }
 
         return Container(
           decoration: AppTheme.cardShadow(),
@@ -407,10 +422,7 @@ class RecentTransactionsList extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             message,
-            style: const TextStyle(
-              color: AppTheme.textSecondary,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14),
           ),
         ],
       ),
@@ -479,7 +491,9 @@ class _TransactionTile extends StatelessWidget {
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: statusColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(6),
@@ -532,8 +546,7 @@ class _TransactionTile extends StatelessWidget {
             ],
           ),
         ),
-        if (!isLast)
-          const Divider(height: 1, indent: 70, endIndent: 16),
+        if (!isLast) const Divider(height: 1, indent: 70, endIndent: 16),
       ],
     );
   }
