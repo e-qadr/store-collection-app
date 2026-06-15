@@ -7,6 +7,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:store_collection_app/services/app_navigation_service.dart';
+import 'package:store_collection_app/services/local_notification_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -82,10 +83,12 @@ class DeviceNotificationService {
       _tokenSubscription ??= FirebaseMessaging.instance.onTokenRefresh.listen(
         _saveToken,
       );
-      _foregroundMessageSubscription ??= FirebaseMessaging.onMessage.listen(
-        (message) =>
-            recordDeviceNotificationDelivery(message, state: 'foreground'),
-      );
+      _foregroundMessageSubscription ??= FirebaseMessaging.onMessage.listen((
+        message,
+      ) async {
+        await recordDeviceNotificationDelivery(message, state: 'foreground');
+        await LocalNotificationService.showForegroundMessage(message);
+      });
       _messageOpenedSubscription ??= FirebaseMessaging.onMessageOpenedApp
           .listen((message) {
             recordDeviceNotificationDelivery(message, state: 'opened');

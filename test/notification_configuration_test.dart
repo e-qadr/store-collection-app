@@ -14,11 +14,20 @@ void main() {
     final pushServer = File(
       'hostinger-push-server/server.js',
     ).readAsStringSync();
+    final localNotifications = File(
+      'lib/services/local_notification_service.dart',
+    ).readAsStringSync();
+    final androidGradle = File(
+      'android/app/build.gradle.kts',
+    ).readAsStringSync();
 
     expect(manifest, contains(channelId));
     expect(activity, contains(channelId));
     expect(pushServer, contains(channelId));
+    expect(localNotifications, contains(channelId));
     expect(manifest, contains('android.permission.POST_NOTIFICATIONS'));
     expect(manifest, contains('android.permission.INTERNET'));
+    expect(manifest, contains('android.permission.VIBRATE'));
+    expect(androidGradle, contains('isCoreLibraryDesugaringEnabled = true'));
   });
 }
