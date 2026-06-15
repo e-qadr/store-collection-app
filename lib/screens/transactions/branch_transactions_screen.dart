@@ -7,6 +7,7 @@ import 'package:store_collection_app/screens/transactions/transaction_details_sc
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
+import 'package:store_collection_app/utils/archive_workflow.dart';
 
 class BranchTransactionsScreen extends StatefulWidget {
   final String branchId;
@@ -62,6 +63,83 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     } else {
       if (mounted) setState(() => _isLoadingRole = false);
     }
+  }
+
+  Future<void> _requestArchive(String transactionId, String trnNumber) async {
+    final confirmed = await _confirmArchiveAction(
+      title: 'طلب أرشفة السند',
+      message:
+          'سيتم إرسال طلب أرشفة السند $trnNumber للمحصل والمدير والمحاسب. لن تتم الأرشفة حتى يوافق الجميع.',
+      actionLabel: 'إرسال الطلب',
+    );
+    if (!confirmed) return;
+
+    try {
+      await _dbService.requestTransactionArchive(transactionId);
+      _showArchiveMessage('تم إرسال طلب الأرشفة واعتماد موافقتك', Colors.green);
+    } catch (e) {
+      _showArchiveMessage(
+        'تعذر طلب الأرشفة: ${e.toString().replaceFirst('Exception: ', '')}',
+        Colors.red,
+      );
+    }
+  }
+
+  Future<void> _approveArchive(String transactionId, String trnNumber) async {
+    final confirmed = await _confirmArchiveAction(
+      title: 'اعتماد أرشفة السند',
+      message: 'هل تريد الموافقة على أرشفة السند $trnNumber؟',
+      actionLabel: 'اعتماد الأرشفة',
+    );
+    if (!confirmed) return;
+
+    try {
+      await _dbService.approveTransactionArchive(transactionId);
+      _showArchiveMessage('تم اعتماد طلب الأرشفة', Colors.green);
+    } catch (e) {
+      _showArchiveMessage(
+        'تعذر اعتماد الأرشفة: ${e.toString().replaceFirst('Exception: ', '')}',
+        Colors.red,
+      );
+    }
+  }
+
+  Future<bool> _confirmArchiveAction({
+    required String title,
+    required String message,
+    required String actionLabel,
+  }) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Row(
+              children: [
+                const Icon(Icons.archive_rounded, color: Colors.orange),
+                const SizedBox(width: 8),
+                Expanded(child: Text(title)),
+              ],
+            ),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(actionLabel),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  void _showArchiveMessage(String message, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message), backgroundColor: color));
   }
 
   // --- دوال التقويم الذكية للتعديل ---
@@ -660,6 +738,99 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     return null;
   }
 
+  Widget? _buildRecordActions(
+    String status,
+    String transactionId,
+    String trnNumber,
+    Map<String, dynamic> data,
+  ) {
+    final archiveAction = _buildArchiveAction(transactionId, trnNumber, data);
+    if (data['archive_status'] == 'archived') return archiveAction;
+
+    final statusAction = _buildTrailingAction(
+      status,
+      transactionId,
+      trnNumber,
+      data,
+    );
+    if (statusAction == null) return archiveAction;
+    if (archiveAction == null) return statusAction;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [statusAction, archiveAction],
+    );
+  }
+
+  Widget? _buildArchiveAction(
+    String transactionId,
+    String trnNumber,
+    Map<String, dynamic> data,
+  ) {
+    final role = _currentUserRole;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (!archiveRequiredRoles.contains(role)) return null;
+    if (role == 'collector' && data['collectorId'] != uid) return null;
+
+    final archiveStatus = data['archive_status'] as String?;
+    if (archiveStatus == 'archived') {
+      return const Tooltip(
+        message: 'سند مؤرشف',
+        child: Icon(Icons.inventory_2_rounded, color: AppTheme.textHint),
+      );
+    }
+
+    final approvalCount = archiveApprovalCount(data);
+    final alreadyApproved = hasArchiveApproval(data, role);
+    final isPending = archiveStatus == 'pending';
+    final iconButton = IconButton(
+      icon: Icon(
+        isPending
+            ? alreadyApproved
+                  ? Icons.hourglass_top_rounded
+                  : Icons.archive_rounded
+            : Icons.archive_outlined,
+        color: isPending ? Colors.orange : AppTheme.textSecondary,
+      ),
+      tooltip: isPending
+          ? alreadyApproved
+                ? 'وافقت على الأرشفة، بانتظار بقية الأدوار'
+                : 'اعتماد الأرشفة'
+          : 'طلب أرشفة السند',
+      onPressed: isPending && alreadyApproved
+          ? null
+          : () => isPending
+                ? _approveArchive(transactionId, trnNumber)
+                : _requestArchive(transactionId, trnNumber),
+    );
+
+    if (!isPending) return iconButton;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        iconButton,
+        Positioned(
+          top: 1,
+          left: 1,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.orange,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '$approvalCount/3',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   // أداة لاختيار التواريخ في شاشة الفلترة
   Widget _buildDateRangeFilter({
     required String title,
@@ -1211,6 +1382,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                         }
 
                         final statusColor = AppTheme.statusColor(status);
+                        final archiveStatus = data['archive_status'] as String?;
+                        final trailingActions = _buildRecordActions(
+                          status,
+                          doc.id,
+                          trnNumber,
+                          data,
+                        );
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
@@ -1303,6 +1481,46 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                                                   ),
                                                 ),
                                               ),
+                                              if (archiveStatus != null) ...[
+                                                const SizedBox(width: 6),
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 2,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        (archiveStatus ==
+                                                                    'archived'
+                                                                ? AppTheme
+                                                                      .textHint
+                                                                : Colors.orange)
+                                                            .withValues(
+                                                              alpha: 0.1,
+                                                            ),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          6,
+                                                        ),
+                                                  ),
+                                                  child: Text(
+                                                    archiveStatus == 'archived'
+                                                        ? 'مؤرشف'
+                                                        : 'أرشفة ${archiveApprovalCount(data)}/3',
+                                                    style: TextStyle(
+                                                      color:
+                                                          archiveStatus ==
+                                                              'archived'
+                                                          ? AppTheme.textHint
+                                                          : Colors.orange,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 10,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
                                               const SizedBox(width: 6),
                                               Expanded(
                                                 child: Text(
@@ -1322,20 +1540,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                                     ),
 
                                     // Trailing Action
-                                    if (_buildTrailingAction(
-                                          status,
-                                          doc.id,
-                                          trnNumber,
-                                          data,
-                                        ) !=
-                                        null) ...[
+                                    if (trailingActions != null) ...[
                                       const SizedBox(width: 8),
-                                      _buildTrailingAction(
-                                        status,
-                                        doc.id,
-                                        trnNumber,
-                                        data,
-                                      )!,
+                                      trailingActions,
                                     ],
                                   ],
                                 ),

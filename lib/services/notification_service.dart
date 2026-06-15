@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:store_collection_app/utils/archive_workflow.dart';
 
 class NotificationService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -116,6 +117,47 @@ class NotificationService {
       transactionData: data,
       title: title,
       message: body,
+    );
+  }
+
+  Future<void> notifyForArchive({
+    required String transactionId,
+    bool completed = false,
+  }) async {
+    final transactionDoc = await _firestore
+        .collection('transactions')
+        .doc(transactionId)
+        .get();
+    final data = transactionDoc.data();
+    if (data == null) return;
+
+    final recipients = <String>{};
+    if (completed) {
+      for (final approval in archiveApprovalsOf(data).values) {
+        if (approval is Map && approval['user_id'] is String) {
+          recipients.add(approval['user_id'] as String);
+        }
+      }
+    } else {
+      if (!hasArchiveApproval(data, 'collector')) {
+        recipients.add(data['collectorId'] ?? '');
+      }
+      if (!hasArchiveApproval(data, 'manager')) {
+        recipients.addAll(await _branchManagers(data['branchId']));
+      }
+      if (!hasArchiveApproval(data, 'accountant')) {
+        recipients.addAll(await _usersByRole('accountant'));
+      }
+    }
+
+    await _send(
+      recipients: recipients,
+      transactionId: transactionId,
+      transactionData: data,
+      title: completed ? 'تمت أرشفة السند' : 'طلب أرشفة يحتاج اعتمادك',
+      message: completed
+          ? 'اكتملت الموافقات وتمت أرشفة السند رقم ${data['transaction_number']}.'
+          : 'السند رقم ${data['transaction_number']} ينتظر موافقتك على الأرشفة.',
     );
   }
 

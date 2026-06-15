@@ -5,6 +5,7 @@ import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
+import 'package:store_collection_app/utils/archive_workflow.dart';
 
 class ManagerApprovalsScreen extends StatefulWidget {
   final String branchId;
@@ -191,6 +192,22 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
     }
   }
 
+  Future<void> _approveArchive(String transactionId, String trnNumber) async {
+    _showLoadingDialog();
+    try {
+      await _dbService.approveTransactionArchive(transactionId);
+      _closeLoadingAndShowSnackBar(
+        'تم اعتماد أرشفة السند $trnNumber',
+        Colors.green,
+      );
+    } catch (e) {
+      _closeLoadingAndShowSnackBar(
+        'تعذر اعتماد الأرشفة: ${e.toString().replaceFirst('Exception: ', '')}',
+        Colors.red,
+      );
+    }
+  }
+
   // --- دوال مساعدة ---
 
   void _showLoadingDialog() {
@@ -224,7 +241,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: DefaultTabController(
-        length: 2,
+        length: 3,
         child: Scaffold(
           backgroundColor: AppTheme.surfaceColor,
           appBar: AppBar(
@@ -233,10 +250,14 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
             backgroundColor: AppTheme.managerColor,
+            foregroundColor: Colors.white,
             elevation: 0,
             bottom: const TabBar(
               indicatorColor: Colors.white,
               indicatorWeight: 4,
+              labelColor: Colors.white,
+              unselectedLabelColor: Color(0xCCFFFFFF),
+              dividerColor: Colors.transparent,
               labelStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               unselectedLabelStyle: TextStyle(
                 fontSize: 14,
@@ -251,11 +272,16 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                   text: 'طلبات تعديل',
                   icon: Icon(Icons.edit_notifications_rounded),
                 ),
+                Tab(text: 'الأرشفة', icon: Icon(Icons.archive_rounded)),
               ],
             ),
           ),
           body: TabBarView(
-            children: [_buildNewTransactionsTab(), _buildEditRequestsTab()],
+            children: [
+              _buildNewTransactionsTab(),
+              _buildEditRequestsTab(),
+              _buildArchiveRequestsTab(),
+            ],
           ),
         ),
       ),
@@ -818,6 +844,155 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildArchiveRequestsTab() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _dbService.getBranchTransactions(branchId: widget.branchId),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: AppTheme.managerColor),
+          );
+        }
+        if (snapshot.hasError) {
+          return const Center(child: Text('حدث خطأ في جلب طلبات الأرشفة.'));
+        }
+
+        final requests = (snapshot.data?.docs ?? []).where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          return data['archive_status'] == 'pending';
+        }).toList();
+
+        if (requests.isEmpty) {
+          return const Center(child: Text('لا توجد طلبات أرشفة معلقة.'));
+        }
+
+        return RefreshIndicator(
+          onRefresh: () => refreshFirestoreQueries([
+            FirebaseFirestore.instance
+                .collection('transactions')
+                .where('branchId', isEqualTo: widget.branchId),
+          ]),
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            itemCount: requests.length,
+            itemBuilder: (context, index) {
+              final doc = requests[index];
+              final data = doc.data() as Map<String, dynamic>;
+              final trnNumber = data['transaction_number'] ?? '#';
+              final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+              final currency = data['currency'] ?? 'YER';
+              final managerApproved = hasArchiveApproval(data, 'manager');
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: AppTheme.cardShadow(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.archive_rounded,
+                            color: Colors.orange,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'السند $trnNumber',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                '${NumberFormat('#,##0.##', 'en_US').format(amount)} $currency',
+                                style: const TextStyle(
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          '${archiveApprovalCount(data)}/3',
+                          style: const TextStyle(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildArchiveRoleChip(data, 'collector', 'المحصل'),
+                        _buildArchiveRoleChip(data, 'manager', 'المدير'),
+                        _buildArchiveRoleChip(data, 'accountant', 'المحاسب'),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    ElevatedButton.icon(
+                      onPressed: managerApproved
+                          ? null
+                          : () => _approveArchive(doc.id, trnNumber),
+                      icon: Icon(
+                        managerApproved
+                            ? Icons.hourglass_top_rounded
+                            : Icons.check_circle_rounded,
+                      ),
+                      label: Text(
+                        managerApproved
+                            ? 'تم اعتماد المدير وبانتظار البقية'
+                            : 'اعتماد الأرشفة',
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildArchiveRoleChip(
+    Map<String, dynamic> data,
+    String role,
+    String label,
+  ) {
+    final approved = hasArchiveApproval(data, role);
+    return Chip(
+      avatar: Icon(
+        approved ? Icons.check_circle_rounded : Icons.schedule_rounded,
+        color: approved ? Colors.green : Colors.orange,
+        size: 18,
+      ),
+      label: Text(label),
+      backgroundColor: (approved ? Colors.green : Colors.orange).withValues(
+        alpha: 0.08,
+      ),
+      side: BorderSide(
+        color: (approved ? Colors.green : Colors.orange).withValues(alpha: 0.3),
+      ),
     );
   }
 

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/transaction_model.dart';
 import 'package:store_collection_app/services/notification_service.dart';
+import 'package:store_collection_app/utils/archive_workflow.dart';
 
 class DatabaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -22,8 +23,10 @@ class DatabaseService {
     final doc = await _firestore.collection('users').doc(uid).get();
     final data = doc.data();
     return {
+      'uid': uid,
       'name': data?['name'] ?? 'مستخدم غير معروف',
       'role': data?['role'] ?? 'unknown',
+      'branchId': data?['branchId'] ?? '',
     };
   }
 
@@ -332,6 +335,128 @@ class DatabaseService {
       );
     } catch (e) {
       throw Exception('Failed to approve by accountant: $e');
+    }
+  }
+
+  Future<void> requestTransactionArchive(String transactionId) async {
+    final actor = await _getCurrentActor();
+    final transactionRef = _firestore
+        .collection('transactions')
+        .doc(transactionId);
+
+    await _firestore.runTransaction((firestoreTransaction) async {
+      final snapshot = await firestoreTransaction.get(transactionRef);
+      final data = snapshot.data();
+      if (data == null) throw Exception('السند غير موجود');
+      _validateArchiveActor(data, actor);
+
+      final archiveStatus = data['archive_status'] as String?;
+      if (archiveStatus == 'archived') {
+        throw Exception('تمت أرشفة هذا السند مسبقاً');
+      }
+      if (archiveStatus == 'pending') {
+        throw Exception('طلب الأرشفة قيد الاعتماد بالفعل');
+      }
+
+      final role = actor['role']!;
+      final approvals = <String, dynamic>{role: _archiveApproval(actor)};
+      final historyEntry = _historyEntry(
+        action: 'archive_requested',
+        message: 'تم طلب أرشفة السند واعتماد الطلب من ${actor['name']}',
+        actor: actor,
+      );
+
+      firestoreTransaction.update(transactionRef, {
+        'archive_status': 'pending',
+        'archive_requested_by': actor['uid'],
+        'archive_requested_at': FieldValue.serverTimestamp(),
+        'archive_approvals': approvals,
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([historyEntry]),
+      });
+    });
+
+    await _notifySafely(
+      () => _notificationService.notifyForArchive(transactionId: transactionId),
+    );
+  }
+
+  Future<void> approveTransactionArchive(String transactionId) async {
+    final actor = await _getCurrentActor();
+    final transactionRef = _firestore
+        .collection('transactions')
+        .doc(transactionId);
+    var completed = false;
+
+    await _firestore.runTransaction((firestoreTransaction) async {
+      final snapshot = await firestoreTransaction.get(transactionRef);
+      final data = snapshot.data();
+      if (data == null) throw Exception('السند غير موجود');
+      _validateArchiveActor(data, actor);
+
+      if (data['archive_status'] != 'pending') {
+        throw Exception('لا يوجد طلب أرشفة قيد الاعتماد');
+      }
+
+      final role = actor['role']!;
+      if (hasArchiveApproval(data, role)) {
+        throw Exception('لقد اعتمدت طلب الأرشفة مسبقاً');
+      }
+
+      final approvals = archiveApprovalsOf(data)
+        ..[role] = _archiveApproval(actor);
+      final updatedData = <String, dynamic>{
+        ...data,
+        'archive_approvals': approvals,
+      };
+      completed = areArchiveApprovalsComplete(updatedData);
+      final historyEntry = _historyEntry(
+        action: completed ? 'archived' : 'archive_approved',
+        message: completed
+            ? 'اكتملت الموافقات وتمت أرشفة السند'
+            : 'اعتمد ${actor['name']} طلب أرشفة السند',
+        actor: actor,
+      );
+
+      firestoreTransaction.update(transactionRef, {
+        'archive_approvals': approvals,
+        'archive_status': completed ? 'archived' : 'pending',
+        if (completed) 'archived_at': FieldValue.serverTimestamp(),
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([historyEntry]),
+      });
+    });
+
+    await _notifySafely(
+      () => _notificationService.notifyForArchive(
+        transactionId: transactionId,
+        completed: completed,
+      ),
+    );
+  }
+
+  Map<String, dynamic> _archiveApproval(Map<String, String> actor) {
+    return {
+      'user_id': actor['uid'],
+      'user_name': actor['name'],
+      'approved_at': Timestamp.now(),
+    };
+  }
+
+  void _validateArchiveActor(
+    Map<String, dynamic> transactionData,
+    Map<String, String> actor,
+  ) {
+    final role = actor['role'];
+    final uid = actor['uid'];
+    if (!archiveRequiredRoles.contains(role) || uid == null || uid.isEmpty) {
+      throw Exception('هذا الحساب غير مخول لاعتماد الأرشفة');
+    }
+    if (role == 'collector' && transactionData['collectorId'] != uid) {
+      throw Exception('يمكن للمحصل اعتماد أرشفة سنداته فقط');
+    }
+    if (role == 'manager' && transactionData['branchId'] != actor['branchId']) {
+      throw Exception('يمكن للمدير اعتماد أرشفة سندات فرعه فقط');
     }
   }
 

@@ -7,6 +7,7 @@ import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
+import 'package:store_collection_app/utils/archive_workflow.dart';
 
 class ManagerDashboard extends StatelessWidget {
   final String branchId;
@@ -51,22 +52,7 @@ class ManagerDashboard extends StatelessWidget {
                         color: AppTheme.managerColor,
                       ),
                       const SizedBox(height: 14),
-                      ActionCard(
-                        title: 'طلبات الاعتماد والتعديل',
-                        subtitle:
-                            'مراجعة السندات الجديدة والموافقة على التعديلات',
-                        icon: Icons.check_circle_outline_rounded,
-                        color: AppTheme.managerColor,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ManagerApprovalsScreen(
-                              branchId: branchId,
-                              branchName: branchName,
-                            ),
-                          ),
-                        ),
-                      ),
+                      _buildApprovalsAction(context),
                       const SizedBox(height: 12),
                       ActionCard(
                         title: 'سجل السندات والعمليات',
@@ -104,6 +90,48 @@ class ManagerDashboard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildApprovalsAction(BuildContext context) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('transactions')
+          .where('branchId', isEqualTo: branchId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        var neededCount = 0;
+        if (snapshot.hasData) {
+          neededCount = snapshot.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final status = data['status'];
+            final needsTransactionApproval =
+                status == 'pending' || status == 'pendingApprovalOfEdit';
+            final needsArchiveApproval =
+                data['archive_status'] == 'pending' &&
+                !hasArchiveApproval(data, 'manager');
+            return needsTransactionApproval || needsArchiveApproval;
+          }).length;
+        }
+
+        return ActionCard(
+          title: 'طلبات الاعتماد والتعديل',
+          subtitle: 'مراجعة السندات الجديدة والتعديلات وطلبات الأرشفة',
+          icon: Icons.check_circle_outline_rounded,
+          color: AppTheme.managerColor,
+          badgeText: neededCount > 0 ? '$neededCount' : null,
+          badgeColor: AppTheme.errorColor,
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ManagerApprovalsScreen(
+                branchId: branchId,
+                branchName: branchName,
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
