@@ -18,9 +18,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _login() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الرجاء تعبئة جميع الحقول')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('الرجاء تعبئة جميع الحقول')));
       return;
     }
 
@@ -38,7 +38,8 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('البريد الإلكتروني أو كلمة المرور غير صحيحة')),
+            content: Text('البريد الإلكتروني أو كلمة المرور غير صحيحة'),
+          ),
         );
       }
     }
@@ -96,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 22),
                         const Text(
-                          'نظام تحصيل المتاجر',
+                          'تحصيل الكاشير',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 26,
@@ -106,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'منصة إدارة سندات التحصيل المالي',
+                          'إدارة تحصيل الفروع وسندات الكاشير',
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.75),
                             fontSize: 14,
@@ -128,8 +129,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         top: Radius.circular(32),
                       ),
                     ),
-                    padding:
-                        const EdgeInsets.fromLTRB(24, 32, 24, 24),
+                    padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
                     child: SingleChildScrollView(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -162,8 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             decoration: const InputDecoration(
                               labelText: 'البريد الإلكتروني',
                               hintText: 'example@domain.com',
-                              prefixIcon:
-                                  Icon(Icons.email_outlined, size: 20),
+                              prefixIcon: Icon(Icons.email_outlined, size: 20),
                             ),
                           ),
                           const SizedBox(height: 16),
@@ -175,7 +174,10 @@ class _LoginScreenState extends State<LoginScreen> {
                             textDirection: TextDirection.ltr,
                             decoration: InputDecoration(
                               labelText: 'كلمة المرور',
-                              prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                              prefixIcon: const Icon(
+                                Icons.lock_outline,
+                                size: 20,
+                              ),
                               suffixIcon: IconButton(
                                 icon: Icon(
                                   _obscurePassword
@@ -184,7 +186,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                   size: 20,
                                 ),
                                 onPressed: () => setState(
-                                    () => _obscurePassword = !_obscurePassword),
+                                  () => _obscurePassword = !_obscurePassword,
+                                ),
                               ),
                             ),
                           ),
@@ -202,7 +205,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                   )
                                 : ElevatedButton.icon(
                                     onPressed: _login,
-                                    icon: const Icon(Icons.login_rounded, size: 20),
+                                    icon: const Icon(
+                                      Icons.login_rounded,
+                                      size: 20,
+                                    ),
                                     label: const Text('دخول إلى النظام'),
                                   ),
                           ),
@@ -212,8 +218,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.shield_outlined,
-                                  size: 14, color: AppTheme.textHint),
+                              const Icon(
+                                Icons.shield_outlined,
+                                size: 14,
+                                color: AppTheme.textHint,
+                              ),
                               const SizedBox(width: 6),
                               Text(
                                 'بيانات محمية وآمنة',

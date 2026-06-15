@@ -54,17 +54,6 @@ class PdfService {
     final transactionNumber = data['transaction_number']?.toString() ?? '-';
     final amountMatches = data['amount_matches'] != false;
     final cashierAmount = (data['cashier_amount'] as num?)?.toDouble();
-    final history =
-        ((data['history'] as List?) ?? [])
-            .whereType<Map>()
-            .map((item) => Map<String, dynamic>.from(item))
-            .toList()
-          ..sort((a, b) {
-            final aDate = transactionDate(a['timestamp']) ?? DateTime(2000);
-            final bDate = transactionDate(b['timestamp']) ?? DateTime(2000);
-            return aDate.compareTo(bDate);
-          });
-
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -105,35 +94,6 @@ class PdfService {
           _noteBox('ملاحظات المحصل', data['notes']?.toString()),
           if ((data['manager_notes']?.toString() ?? '').isNotEmpty)
             _noteBox('ملاحظات الإدارة', data['manager_notes']?.toString()),
-          if (history.isNotEmpty) ...[
-            pw.SizedBox(height: 14),
-            _sectionTitle('مراحل السند وسجل الحركات'),
-            pw.TableHelper.fromTextArray(
-              headers: const ['التاريخ', 'الدور', 'المستخدم', 'الإجراء'],
-              data: history
-                  .map(
-                    (item) => [
-                      _date(item['timestamp'], withTime: true),
-                      _role(item['actor_role']),
-                      item['actor_name']?.toString() ?? 'غير محدد',
-                      item['message']?.toString() ?? 'تحديث السند',
-                    ],
-                  )
-                  .toList(),
-              border: pw.TableBorder.all(color: PdfColors.grey300),
-              headerDecoration: const pw.BoxDecoration(
-                color: PdfColors.blueGrey700,
-              ),
-              headerStyle: pw.TextStyle(
-                color: PdfColors.white,
-                fontWeight: pw.FontWeight.bold,
-                fontSize: 9,
-              ),
-              cellStyle: const pw.TextStyle(fontSize: 8),
-              cellAlignment: pw.Alignment.centerRight,
-              cellPadding: const pw.EdgeInsets.all(5),
-            ),
-          ],
           pw.SizedBox(height: 28),
           _signatures(),
         ],
@@ -357,7 +317,7 @@ class PdfService {
             crossAxisAlignment: pw.CrossAxisAlignment.end,
             children: [
               pw.Text(
-                'نظام سندات التحصيل',
+                'تحصيل الكاشير',
                 style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
               ),
               pw.Text('الفرع: $branchName'),
@@ -499,19 +459,4 @@ class PdfService {
       style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
     ),
   );
-
-  static String _role(dynamic role) {
-    switch (role) {
-      case 'admin':
-        return 'مسؤول النظام';
-      case 'collector':
-        return 'المحصل';
-      case 'manager':
-        return 'مدير الفرع';
-      case 'accountant':
-        return 'المحاسب';
-      default:
-        return 'غير محدد';
-    }
-  }
 }
