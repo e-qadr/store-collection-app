@@ -20,6 +20,7 @@ void main() {
     final androidGradle = File(
       'android/app/build.gradle.kts',
     ).readAsStringSync();
+    final mainFile = File('lib/main.dart').readAsStringSync();
 
     expect(manifest, contains(channelId));
     expect(activity, contains(channelId));
@@ -29,5 +30,11 @@ void main() {
     expect(manifest, contains('android.permission.INTERNET'));
     expect(manifest, contains('android.permission.VIBRATE'));
     expect(androidGradle, contains('isCoreLibraryDesugaringEnabled = true'));
+    expect(mainFile, contains('runApp(const MyApp())'));
+    expect(
+      mainFile.indexOf('runApp(const MyApp())'),
+      lessThan(mainFile.indexOf('Firebase.initializeApp()')),
+    );
+    expect(mainFile, contains('Firebase.initializeApp().timeout'));
   });
 }

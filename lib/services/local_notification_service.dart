@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -16,14 +18,28 @@ class LocalNotificationService {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
+  static Future<void>? _initialization;
 
-  static Future<void> initialize() async {
+  static Future<void> initialize() {
     if (_initialized ||
         kIsWeb ||
         defaultTargetPlatform != TargetPlatform.android) {
-      return;
+      return Future.value();
     }
+    return _initialization ??= _initializeSafely();
+  }
 
+  static Future<void> _initializeSafely() async {
+    try {
+      await _initializePlugin().timeout(const Duration(seconds: 5));
+      _initialized = true;
+    } catch (_) {
+      // لا يجب أن تمنع مشكلة إشعارات النظام تشغيل التطبيق.
+      _initialization = null;
+    }
+  }
+
+  static Future<void> _initializePlugin() async {
     const androidSettings = AndroidInitializationSettings('ic_launcher');
     const settings = InitializationSettings(android: androidSettings);
     await _plugin.initialize(
@@ -48,12 +64,12 @@ class LocalNotificationService {
           AndroidFlutterLocalNotificationsPlugin
         >()
         ?.createNotificationChannel(channel);
-    _initialized = true;
   }
 
   static Future<void> showForegroundMessage(RemoteMessage message) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     await initialize();
+    if (!_initialized) return;
 
     final title =
         message.notification?.title ?? message.data['title'] ?? 'إشعار جديد';
