@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class BranchManagementScreen extends StatefulWidget {
   const BranchManagementScreen({super.key});
@@ -545,165 +546,175 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
 
                   final branches = snapshot.data!.docs;
 
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: branches.length,
-                    itemBuilder: (context, index) {
-                      final doc = branches[index];
-                      final data = doc.data() as Map<String, dynamic>;
-                      final managerId = data['branch_manager_id'] ?? '';
+                  return RefreshIndicator(
+                    onRefresh: () => refreshFirestoreQueries([
+                      FirebaseFirestore.instance.collection('branches'),
+                    ]),
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(16),
+                      itemCount: branches.length,
+                      itemBuilder: (context, index) {
+                        final doc = branches[index];
+                        final data = doc.data() as Map<String, dynamic>;
+                        final managerId = data['branch_manager_id'] ?? '';
 
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: AppTheme.cardShadow(),
-                        child: Material(
-                          color: AppTheme.cardColor,
-                          borderRadius: BorderRadius.circular(16),
-                          child: InkWell(
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: AppTheme.cardShadow(),
+                          child: Material(
+                            color: AppTheme.cardColor,
                             borderRadius: BorderRadius.circular(16),
-                            onTap: () =>
-                                _showAssignManagerDialog(doc.id, managerId),
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      color: AppTheme.adminColor.withValues(
-                                        alpha: 0.1,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () =>
+                                  _showAssignManagerDialog(doc.id, managerId),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 48,
+                                      height: 48,
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.adminColor.withValues(
+                                          alpha: 0.1,
+                                        ),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
-                                      borderRadius: BorderRadius.circular(12),
+                                      child: const Icon(
+                                        Icons.store_rounded,
+                                        color: AppTheme.adminColor,
+                                        size: 24,
+                                      ),
                                     ),
-                                    child: const Icon(
-                                      Icons.store_rounded,
-                                      color: AppTheme.adminColor,
-                                      size: 24,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          data['name'] ?? 'فرع غير مسمى',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                            color: AppTheme.textPrimary,
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            data['name'] ?? 'فرع غير مسمى',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                              color: AppTheme.textPrimary,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '${data['company_name'] ?? 'بدون شركة'} • الرمز: ${data['branch_code'] ?? 'غير محدد'}',
-                                          style: const TextStyle(
-                                            color: AppTheme.textSecondary,
-                                            fontSize: 12,
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${data['company_name'] ?? 'بدون شركة'} • الرمز: ${data['branch_code'] ?? 'غير محدد'}',
+                                            style: const TextStyle(
+                                              color: AppTheme.textSecondary,
+                                              fontSize: 12,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        managerId.isEmpty
-                                            ? const Text(
-                                                'لم يتم تعيين مدير للفرع',
-                                                style: TextStyle(
-                                                  color: Colors.red,
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.bold,
+                                          const SizedBox(height: 6),
+                                          managerId.isEmpty
+                                              ? const Text(
+                                                  'لم يتم تعيين مدير للفرع',
+                                                  style: TextStyle(
+                                                    color: Colors.red,
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                )
+                                              : FutureBuilder<DocumentSnapshot>(
+                                                  future: FirebaseFirestore
+                                                      .instance
+                                                      .collection('users')
+                                                      .doc(managerId)
+                                                      .get(),
+                                                  builder: (context, userSnapshot) {
+                                                    if (!userSnapshot.hasData)
+                                                      return const Text(
+                                                        'جاري جلب المدير...',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color:
+                                                              AppTheme.textHint,
+                                                        ),
+                                                      );
+                                                    if (!userSnapshot
+                                                        .data!
+                                                        .exists)
+                                                      return const Text(
+                                                        'المدير محذوف من النظام',
+                                                        style: TextStyle(
+                                                          color: Colors.red,
+                                                          fontSize: 12,
+                                                        ),
+                                                      );
+                                                    final managerName =
+                                                        (userSnapshot.data!
+                                                                .data()
+                                                            as Map<
+                                                              String,
+                                                              dynamic
+                                                            >?)?['name'] ??
+                                                        'مجهول';
+                                                    return Text(
+                                                      'المدير: $managerName',
+                                                      style: const TextStyle(
+                                                        color: Colors.green,
+                                                        fontSize: 13,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    );
+                                                  },
                                                 ),
-                                              )
-                                            : FutureBuilder<DocumentSnapshot>(
-                                                future: FirebaseFirestore
-                                                    .instance
-                                                    .collection('users')
-                                                    .doc(managerId)
-                                                    .get(),
-                                                builder: (context, userSnapshot) {
-                                                  if (!userSnapshot.hasData)
-                                                    return const Text(
-                                                      'جاري جلب المدير...',
-                                                      style: TextStyle(
-                                                        fontSize: 12,
-                                                        color:
-                                                            AppTheme.textHint,
-                                                      ),
-                                                    );
-                                                  if (!userSnapshot
-                                                      .data!
-                                                      .exists)
-                                                    return const Text(
-                                                      'المدير محذوف من النظام',
-                                                      style: TextStyle(
-                                                        color: Colors.red,
-                                                        fontSize: 12,
-                                                      ),
-                                                    );
-                                                  final managerName =
-                                                      (userSnapshot.data!.data()
-                                                          as Map<
-                                                            String,
-                                                            dynamic
-                                                          >?)?['name'] ??
-                                                      'مجهول';
-                                                  return Text(
-                                                    'المدير: $managerName',
-                                                    style: const TextStyle(
-                                                      color: Colors.green,
-                                                      fontSize: 13,
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                    ),
-                                                  );
-                                                },
+                                        ],
+                                      ),
+                                    ),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.edit_rounded,
+                                            color: Colors.orange,
+                                          ),
+                                          tooltip: 'تعديل بيانات الفرع',
+                                          onPressed: () =>
+                                              _showEditBranchDialog(
+                                                doc.id,
+                                                data,
                                               ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.manage_accounts_rounded,
+                                            color: AppTheme.adminColor,
+                                          ),
+                                          tooltip: 'تعيين مدير',
+                                          onPressed: () =>
+                                              _showAssignManagerDialog(
+                                                doc.id,
+                                                managerId,
+                                              ),
+                                        ),
+                                        IconButton(
+                                          icon: Icon(
+                                            Icons.delete_outline_rounded,
+                                            color: Colors.red.shade400,
+                                          ),
+                                          onPressed: () => _deleteBranch(
+                                            doc.id,
+                                            data['branch_code'] ?? '',
+                                          ),
+                                        ),
                                       ],
                                     ),
-                                  ),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.edit_rounded,
-                                          color: Colors.orange,
-                                        ),
-                                        tooltip: 'تعديل بيانات الفرع',
-                                        onPressed: () =>
-                                            _showEditBranchDialog(doc.id, data),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.manage_accounts_rounded,
-                                          color: AppTheme.adminColor,
-                                        ),
-                                        tooltip: 'تعيين مدير',
-                                        onPressed: () =>
-                                            _showAssignManagerDialog(
-                                              doc.id,
-                                              managerId,
-                                            ),
-                                      ),
-                                      IconButton(
-                                        icon: Icon(
-                                          Icons.delete_outline_rounded,
-                                          color: Colors.red.shade400,
-                                        ),
-                                        onPressed: () => _deleteBranch(
-                                          doc.id,
-                                          data['branch_code'] ?? '',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   );
                 },
               ),

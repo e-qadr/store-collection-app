@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class BrandManagementScreen extends StatefulWidget {
   const BrandManagementScreen({super.key});
@@ -207,55 +208,63 @@ class _BrandManagementScreenState extends State<BrandManagementScreen> {
                   if (brands.isEmpty) {
                     return const _EmptyBrands();
                   }
-                  return ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
-                    itemCount: brands.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final brand = brands[index];
-                      final data = brand.data() as Map<String, dynamic>;
-                      final name = data['name'] as String? ?? 'بدون اسم';
-                      return Container(
-                        decoration: AppTheme.cardShadow(),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.all(14),
-                          leading: const CircleAvatar(
-                            backgroundColor: Color(0xFFF3E5F5),
-                            child: Icon(
-                              Icons.business_rounded,
-                              color: AppTheme.adminColor,
+                  return RefreshIndicator(
+                    onRefresh: () => refreshFirestoreQueries([
+                      FirebaseFirestore.instance.collection('brands'),
+                    ]),
+                    child: ListView.separated(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
+                      itemCount: brands.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final brand = brands[index];
+                        final data = brand.data() as Map<String, dynamic>;
+                        final name = data['name'] as String? ?? 'بدون اسم';
+                        return Container(
+                          decoration: AppTheme.cardShadow(),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.all(14),
+                            leading: const CircleAvatar(
+                              backgroundColor: Color(0xFFF3E5F5),
+                              child: Icon(
+                                Icons.business_rounded,
+                                color: AppTheme.adminColor,
+                              ),
+                            ),
+                            title: Text(
+                              name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              'يمكن ربط عدة فروع بهذه العلامة التجارية',
+                            ),
+                            trailing: Wrap(
+                              children: [
+                                IconButton(
+                                  tooltip: 'تعديل',
+                                  onPressed: () => _showBrandDialog(
+                                    brandId: brand.id,
+                                    name: name,
+                                  ),
+                                  icon: const Icon(Icons.edit_rounded),
+                                ),
+                                IconButton(
+                                  tooltip: 'حذف',
+                                  onPressed: () => _deleteBrand(brand.id, name),
+                                  icon: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    color: AppTheme.errorColor,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          title: Text(
-                            name,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: const Text(
-                            'يمكن ربط عدة فروع بهذه العلامة التجارية',
-                          ),
-                          trailing: Wrap(
-                            children: [
-                              IconButton(
-                                tooltip: 'تعديل',
-                                onPressed: () => _showBrandDialog(
-                                  brandId: brand.id,
-                                  name: name,
-                                ),
-                                icon: const Icon(Icons.edit_rounded),
-                              ),
-                              IconButton(
-                                tooltip: 'حذف',
-                                onPressed: () => _deleteBrand(brand.id, name),
-                                icon: const Icon(
-                                  Icons.delete_outline_rounded,
-                                  color: AppTheme.errorColor,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   );
                 },
               ),

@@ -6,6 +6,7 @@ import 'package:store_collection_app/screens/transactions/manager_approvals_scre
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class ManagerDashboard extends StatelessWidget {
   final String branchId;
@@ -23,76 +24,84 @@ class ManagerDashboard extends StatelessWidget {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
-        body: CustomScrollView(
-          slivers: [
-            _buildSliverAppBar(context),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // ── Summary Stats ──────────────────────────────────
-                    _buildManagerStats(),
-                    const SizedBox(height: 28),
+        body: RefreshIndicator(
+          onRefresh: () => refreshFirestoreQueries([
+            FirebaseFirestore.instance
+                .collection('transactions')
+                .where('branchId', isEqualTo: branchId),
+          ]),
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              _buildSliverAppBar(context),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── Summary Stats ──────────────────────────────────
+                      _buildManagerStats(),
+                      const SizedBox(height: 28),
 
-                    // ── Quick Actions ──────────────────────────────────
-                    const SectionHeader(
-                      title: 'الإجراءات السريعة',
-                      icon: Icons.flash_on_rounded,
-                      color: AppTheme.managerColor,
-                    ),
-                    const SizedBox(height: 14),
-                    ActionCard(
-                      title: 'طلبات الاعتماد والتعديل',
-                      subtitle:
-                          'مراجعة السندات الجديدة والموافقة على التعديلات',
-                      icon: Icons.check_circle_outline_rounded,
-                      color: AppTheme.managerColor,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ManagerApprovalsScreen(
-                            branchId: branchId,
-                            branchName: branchName,
+                      // ── Quick Actions ──────────────────────────────────
+                      const SectionHeader(
+                        title: 'الإجراءات السريعة',
+                        icon: Icons.flash_on_rounded,
+                        color: AppTheme.managerColor,
+                      ),
+                      const SizedBox(height: 14),
+                      ActionCard(
+                        title: 'طلبات الاعتماد والتعديل',
+                        subtitle:
+                            'مراجعة السندات الجديدة والموافقة على التعديلات',
+                        icon: Icons.check_circle_outline_rounded,
+                        color: AppTheme.managerColor,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ManagerApprovalsScreen(
+                              branchId: branchId,
+                              branchName: branchName,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    ActionCard(
-                      title: 'سجل السندات والعمليات',
-                      subtitle: 'عرض وتصفية كافة السندات، وطلب تعديلها',
-                      icon: Icons.receipt_long_rounded,
-                      color: const Color(0xFF0277BD),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => BranchTransactionsScreen(
-                            branchId: branchId,
-                            branchName: branchName,
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'سجل السندات والعمليات',
+                        subtitle: 'عرض وتصفية كافة السندات، وطلب تعديلها',
+                        icon: Icons.receipt_long_rounded,
+                        color: const Color(0xFF0277BD),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BranchTransactionsScreen(
+                              branchId: branchId,
+                              branchName: branchName,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 28),
+                      const SizedBox(height: 28),
 
-                    // ── Recent Activity ────────────────────────────────
-                    const SectionHeader(
-                      title: 'آخر المعاملات',
-                      icon: Icons.history_rounded,
-                      color: AppTheme.managerColor,
-                    ),
-                    const SizedBox(height: 14),
-                    RecentTransactionsList(
-                      branchId: branchId,
-                      color: AppTheme.managerColor,
-                    ),
-                  ],
+                      // ── Recent Activity ────────────────────────────────
+                      const SectionHeader(
+                        title: 'آخر المعاملات',
+                        icon: Icons.history_rounded,
+                        color: AppTheme.managerColor,
+                      ),
+                      const SizedBox(height: 14),
+                      RecentTransactionsList(
+                        branchId: branchId,
+                        color: AppTheme.managerColor,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

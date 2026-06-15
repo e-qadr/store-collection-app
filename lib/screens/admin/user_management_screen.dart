@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/screens/admin/branch_management_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -563,294 +564,304 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
                   final users = snapshot.data!.docs;
 
-                  return ListView.builder(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    itemCount: users.length,
-                    itemBuilder: (context, index) {
-                      final doc = users[index];
-                      final data = doc.data() as Map<String, dynamic>;
-                      final isActive = data['isActive'] ?? true;
-                      final role = data['role'] ?? 'غير محدد';
-                      final branchId = data['branchId'] ?? '';
+                  return RefreshIndicator(
+                    onRefresh: () => refreshFirestoreQueries([
+                      FirebaseFirestore.instance.collection('users'),
+                    ]),
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      itemCount: users.length,
+                      itemBuilder: (context, index) {
+                        final doc = users[index];
+                        final data = doc.data() as Map<String, dynamic>;
+                        final isActive = data['isActive'] ?? true;
+                        final role = data['role'] ?? 'غير محدد';
+                        final branchId = data['branchId'] ?? '';
 
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? AppTheme.cardColor
-                              : Colors.red.shade50.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
                             color: isActive
-                                ? Colors.grey.withValues(alpha: 0.2)
-                                : Colors.red.withValues(alpha: 0.3),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.03),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
+                                ? AppTheme.cardColor
+                                : Colors.red.shade50.withValues(alpha: 0.5),
                             borderRadius: BorderRadius.circular(16),
-                            onTap: () {},
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 50,
-                                    height: 50,
-                                    decoration: BoxDecoration(
-                                      color: isActive
-                                          ? AppTheme.adminColor.withValues(
-                                              alpha: 0.1,
-                                            )
-                                          : Colors.red.withValues(alpha: 0.1),
-                                      shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isActive
+                                  ? Colors.grey.withValues(alpha: 0.2)
+                                  : Colors.red.withValues(alpha: 0.3),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.03),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {},
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 50,
+                                      height: 50,
+                                      decoration: BoxDecoration(
+                                        color: isActive
+                                            ? AppTheme.adminColor.withValues(
+                                                alpha: 0.1,
+                                              )
+                                            : Colors.red.withValues(alpha: 0.1),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        Icons.person_rounded,
+                                        color: isActive
+                                            ? AppTheme.adminColor
+                                            : Colors.red,
+                                        size: 28,
+                                      ),
                                     ),
-                                    child: Icon(
-                                      Icons.person_rounded,
-                                      color: isActive
-                                          ? AppTheme.adminColor
-                                          : Colors.red,
-                                      size: 28,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          data['name'] ?? 'بدون اسم',
-                                          style: TextStyle(
-                                            decoration: isActive
-                                                ? TextDecoration.none
-                                                : TextDecoration.lineThrough,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                            color: isActive
-                                                ? AppTheme.textPrimary
-                                                : Colors.red.shade900,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          data['email'] ?? '',
-                                          style: const TextStyle(
-                                            color: AppTheme.textSecondary,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          children: [
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 4,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.blue.withValues(
-                                                  alpha: 0.1,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              child: Text(
-                                                role == 'manager'
-                                                    ? 'مدير فرع'
-                                                    : role == 'accountant'
-                                                    ? 'محاسب'
-                                                    : 'محصل',
-                                                style: const TextStyle(
-                                                  color: Colors.blue,
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                            if (role == 'manager' &&
-                                                branchId.isNotEmpty) ...[
-                                              const SizedBox(width: 8),
-                                              FutureBuilder<DocumentSnapshot>(
-                                                future: FirebaseFirestore
-                                                    .instance
-                                                    .collection('branches')
-                                                    .doc(branchId)
-                                                    .get(),
-                                                builder: (context, branchSnapshot) {
-                                                  if (!branchSnapshot.hasData)
-                                                    return const SizedBox.shrink();
-                                                  final branchName =
-                                                      (branchSnapshot.data
-                                                              ?.data()
-                                                          as Map<
-                                                            String,
-                                                            dynamic
-                                                          >?)?['name'] ??
-                                                      'فرع محذوف';
-                                                  return Container(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 8,
-                                                          vertical: 4,
-                                                        ),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.teal
-                                                          .withValues(
-                                                            alpha: 0.1,
-                                                          ),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            8,
-                                                          ),
-                                                    ),
-                                                    child: Text(
-                                                      branchName,
-                                                      style: const TextStyle(
-                                                        color: Colors.teal,
-                                                        fontSize: 11,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  );
-                                                },
-                                              ),
-                                            ],
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuButton<String>(
-                                    icon: const Icon(
-                                      Icons.more_vert_rounded,
-                                      color: AppTheme.textHint,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    onSelected: (value) {
-                                      if (value == 'toggle') {
-                                        _toggleUserStatus(doc.id, isActive);
-                                      } else if (value == 'edit_branch') {
-                                        _showAssignBranchDialog(
-                                          doc.id,
-                                          branchId,
-                                        );
-                                      } else {
-                                        _updateUserRole(doc.id, value);
-                                      }
-                                    },
-                                    itemBuilder: (context) => [
-                                      if (role != 'manager')
-                                        const PopupMenuItem(
-                                          value: 'manager',
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.admin_panel_settings,
-                                                size: 18,
-                                              ),
-                                              SizedBox(width: 8),
-                                              Text('ترقية لمدير فرع'),
-                                            ],
-                                          ),
-                                        ),
-                                      if (role != 'collector')
-                                        const PopupMenuItem(
-                                          value: 'collector',
-                                          child: Row(
-                                            children: [
-                                              Icon(Icons.motorcycle, size: 18),
-                                              SizedBox(width: 8),
-                                              Text('تغيير لمحصل'),
-                                            ],
-                                          ),
-                                        ),
-                                      if (role != 'accountant')
-                                        const PopupMenuItem(
-                                          value: 'accountant',
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.account_balance_wallet,
-                                                size: 18,
-                                              ),
-                                              SizedBox(width: 8),
-                                              Text('تغيير لمحاسب'),
-                                            ],
-                                          ),
-                                        ),
-                                      const PopupMenuDivider(),
-                                      if (role == 'manager')
-                                        const PopupMenuItem(
-                                          value: 'edit_branch',
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.swap_horiz,
-                                                size: 18,
-                                                color: Colors.blue,
-                                              ),
-                                              SizedBox(width: 8),
-                                              Text(
-                                                'نقل/تعيين فرع',
-                                                style: TextStyle(
-                                                  color: Colors.blue,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      PopupMenuItem(
-                                        value: 'toggle',
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              isActive
-                                                  ? Icons.block
-                                                  : Icons.check_circle_outline,
-                                              size: 18,
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            data['name'] ?? 'بدون اسم',
+                                            style: TextStyle(
+                                              decoration: isActive
+                                                  ? TextDecoration.none
+                                                  : TextDecoration.lineThrough,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
                                               color: isActive
-                                                  ? Colors.red
-                                                  : Colors.green,
+                                                  ? AppTheme.textPrimary
+                                                  : Colors.red.shade900,
                                             ),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              isActive
-                                                  ? 'إيقاف الحساب'
-                                                  : 'تفعيل الحساب',
-                                              style: TextStyle(
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            data['email'] ?? '',
+                                            style: const TextStyle(
+                                              color: AppTheme.textSecondary,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 4,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.blue.withValues(
+                                                    alpha: 0.1,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  role == 'manager'
+                                                      ? 'مدير فرع'
+                                                      : role == 'accountant'
+                                                      ? 'محاسب'
+                                                      : 'محصل',
+                                                  style: const TextStyle(
+                                                    color: Colors.blue,
+                                                    fontSize: 11,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (role == 'manager' &&
+                                                  branchId.isNotEmpty) ...[
+                                                const SizedBox(width: 8),
+                                                FutureBuilder<DocumentSnapshot>(
+                                                  future: FirebaseFirestore
+                                                      .instance
+                                                      .collection('branches')
+                                                      .doc(branchId)
+                                                      .get(),
+                                                  builder: (context, branchSnapshot) {
+                                                    if (!branchSnapshot.hasData)
+                                                      return const SizedBox.shrink();
+                                                    final branchName =
+                                                        (branchSnapshot.data
+                                                                ?.data()
+                                                            as Map<
+                                                              String,
+                                                              dynamic
+                                                            >?)?['name'] ??
+                                                        'فرع محذوف';
+                                                    return Container(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 8,
+                                                            vertical: 4,
+                                                          ),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.teal
+                                                            .withValues(
+                                                              alpha: 0.1,
+                                                            ),
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              8,
+                                                            ),
+                                                      ),
+                                                      child: Text(
+                                                        branchName,
+                                                        style: const TextStyle(
+                                                          color: Colors.teal,
+                                                          fontSize: 11,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    PopupMenuButton<String>(
+                                      icon: const Icon(
+                                        Icons.more_vert_rounded,
+                                        color: AppTheme.textHint,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      onSelected: (value) {
+                                        if (value == 'toggle') {
+                                          _toggleUserStatus(doc.id, isActive);
+                                        } else if (value == 'edit_branch') {
+                                          _showAssignBranchDialog(
+                                            doc.id,
+                                            branchId,
+                                          );
+                                        } else {
+                                          _updateUserRole(doc.id, value);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        if (role != 'manager')
+                                          const PopupMenuItem(
+                                            value: 'manager',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.admin_panel_settings,
+                                                  size: 18,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text('ترقية لمدير فرع'),
+                                              ],
+                                            ),
+                                          ),
+                                        if (role != 'collector')
+                                          const PopupMenuItem(
+                                            value: 'collector',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.motorcycle,
+                                                  size: 18,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text('تغيير لمحصل'),
+                                              ],
+                                            ),
+                                          ),
+                                        if (role != 'accountant')
+                                          const PopupMenuItem(
+                                            value: 'accountant',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.account_balance_wallet,
+                                                  size: 18,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text('تغيير لمحاسب'),
+                                              ],
+                                            ),
+                                          ),
+                                        const PopupMenuDivider(),
+                                        if (role == 'manager')
+                                          const PopupMenuItem(
+                                            value: 'edit_branch',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.swap_horiz,
+                                                  size: 18,
+                                                  color: Colors.blue,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text(
+                                                  'نقل/تعيين فرع',
+                                                  style: TextStyle(
+                                                    color: Colors.blue,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        PopupMenuItem(
+                                          value: 'toggle',
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                isActive
+                                                    ? Icons.block
+                                                    : Icons
+                                                          .check_circle_outline,
+                                                size: 18,
                                                 color: isActive
                                                     ? Colors.red
                                                     : Colors.green,
                                               ),
-                                            ),
-                                          ],
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                isActive
+                                                    ? 'إيقاف الحساب'
+                                                    : 'تفعيل الحساب',
+                                                style: TextStyle(
+                                                  color: isActive
+                                                      ? Colors.red
+                                                      : Colors.green,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   );
                 },
               ),

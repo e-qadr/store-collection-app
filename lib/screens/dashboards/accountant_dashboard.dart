@@ -5,6 +5,7 @@ import 'package:store_collection_app/screens/transactions/branch_transactions_sc
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
@@ -23,6 +24,7 @@ class AccountantDashboard extends StatelessWidget {
     DateTime startDate = DateTime.now().subtract(const Duration(days: 30));
     DateTime endDate = DateTime.now();
     bool isGenerating = false;
+    String pdfAction = 'save';
 
     await showDialog(
       context: context,
@@ -105,6 +107,29 @@ class AccountantDashboard extends StatelessWidget {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: pdfAction,
+                    decoration: const InputDecoration(
+                      labelText: 'إجراء ملف PDF',
+                      prefixIcon: Icon(Icons.picture_as_pdf_rounded),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'save',
+                        child: Text('حفظ PDF على الجهاز'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'print',
+                        child: Text('معاينة وطباعة'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setDialogState(() => pdfAction = value);
+                      }
+                    },
+                  ),
                 ],
               ),
               actions: [
@@ -168,14 +193,35 @@ class AccountantDashboard extends StatelessWidget {
                             }
 
                             // إرسال البيانات لدالة الطباعة
-                            await PdfService.printTransactionsReport(
-                              transactions: transactions,
-                              branchName: branchName,
-                              startDate: startDate,
-                              endDate: endDate,
-                            );
+                            String? path;
+                            if (pdfAction == 'save') {
+                              path = await PdfService.saveTransactionsReport(
+                                transactions: transactions,
+                                branchName: branchName,
+                                startDate: startDate,
+                                endDate: endDate,
+                              );
+                            } else {
+                              await PdfService.printTransactionsReport(
+                                transactions: transactions,
+                                branchName: branchName,
+                                startDate: startDate,
+                                endDate: endDate,
+                              );
+                            }
 
-                            if (context.mounted) Navigator.pop(context);
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              if (pdfAction == 'save') {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'تم حفظ تقرير PDF${path == null ? '' : ': $path'}',
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
                           } catch (e) {
                             setDialogState(() => isGenerating = false);
                             if (context.mounted) {
@@ -200,70 +246,78 @@ class AccountantDashboard extends StatelessWidget {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
-        body: CustomScrollView(
-          slivers: [
-            _buildSliverAppBar(context),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // ── Summary Stats ──────────────────────────────────
-                    _buildAccountantStats(),
-                    const SizedBox(height: 28),
+        body: RefreshIndicator(
+          onRefresh: () => refreshFirestoreQueries([
+            FirebaseFirestore.instance
+                .collection('transactions')
+                .where('branchId', isEqualTo: branchId),
+          ]),
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              _buildSliverAppBar(context),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── Summary Stats ──────────────────────────────────
+                      _buildAccountantStats(),
+                      const SizedBox(height: 28),
 
-                    // ── Quick Actions ──────────────────────────────────
-                    const SectionHeader(
-                      title: 'الإجراءات السريعة',
-                      icon: Icons.flash_on_rounded,
-                      color: AppTheme.accountantColor,
-                    ),
-                    const SizedBox(height: 14),
-                    ActionCard(
-                      title: 'سجل السندات والاعتماد',
-                      subtitle:
-                          'مراجعة السندات، واعتمادها نهائياً أو طلب تعديلها',
-                      icon: Icons.fact_check_rounded,
-                      color: const Color(0xFF00695C),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => BranchTransactionsScreen(
-                              branchId: branchId,
-                              branchName: branchName,
+                      // ── Quick Actions ──────────────────────────────────
+                      const SectionHeader(
+                        title: 'الإجراءات السريعة',
+                        icon: Icons.flash_on_rounded,
+                        color: AppTheme.accountantColor,
+                      ),
+                      const SizedBox(height: 14),
+                      ActionCard(
+                        title: 'سجل السندات والاعتماد',
+                        subtitle:
+                            'مراجعة السندات، واعتمادها نهائياً أو طلب تعديلها',
+                        icon: Icons.fact_check_rounded,
+                        color: const Color(0xFF00695C),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => BranchTransactionsScreen(
+                                branchId: branchId,
+                                branchName: branchName,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    ActionCard(
-                      title: 'استخراج تقارير PDF',
-                      subtitle: 'تحديد فترة زمنية وتصدير جدول بالسندات',
-                      icon: Icons.picture_as_pdf_rounded,
-                      color: const Color(0xFFC62828),
-                      onTap: () => _generateReportDialog(context),
-                    ),
-                    const SizedBox(height: 28),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'استخراج تقارير PDF',
+                        subtitle: 'تحديد فترة زمنية وتصدير جدول بالسندات',
+                        icon: Icons.picture_as_pdf_rounded,
+                        color: const Color(0xFFC62828),
+                        onTap: () => _generateReportDialog(context),
+                      ),
+                      const SizedBox(height: 28),
 
-                    // ── Recent Activity ────────────────────────────────
-                    const SectionHeader(
-                      title: 'آخر المعاملات',
-                      icon: Icons.history_rounded,
-                      color: AppTheme.accountantColor,
-                    ),
-                    const SizedBox(height: 14),
-                    RecentTransactionsList(
-                      branchId: branchId,
-                      color: AppTheme.accountantColor,
-                    ),
-                  ],
+                      // ── Recent Activity ────────────────────────────────
+                      const SectionHeader(
+                        title: 'آخر المعاملات',
+                        icon: Icons.history_rounded,
+                        color: AppTheme.accountantColor,
+                      ),
+                      const SizedBox(height: 14),
+                      RecentTransactionsList(
+                        branchId: branchId,
+                        color: AppTheme.accountantColor,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

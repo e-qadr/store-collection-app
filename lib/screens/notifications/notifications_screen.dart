@@ -1,10 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/screens/transactions/transaction_details_screen.dart';
 import 'package:store_collection_app/services/device_notification_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -119,74 +121,89 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     );
                   }
 
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: notifications.length,
-                    itemBuilder: (context, index) {
-                      final doc = notifications[index];
-                      final data = doc.data();
-                      final isRead = data['is_read'] == true;
-                      final createdAt = (data['created_at'] as Timestamp?)
-                          ?.toDate();
-                      return Card(
-                        color: isRead
-                            ? AppTheme.cardColor
-                            : Colors.blue.shade50,
-                        child: ListTile(
-                          leading: Icon(
-                            isRead
-                                ? Icons.notifications_none_rounded
-                                : Icons.notifications_active_rounded,
-                            color: isRead ? AppTheme.textHint : Colors.blue,
-                          ),
-                          title: Text(
-                            data['title'] ?? 'إشعار',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const SizedBox(height: 4),
-                              Text(data['message'] ?? ''),
-                              if (createdAt != null) ...[
-                                const SizedBox(height: 6),
-                                Text(
-                                  DateFormat(
-                                    'yyyy/MM/dd - hh:mm a',
-                                  ).format(createdAt),
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppTheme.textHint,
+                  final uid = FirebaseAuth.instance.currentUser?.uid;
+                  return RefreshIndicator(
+                    onRefresh: uid == null
+                        ? () async {}
+                        : () => refreshFirestoreQueries([
+                            FirebaseFirestore.instance
+                                .collection('notifications')
+                                .where('recipient_id', isEqualTo: uid),
+                          ]),
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(16),
+                      itemCount: notifications.length,
+                      itemBuilder: (context, index) {
+                        final doc = notifications[index];
+                        final data = doc.data();
+                        final isRead = data['is_read'] == true;
+                        final createdAt = (data['created_at'] as Timestamp?)
+                            ?.toDate();
+                        return Card(
+                          color: isRead
+                              ? AppTheme.cardColor
+                              : Colors.blue.shade50,
+                          child: ListTile(
+                            leading: Icon(
+                              isRead
+                                  ? Icons.notifications_none_rounded
+                                  : Icons.notifications_active_rounded,
+                              color: isRead ? AppTheme.textHint : Colors.blue,
+                            ),
+                            title: Text(
+                              data['title'] ?? 'إشعار',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 4),
+                                Text(data['message'] ?? ''),
+                                if (createdAt != null) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    DateFormat(
+                                      'yyyy/MM/dd - hh:mm a',
+                                    ).format(createdAt),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppTheme.textHint,
+                                    ),
                                   ),
-                                ),
+                                ],
                               ],
-                            ],
+                            ),
+                            onTap: () async {
+                              await _notificationService.markAsRead(doc.id);
+                              final transactionId =
+                                  data['transaction_id'] as String?;
+                              if (transactionId == null) return;
+                              final transaction = await FirebaseFirestore
+                                  .instance
+                                  .collection('transactions')
+                                  .doc(transactionId)
+                                  .get();
+                              if (context.mounted &&
+                                  transaction.data() != null) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        TransactionDetailsScreen(
+                                          transactionId: transaction.id,
+                                          transactionData: transaction.data()!,
+                                        ),
+                                  ),
+                                );
+                              }
+                            },
                           ),
-                          onTap: () async {
-                            await _notificationService.markAsRead(doc.id);
-                            final transactionId =
-                                data['transaction_id'] as String?;
-                            if (transactionId == null) return;
-                            final transaction = await FirebaseFirestore.instance
-                                .collection('transactions')
-                                .doc(transactionId)
-                                .get();
-                            if (context.mounted && transaction.data() != null) {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      TransactionDetailsScreen(
-                                        transactionId: transaction.id,
-                                        transactionData: transaction.data()!,
-                                      ),
-                                ),
-                              );
-                            }
-                          },
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   );
                 },
               ),

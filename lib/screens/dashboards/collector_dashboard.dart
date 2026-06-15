@@ -7,6 +7,7 @@ import 'package:store_collection_app/screens/transactions/collector_edit_request
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class CollectorDashboard extends StatelessWidget {
   // تمرير بيانات الفرع الخاص بالمحصل
@@ -27,113 +28,123 @@ class CollectorDashboard extends StatelessWidget {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
-        body: CustomScrollView(
-          slivers: [
-            _buildSliverAppBar(context),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // ── Summary Stats ──────────────────────────────────
-                    _buildCollectorStats(collectorId),
-                    const SizedBox(height: 28),
+        body: RefreshIndicator(
+          onRefresh: () => refreshFirestoreQueries([
+            FirebaseFirestore.instance
+                .collection('transactions')
+                .where('branchId', isEqualTo: branchId),
+          ]),
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              _buildSliverAppBar(context),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── Summary Stats ──────────────────────────────────
+                      _buildCollectorStats(collectorId),
+                      const SizedBox(height: 28),
 
-                    // ── Quick Actions ──────────────────────────────────
-                    const SectionHeader(
-                      title: 'الإجراءات السريعة',
-                      icon: Icons.flash_on_rounded,
-                      color: AppTheme.collectorColor,
-                    ),
-                    const SizedBox(height: 14),
+                      // ── Quick Actions ──────────────────────────────────
+                      const SectionHeader(
+                        title: 'الإجراءات السريعة',
+                        icon: Icons.flash_on_rounded,
+                        color: AppTheme.collectorColor,
+                      ),
+                      const SizedBox(height: 14),
 
-                    // 1. زر إضافة سند جديد
-                    ActionCard(
-                      title: 'إضافة سند تحصيل جديد',
-                      subtitle: 'إدخال بيانات مبلغ محصل جديد ورفعه للاعتماد',
-                      icon: Icons.add_circle_outline_rounded,
-                      color: const Color(0xFF2E7D32),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => NewTransactionScreen(
-                              branchId: branchId,
-                              branchName: branchName,
+                      // 1. زر إضافة سند جديد
+                      ActionCard(
+                        title: 'إضافة سند تحصيل جديد',
+                        subtitle: 'إدخال بيانات مبلغ محصل جديد ورفعه للاعتماد',
+                        icon: Icons.add_circle_outline_rounded,
+                        color: const Color(0xFF2E7D32),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => NewTransactionScreen(
+                                branchId: branchId,
+                                branchName: branchName,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
 
-                    // 2. زر السندات التي تتطلب تعديل
-                    ActionCard(
-                      title: 'سندات تتطلب تعديلاً',
-                      subtitle: 'مراجعة وتصحيح السندات المعادة من الإدارة',
-                      icon: Icons.edit_notifications_rounded,
-                      color: const Color(0xFFE65100),
-                      onTap: () {
-                        // سننتقل إلى شاشة التعديل
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'سننتقل إلى شاشة السندات المعادة للتعديل...',
+                      // 2. زر السندات التي تتطلب تعديل
+                      ActionCard(
+                        title: 'سندات تتطلب تعديلاً',
+                        subtitle: 'مراجعة وتصحيح السندات المعادة من الإدارة',
+                        icon: Icons.edit_notifications_rounded,
+                        color: const Color(0xFFE65100),
+                        onTap: () {
+                          // سننتقل إلى شاشة التعديل
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'سننتقل إلى شاشة السندات المعادة للتعديل...',
+                              ),
                             ),
-                          ),
-                        );
+                          );
 
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => CollectorEditRequestsScreen(
-                              branchId: branchId,
-                              branchName: branchName,
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => CollectorEditRequestsScreen(
+                                branchId: branchId,
+                                branchName: branchName,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 12),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
 
-                    // 3. زر سجل السندات
-                    ActionCard(
-                      title: 'سجل السندات الخاصة بي',
-                      subtitle: 'متابعة حالة جميع السندات التي قمت برفعها',
-                      icon: Icons.receipt_long_rounded,
-                      color: AppTheme.collectorColor,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => BranchTransactionsScreen(
-                              branchId: branchId,
-                              branchName: branchName,
+                      // 3. زر سجل السندات
+                      ActionCard(
+                        title: 'سجل السندات الخاصة بي',
+                        subtitle: 'متابعة حالة جميع السندات التي قمت برفعها',
+                        icon: Icons.receipt_long_rounded,
+                        color: AppTheme.collectorColor,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => BranchTransactionsScreen(
+                                branchId: branchId,
+                                branchName: branchName,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 28),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 28),
 
-                    // ── Recent Activity ────────────────────────────────
-                    const SectionHeader(
-                      title: 'آخر سنداتي',
-                      icon: Icons.history_rounded,
-                      color: AppTheme.collectorColor,
-                    ),
-                    const SizedBox(height: 14),
-                    RecentTransactionsList(
-                      branchId: branchId,
-                      color: AppTheme.collectorColor,
-                      collectorId: collectorId.isNotEmpty ? collectorId : null,
-                    ),
-                  ],
+                      // ── Recent Activity ────────────────────────────────
+                      const SectionHeader(
+                        title: 'آخر سنداتي',
+                        icon: Icons.history_rounded,
+                        color: AppTheme.collectorColor,
+                      ),
+                      const SizedBox(height: 14),
+                      RecentTransactionsList(
+                        branchId: branchId,
+                        color: AppTheme.collectorColor,
+                        collectorId: collectorId.isNotEmpty
+                            ? collectorId
+                            : null,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class CompanyBranchSelector extends StatefulWidget {
   final String title;
@@ -249,38 +250,45 @@ class _CompanyBranchSelectorState extends State<CompanyBranchSelector> {
         subtitle: 'يمكن لمسؤول النظام ربط الفروع بها من إدارة الفروع.',
       );
     }
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      itemCount: branches.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 12),
-      itemBuilder: (context, index) {
-        final branch = branches[index];
-        final data = branch.data() as Map<String, dynamic>;
-        return Container(
-          decoration: AppTheme.cardShadow(),
-          child: ListTile(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+    return RefreshIndicator(
+      onRefresh: () => refreshFirestoreQueries([
+        FirebaseFirestore.instance.collection('brands'),
+        FirebaseFirestore.instance.collection('branches'),
+      ]),
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        itemCount: branches.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final branch = branches[index];
+          final data = branch.data() as Map<String, dynamic>;
+          return Container(
+            decoration: AppTheme.cardShadow(),
+            child: ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              contentPadding: const EdgeInsets.all(14),
+              leading: CircleAvatar(
+                backgroundColor: widget.color.withValues(alpha: 0.1),
+                child: Icon(widget.branchIcon, color: widget.color),
+              ),
+              title: Text(
+                data['name'] ?? 'فرع غير مسمى',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: Text('رمز الفرع: ${data['branch_code'] ?? 'غير محدد'}'),
+              trailing: Icon(
+                Icons.arrow_forward_ios_rounded,
+                color: widget.color,
+                size: 16,
+              ),
+              onTap: () => widget.onBranchSelected(context, branch),
             ),
-            contentPadding: const EdgeInsets.all(14),
-            leading: CircleAvatar(
-              backgroundColor: widget.color.withValues(alpha: 0.1),
-              child: Icon(widget.branchIcon, color: widget.color),
-            ),
-            title: Text(
-              data['name'] ?? 'فرع غير مسمى',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text('رمز الفرع: ${data['branch_code'] ?? 'غير محدد'}'),
-            trailing: Icon(
-              Icons.arrow_forward_ios_rounded,
-              color: widget.color,
-              size: 16,
-            ),
-            onTap: () => widget.onBranchSelected(context, branch),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

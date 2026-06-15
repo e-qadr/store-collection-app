@@ -4,15 +4,58 @@ import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
-class TransactionDetailsScreen extends StatelessWidget {
+class TransactionDetailsScreen extends StatefulWidget {
   final Map<String, dynamic> transactionData;
   final String transactionId;
+  final String? branchName;
 
   const TransactionDetailsScreen({
     super.key,
     required this.transactionData,
     required this.transactionId,
+    this.branchName,
   });
+
+  @override
+  State<TransactionDetailsScreen> createState() =>
+      _TransactionDetailsScreenState();
+}
+
+class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
+  late Map<String, dynamic> _transactionData;
+  String _branchName = 'غير محدد';
+
+  @override
+  void initState() {
+    super.initState();
+    _transactionData = Map<String, dynamic>.from(widget.transactionData);
+    _branchName = widget.branchName ?? 'غير محدد';
+    _loadBranchName();
+  }
+
+  Future<void> _loadBranchName() async {
+    if (widget.branchName != null) return;
+    final branchId = _transactionData['branchId'] as String?;
+    if (branchId == null || branchId.isEmpty) return;
+    final branch = await FirebaseFirestore.instance
+        .collection('branches')
+        .doc(branchId)
+        .get();
+    if (mounted && branch.data() != null) {
+      setState(() => _branchName = branch.data()!['name'] ?? 'غير محدد');
+    }
+  }
+
+  Future<void> _refresh() async {
+    final transaction = await FirebaseFirestore.instance
+        .collection('transactions')
+        .doc(widget.transactionId)
+        .get(const GetOptions(source: Source.server));
+    if (transaction.data() != null && mounted) {
+      setState(() => _transactionData = transaction.data()!);
+      await _loadBranchName();
+    }
+  }
 
   String _getStatusText(String status) {
     switch (status) {
@@ -38,21 +81,22 @@ class TransactionDetailsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final double amount =
-        (transactionData['amount'] as num?)?.toDouble() ?? 0.0;
-    final String currency = transactionData['currency'] ?? 'YER';
-    final String trnNumber = transactionData['transaction_number'] ?? '#';
-    final String status = transactionData['status'] ?? 'pending';
-    final String notes = transactionData['notes'] ?? 'لا توجد ملاحظات';
-    final String managerNotes = transactionData['manager_notes'] ?? '';
-    final bool amountMatches = transactionData['amount_matches'] ?? true;
-    final double? cashierAmount = (transactionData['cashier_amount'] as num?)
+        (_transactionData['amount'] as num?)?.toDouble() ?? 0.0;
+    final String currency = _transactionData['currency'] ?? 'YER';
+    final String trnNumber = _transactionData['transaction_number'] ?? '#';
+    final String status = _transactionData['status'] ?? 'pending';
+    final String notes = _transactionData['notes'] ?? 'لا توجد ملاحظات';
+    final String managerNotes = _transactionData['manager_notes'] ?? '';
+    final bool amountMatches = _transactionData['amount_matches'] ?? true;
+    final double? cashierAmount = (_transactionData['cashier_amount'] as num?)
         ?.toDouble();
 
-    final dateFrom = (transactionData['dateFrom'] as Timestamp?)?.toDate();
-    final dateTo = (transactionData['dateTo'] as Timestamp?)?.toDate();
-    final creationDate = (transactionData['timestamp'] as Timestamp?)?.toDate();
+    final dateFrom = (_transactionData['dateFrom'] as Timestamp?)?.toDate();
+    final dateTo = (_transactionData['dateTo'] as Timestamp?)?.toDate();
+    final creationDate = (_transactionData['timestamp'] as Timestamp?)
+        ?.toDate();
 
-    List<dynamic> history = transactionData['history'] ?? [];
+    List<dynamic> history = _transactionData['history'] ?? [];
     List<Map<String, dynamic>> sortedHistory = List<Map<String, dynamic>>.from(
       history,
     );
@@ -76,15 +120,47 @@ class TransactionDetailsScreen extends StatelessWidget {
           backgroundColor: Colors.blueGrey.shade800,
           elevation: 0,
           actions: [
-            IconButton(
-              icon: const Icon(Icons.print_rounded),
-              tooltip: 'طباعة السند كـ PDF',
-              onPressed: () async {
-                await PdfService.printSingleTransaction(
-                  data: transactionData,
-                  branchName: 'الفرع المختار',
+            PopupMenuButton<String>(
+              tooltip: 'خيارات PDF',
+              icon: const Icon(Icons.picture_as_pdf_rounded),
+              onSelected: (action) async {
+                if (action == 'print') {
+                  await PdfService.printSingleTransaction(
+                    data: _transactionData,
+                    branchName: _branchName,
+                  );
+                  return;
+                }
+                final path = await PdfService.saveSingleTransaction(
+                  data: _transactionData,
+                  branchName: _branchName,
                 );
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'تم حفظ ملف PDF${path == null ? '' : ': $path'}',
+                      ),
+                    ),
+                  );
+                }
               },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'print',
+                  child: ListTile(
+                    leading: Icon(Icons.print_rounded),
+                    title: Text('معاينة وطباعة'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'save',
+                  child: ListTile(
+                    leading: Icon(Icons.download_rounded),
+                    title: Text('حفظ PDF على الجهاز'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -139,199 +215,172 @@ class TransactionDetailsScreen extends StatelessWidget {
             ),
 
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // بطاقة التواريخ
-                    const Text(
-                      'التواريخ والفترة',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      decoration: AppTheme.cardShadow(),
-                      child: Material(
-                        color: AppTheme.cardColor,
-                        borderRadius: BorderRadius.circular(16),
-                        child: Column(
-                          children: [
-                            ListTile(
-                              leading: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.teal.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(
-                                  Icons.date_range_rounded,
-                                  color: Colors.teal,
-                                  size: 20,
-                                ),
-                              ),
-                              title: const Text(
-                                'فترة التحصيل (من - إلى)',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: AppTheme.textSecondary,
-                                ),
-                              ),
-                              subtitle: Text(
-                                '${dateFrom != null ? DateFormat('yyyy/MM/dd').format(dateFrom) : ''}  -  ${dateTo != null ? DateFormat('yyyy/MM/dd').format(dateTo) : ''}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                  color: AppTheme.textPrimary,
-                                ),
-                              ),
-                            ),
-                            const Divider(height: 1, indent: 60),
-                            ListTile(
-                              leading: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(
-                                  Icons.access_time_rounded,
-                                  color: Colors.grey,
-                                  size: 20,
-                                ),
-                              ),
-                              title: const Text(
-                                'تاريخ ووقت الإدخال في النظام',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: AppTheme.textSecondary,
-                                ),
-                              ),
-                              subtitle: Text(
-                                creationDate != null
-                                    ? DateFormat(
-                                        'yyyy/MM/dd - hh:mm a',
-                                      ).format(creationDate)
-                                    : '',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                  color: AppTheme.textPrimary,
-                                ),
-                              ),
-                            ),
-                          ],
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // بطاقة التواريخ
+                      const Text(
+                        'التواريخ والفترة',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    const Text(
-                      'مطابقة مبلغ الكاشير',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      decoration: AppTheme.cardShadow(),
-                      child: ListTile(
-                        tileColor: AppTheme.cardColor,
-                        shape: RoundedRectangleBorder(
+                      const SizedBox(height: 12),
+                      Container(
+                        decoration: AppTheme.cardShadow(),
+                        child: Material(
+                          color: AppTheme.cardColor,
                           borderRadius: BorderRadius.circular(16),
-                        ),
-                        leading: Icon(
-                          amountMatches
-                              ? Icons.check_circle_rounded
-                              : Icons.warning_rounded,
-                          color: amountMatches ? Colors.green : Colors.orange,
-                        ),
-                        title: Text(
-                          amountMatches ? 'المبلغ مطابق' : 'المبلغ غير مطابق',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: amountMatches ? Colors.green : Colors.orange,
-                          ),
-                        ),
-                        subtitle: !amountMatches && cashierAmount != null
-                            ? Text(
-                                'المبلغ الموجود على الكاشير: ${NumberFormat('#,##0.##', 'en_US').format(cashierAmount)} $currency',
-                              )
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // بطاقة الملاحظات
-                    const Text(
-                      'الملاحظات',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      decoration: AppTheme.cardShadow(),
-                      child: Material(
-                        color: AppTheme.cardColor,
-                        borderRadius: BorderRadius.circular(16),
-                        child: Padding(
-                          padding: const EdgeInsets.all(20),
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.notes_rounded,
-                                    color: AppTheme.textHint,
+                              ListTile(
+                                leading: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.teal.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(
+                                    Icons.date_range_rounded,
+                                    color: Colors.teal,
                                     size: 20,
                                   ),
-                                  const SizedBox(width: 8),
-                                  const Text(
-                                    'ملاحظات المحصل:',
-                                    style: TextStyle(
-                                      color: AppTheme.textSecondary,
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                ),
+                                title: const Text(
+                                  'فترة التحصيل (من - إلى)',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: AppTheme.textSecondary,
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                notes,
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  color: AppTheme.textPrimary,
-                                  height: 1.4,
+                                ),
+                                subtitle: Text(
+                                  '${dateFrom != null ? DateFormat('yyyy/MM/dd').format(dateFrom) : ''}  -  ${dateTo != null ? DateFormat('yyyy/MM/dd').format(dateTo) : ''}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                    color: AppTheme.textPrimary,
+                                  ),
                                 ),
                               ),
+                              const Divider(height: 1, indent: 60),
+                              ListTile(
+                                leading: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(
+                                    Icons.access_time_rounded,
+                                    color: Colors.grey,
+                                    size: 20,
+                                  ),
+                                ),
+                                title: const Text(
+                                  'تاريخ ووقت الإدخال في النظام',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: AppTheme.textSecondary,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  creationDate != null
+                                      ? DateFormat(
+                                          'yyyy/MM/dd - hh:mm a',
+                                        ).format(creationDate)
+                                      : '',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    color: AppTheme.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
 
-                              if (managerNotes.isNotEmpty) ...[
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 16),
-                                  child: Divider(height: 1),
-                                ),
+                      const Text(
+                        'مطابقة مبلغ الكاشير',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        decoration: AppTheme.cardShadow(),
+                        child: ListTile(
+                          tileColor: AppTheme.cardColor,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          leading: Icon(
+                            amountMatches
+                                ? Icons.check_circle_rounded
+                                : Icons.warning_rounded,
+                            color: amountMatches ? Colors.green : Colors.orange,
+                          ),
+                          title: Text(
+                            amountMatches ? 'المبلغ مطابق' : 'المبلغ غير مطابق',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: amountMatches
+                                  ? Colors.green
+                                  : Colors.orange,
+                            ),
+                          ),
+                          subtitle: !amountMatches && cashierAmount != null
+                              ? Text(
+                                  'المبلغ الموجود على الكاشير: ${NumberFormat('#,##0.##', 'en_US').format(cashierAmount)} $currency',
+                                )
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // بطاقة الملاحظات
+                      const Text(
+                        'الملاحظات',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        decoration: AppTheme.cardShadow(),
+                        child: Material(
+                          color: AppTheme.cardColor,
+                          borderRadius: BorderRadius.circular(16),
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                                 Row(
                                   children: [
-                                    Icon(
-                                      Icons.admin_panel_settings_rounded,
-                                      color: Colors.red.shade400,
+                                    const Icon(
+                                      Icons.notes_rounded,
+                                      color: AppTheme.textHint,
                                       size: 20,
                                     ),
                                     const SizedBox(width: 8),
                                     const Text(
-                                      'رد / ملاحظات الإدارة:',
+                                      'ملاحظات المحصل:',
                                       style: TextStyle(
-                                        color: Colors.red,
+                                        color: AppTheme.textSecondary,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
@@ -339,54 +388,89 @@ class TransactionDetailsScreen extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  managerNotes,
+                                  notes,
                                   style: const TextStyle(
                                     fontSize: 15,
-                                    fontWeight: FontWeight.w600,
                                     color: AppTheme.textPrimary,
                                     height: 1.4,
                                   ),
                                 ),
+
+                                if (managerNotes.isNotEmpty) ...[
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 16),
+                                    child: Divider(height: 1),
+                                  ),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.admin_panel_settings_rounded,
+                                        color: Colors.red.shade400,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Text(
+                                        'رد / ملاحظات الإدارة:',
+                                        style: TextStyle(
+                                          color: Colors.red,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    managerNotes,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.textPrimary,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 32),
+                      const SizedBox(height: 32),
 
-                    // القسم الجديد: سجل حركات السند (Audit Trail)
-                    const Text(
-                      'مراحل السند وسجل الحركات',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (sortedHistory.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(32),
-                        alignment: Alignment.center,
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.history_rounded,
-                              size: 48,
-                              color: AppTheme.textHint.withValues(alpha: 0.5),
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'لا يوجد سجل حركات لهذا السند',
-                              style: TextStyle(color: AppTheme.textSecondary),
-                            ),
-                          ],
+                      // القسم الجديد: سجل حركات السند (Audit Trail)
+                      const Text(
+                        'مراحل السند وسجل الحركات',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
                         ),
-                      )
-                    else
-                      ...sortedHistory.map((item) => _buildTimelineItem(item)),
-                  ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (sortedHistory.isEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(32),
+                          alignment: Alignment.center,
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.history_rounded,
+                                size: 48,
+                                color: AppTheme.textHint.withValues(alpha: 0.5),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'لا يوجد سجل حركات لهذا السند',
+                                style: TextStyle(color: AppTheme.textSecondary),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        ...sortedHistory.map(
+                          (item) => _buildTimelineItem(item),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),

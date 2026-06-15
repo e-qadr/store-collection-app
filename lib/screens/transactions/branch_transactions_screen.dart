@@ -6,6 +6,7 @@ import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/screens/transactions/transaction_details_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
+import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class BranchTransactionsScreen extends StatefulWidget {
   final String branchId;
@@ -1172,166 +1173,178 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                     );
                   }
 
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: transactions.length + 1,
-                    itemBuilder: (context, index) {
-                      if (index == 0) {
-                        return _buildRecordsSummary(transactions);
-                      }
-                      final doc = transactions[index - 1];
-                      final data = doc.data() as Map<String, dynamic>;
+                  return RefreshIndicator(
+                    onRefresh: () => refreshFirestoreQueries([
+                      FirebaseFirestore.instance
+                          .collection('transactions')
+                          .where('branchId', isEqualTo: widget.branchId),
+                    ]),
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(16),
+                      itemCount: transactions.length + 1,
+                      itemBuilder: (context, index) {
+                        if (index == 0) {
+                          return _buildRecordsSummary(transactions);
+                        }
+                        final doc = transactions[index - 1];
+                        final data = doc.data() as Map<String, dynamic>;
 
-                      final double rawAmount =
-                          (data['amount'] as num?)?.toDouble() ?? 0.0;
-                      final String formattedAmount = NumberFormat(
-                        '#,##0.##',
-                        'en_US',
-                      ).format(rawAmount);
-                      final String currency = data['currency'] ?? 'YER';
-                      final String trnNumber =
-                          data['transaction_number'] ?? '#';
-                      final String status = data['status'] ?? 'pending';
+                        final double rawAmount =
+                            (data['amount'] as num?)?.toDouble() ?? 0.0;
+                        final String formattedAmount = NumberFormat(
+                          '#,##0.##',
+                          'en_US',
+                        ).format(rawAmount);
+                        final String currency = data['currency'] ?? 'YER';
+                        final String trnNumber =
+                            data['transaction_number'] ?? '#';
+                        final String status = data['status'] ?? 'pending';
 
-                      final dateFrom = (data['dateFrom'] as Timestamp?)
-                          ?.toDate();
-                      final dateTo = (data['dateTo'] as Timestamp?)?.toDate();
-                      String dateRange = 'غير محدد';
-                      if (dateFrom != null && dateTo != null) {
-                        dateRange =
-                            '${DateFormat('yyyy/MM/dd').format(dateFrom)} - ${DateFormat('yyyy/MM/dd').format(dateTo)}';
-                      }
+                        final dateFrom = (data['dateFrom'] as Timestamp?)
+                            ?.toDate();
+                        final dateTo = (data['dateTo'] as Timestamp?)?.toDate();
+                        String dateRange = 'غير محدد';
+                        if (dateFrom != null && dateTo != null) {
+                          dateRange =
+                              '${DateFormat('yyyy/MM/dd').format(dateFrom)} - ${DateFormat('yyyy/MM/dd').format(dateTo)}';
+                        }
 
-                      final statusColor = AppTheme.statusColor(status);
+                        final statusColor = AppTheme.statusColor(status);
 
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: AppTheme.cardShadow(),
-                        child: Material(
-                          color: AppTheme.cardColor,
-                          borderRadius: BorderRadius.circular(16),
-                          child: InkWell(
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: AppTheme.cardShadow(),
+                          child: Material(
+                            color: AppTheme.cardColor,
                             borderRadius: BorderRadius.circular(16),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      TransactionDetailsScreen(
-                                        transactionData: data,
-                                        transactionId: doc.id,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        TransactionDetailsScreen(
+                                          transactionData: data,
+                                          transactionId: doc.id,
+                                          branchName: widget.branchName,
+                                        ),
+                                  ),
+                                );
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    // Icon
+                                    Container(
+                                      width: 48,
+                                      height: 48,
+                                      decoration: BoxDecoration(
+                                        color: statusColor.withValues(
+                                          alpha: 0.1,
+                                        ),
+                                        borderRadius: BorderRadius.circular(14),
                                       ),
-                                ),
-                              );
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  // Icon
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      color: statusColor.withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(14),
+                                      child: Icon(
+                                        Icons.receipt_outlined,
+                                        color: statusColor,
+                                        size: 24,
+                                      ),
                                     ),
-                                    child: Icon(
-                                      Icons.receipt_outlined,
-                                      color: statusColor,
-                                      size: 24,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 14),
+                                    const SizedBox(width: 14),
 
-                                  // Content
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '$formattedAmount $currency',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
-                                            color: AppTheme.textPrimary,
+                                    // Content
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '$formattedAmount $currency',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                              color: AppTheme.textPrimary,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          'رقم: $trnNumber',
-                                          style: const TextStyle(
-                                            fontSize: 13,
-                                            color: AppTheme.textSecondary,
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'رقم: $trnNumber',
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              color: AppTheme.textSecondary,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Row(
-                                          children: [
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 6,
-                                                    vertical: 2,
+                                          const SizedBox(height: 6),
+                                          Row(
+                                            children: [
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 2,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: statusColor.withValues(
+                                                    alpha: 0.1,
                                                   ),
-                                              decoration: BoxDecoration(
-                                                color: statusColor.withValues(
-                                                  alpha: 0.1,
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
                                                 ),
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                              ),
-                                              child: Text(
-                                                AppTheme.statusLabel(status),
-                                                style: TextStyle(
-                                                  color: statusColor,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 10,
+                                                child: Text(
+                                                  AppTheme.statusLabel(status),
+                                                  style: TextStyle(
+                                                    color: statusColor,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 10,
+                                                  ),
                                                 ),
                                               ),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Expanded(
-                                              child: Text(
-                                                dateRange,
-                                                style: const TextStyle(
-                                                  fontSize: 11,
-                                                  color: AppTheme.textHint,
+                                              const SizedBox(width: 6),
+                                              Expanded(
+                                                child: Text(
+                                                  dateRange,
+                                                  style: const TextStyle(
+                                                    fontSize: 11,
+                                                    color: AppTheme.textHint,
+                                                  ),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                 ),
-                                                overflow: TextOverflow.ellipsis,
                                               ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
+                                            ],
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
 
-                                  // Trailing Action
-                                  if (_buildTrailingAction(
+                                    // Trailing Action
+                                    if (_buildTrailingAction(
+                                          status,
+                                          doc.id,
+                                          trnNumber,
+                                          data,
+                                        ) !=
+                                        null) ...[
+                                      const SizedBox(width: 8),
+                                      _buildTrailingAction(
                                         status,
                                         doc.id,
                                         trnNumber,
                                         data,
-                                      ) !=
-                                      null) ...[
-                                    const SizedBox(width: 8),
-                                    _buildTrailingAction(
-                                      status,
-                                      doc.id,
-                                      trnNumber,
-                                      data,
-                                    )!,
+                                      )!,
+                                    ],
                                   ],
-                                ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   );
                 },
               ),
