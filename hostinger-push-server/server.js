@@ -6,8 +6,12 @@ const admin = require("firebase-admin");
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS || 5000);
+const androidNotificationChannelId =
+  process.env.ANDROID_NOTIFICATION_CHANNEL_ID || "high_importance_channel";
 
 let workerRunning = false;
+let lastWorkerRunAt;
+let lastWorkerError;
 let firestore;
 let firebaseConfigurationError;
 
@@ -64,6 +68,10 @@ app.get("/health", (_request, response) => {
     firebaseReady: !firebaseConfigurationError,
     configurationError: firebaseConfigurationError ?? null,
     workerRunning,
+    pollIntervalMs,
+    androidNotificationChannelId,
+    lastWorkerRunAt: lastWorkerRunAt ?? null,
+    lastWorkerError: lastWorkerError ?? null,
     timestamp: new Date().toISOString(),
   });
 });
@@ -115,9 +123,19 @@ async function processNotification(reference) {
       },
       android: {
         priority: "high",
-        notification: {sound: "default"},
+        ttl: 24 * 60 * 60 * 1000,
+        notification: {
+          channelId: androidNotificationChannelId,
+          clickAction: "FLUTTER_NOTIFICATION_CLICK",
+          defaultSound: true,
+          defaultVibrateTimings: true,
+          priority: "high",
+          sound: "default",
+          visibility: "public",
+        },
       },
       apns: {
+        headers: {"apns-priority": "10"},
         payload: {aps: {sound: "default", badge: 1}},
       },
     });
@@ -142,6 +160,12 @@ async function processNotification(reference) {
       push_status: result.failureCount === 0 ? "sent" : "partially_sent",
       push_success_count: result.successCount,
       push_failure_count: result.failureCount,
+      push_message_ids: result.responses
+          .map((response) => response.messageId)
+          .filter(Boolean),
+      push_error_codes: result.responses
+          .map((response) => response.error?.code)
+          .filter(Boolean),
       push_processed_at: admin.firestore.FieldValue.serverTimestamp(),
     });
   } catch (error) {
@@ -159,6 +183,8 @@ async function processPendingNotifications() {
   workerRunning = true;
 
   try {
+    lastWorkerRunAt = new Date().toISOString();
+    lastWorkerError = undefined;
     const snapshot = await firestore
         .collection("notifications")
         .where("push_status", "==", "pending")
@@ -168,6 +194,7 @@ async function processPendingNotifications() {
     await Promise.all(snapshot.docs.map((document) =>
       processNotification(document.ref)));
   } catch (error) {
+    lastWorkerError = String(error?.message ?? error);
     console.error("Notification worker failed", error);
   } finally {
     workerRunning = false;

@@ -3,9 +3,39 @@ import 'dart:async';
 import 'package:app_settings/app_settings.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:store_collection_app/services/app_navigation_service.dart';
+
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  await recordDeviceNotificationDelivery(message, state: 'background');
+}
+
+Future<void> recordDeviceNotificationDelivery(
+  RemoteMessage message, {
+  required String state,
+}) async {
+  final notificationId = message.data['notification_id'];
+  if (notificationId == null || notificationId.isEmpty) return;
+
+  try {
+    await FirebaseFirestore.instance
+        .collection('notifications')
+        .doc(notificationId)
+        .update({
+          'device_received_at': FieldValue.serverTimestamp(),
+          'device_received_state': state,
+          'device_platform': kIsWeb
+              ? 'web'
+              : defaultTargetPlatform.name.toLowerCase(),
+        });
+  } catch (_) {
+    // لا يجب أن يؤثر فشل تسجيل الاستلام على عرض الإشعار.
+  }
+}
 
 enum DeviceNotificationPermissionState {
   enabled,
@@ -16,7 +46,10 @@ enum DeviceNotificationPermissionState {
 
 class DeviceNotificationService {
   static StreamSubscription<String>? _tokenSubscription;
+  static StreamSubscription<RemoteMessage>? _foregroundMessageSubscription;
   static StreamSubscription<RemoteMessage>? _messageOpenedSubscription;
+  static String? _registeredUserId;
+  static String? _registeredToken;
   static bool _initialized = false;
 
   bool get supportsAutomaticRequest {
@@ -49,11 +82,24 @@ class DeviceNotificationService {
       _tokenSubscription ??= FirebaseMessaging.instance.onTokenRefresh.listen(
         _saveToken,
       );
+      _foregroundMessageSubscription ??= FirebaseMessaging.onMessage.listen(
+        (message) =>
+            recordDeviceNotificationDelivery(message, state: 'foreground'),
+      );
       _messageOpenedSubscription ??= FirebaseMessaging.onMessageOpenedApp
-          .listen((_) => AppNavigationService.openNotifications());
+          .listen((message) {
+            recordDeviceNotificationDelivery(message, state: 'opened');
+            AppNavigationService.openNotifications();
+          });
       final initialMessage = await FirebaseMessaging.instance
           .getInitialMessage();
-      if (initialMessage != null) AppNavigationService.openNotifications();
+      if (initialMessage != null) {
+        await recordDeviceNotificationDelivery(
+          initialMessage,
+          state: 'opened_from_terminated',
+        );
+        AppNavigationService.openNotifications();
+      }
       if (supportsAutomaticRequest) {
         await requestPermission();
       } else {
@@ -65,10 +111,13 @@ class DeviceNotificationService {
   }
 
   Future<void> resetForSignedOutUser() async {
+    await _removeTokenFromPreviouslyRegisteredUser();
     _initialized = false;
     await _tokenSubscription?.cancel();
+    await _foregroundMessageSubscription?.cancel();
     await _messageOpenedSubscription?.cancel();
     _tokenSubscription = null;
+    _foregroundMessageSubscription = null;
     _messageOpenedSubscription = null;
   }
 
@@ -137,11 +186,36 @@ class DeviceNotificationService {
   Future<void> _saveToken(String token) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
+    if (_registeredUserId != null && _registeredUserId != uid) {
+      await _removeTokenFromPreviouslyRegisteredUser();
+    }
     await FirebaseFirestore.instance.collection('users').doc(uid).set({
       'notification_tokens': FieldValue.arrayUnion([token]),
       'notifications_enabled': true,
+      'notification_platform': kIsWeb
+          ? 'web'
+          : defaultTargetPlatform.name.toLowerCase(),
       'notification_token_updated_at': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    _registeredUserId = uid;
+    _registeredToken = token;
+  }
+
+  Future<void> _removeTokenFromPreviouslyRegisteredUser() async {
+    final uid = _registeredUserId;
+    final token = _registeredToken;
+    _registeredUserId = null;
+    _registeredToken = null;
+    if (uid == null || token == null) return;
+
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'notification_tokens': FieldValue.arrayRemove([token]),
+        'notification_token_updated_at': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      // قد يكون المستخدم قد فقد الاتصال أثناء تسجيل الخروج.
+    }
   }
 
   Future<void> _updateEnabledState(bool enabled) async {
