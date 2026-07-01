@@ -509,8 +509,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                             ),
                           ],
                           onChanged: (val) {
-                            if (val != null)
+                            if (val != null) {
                               setDialogState(() => selectedCurrency = val);
+                            }
                           },
                         ),
                       ),
@@ -711,8 +712,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
 
     if (status == 'editRequestedByCollector' ||
         status == 'pendingApprovalOfEdit' ||
-        status == 'rejectedByManager')
+        status == 'rejectedByManager') {
       return null;
+    }
 
     if (_currentUserRole == 'manager') {
       return IconButton(
@@ -1223,8 +1225,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoadingRole)
+    if (_isLoadingRole) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -1305,15 +1308,17 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                   branchId: widget.branchId,
                 ),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting)
+                  if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
-                  if (snapshot.hasError)
+                  }
+                  if (snapshot.hasError) {
                     return const Center(
                       child: Text(
                         'خطأ في جلب البيانات.',
                         style: TextStyle(color: Colors.red),
                       ),
                     );
+                  }
 
                   final transactions = filterAndSortTransactionRecords(
                     records: snapshot.data!.docs,

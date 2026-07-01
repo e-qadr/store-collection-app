@@ -116,10 +116,12 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
 
   // حذف فرع
   Future<void> _deleteBranch(String branchId, String branchCode) async {
+    final screenContext = context;
+
     // تأكيد الحذف
     await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
+      context: screenContext,
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Row(
           children: [
@@ -137,7 +139,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('إلغاء'),
           ),
           ElevatedButton.icon(
@@ -149,7 +151,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
               ),
             ),
             onPressed: () async {
-              Navigator.pop(context);
+              Navigator.pop(dialogContext);
               final firestore = FirebaseFirestore.instance;
               final batch = firestore.batch();
               batch.delete(firestore.collection('branches').doc(branchId));
@@ -159,13 +161,14 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                 );
               }
               await batch.commit();
-              if (mounted)
-                ScaffoldMessenger.of(context).showSnackBar(
+              if (screenContext.mounted) {
+                ScaffoldMessenger.of(screenContext).showSnackBar(
                   const SnackBar(
                     content: Text('تم حذف الفرع'),
                     backgroundColor: Colors.red,
                   ),
                 );
+              }
             },
             icon: const Icon(Icons.delete_rounded, size: 18),
             label: const Text('حذف'),
@@ -183,9 +186,10 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
     String? selectedManagerId = currentManagerId.isEmpty
         ? null
         : currentManagerId;
+    final screenContext = context;
 
     await showDialog(
-      context: context,
+      context: screenContext,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -212,7 +216,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                     .where('role', isEqualTo: 'manager')
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData)
+                  if (!snapshot.hasData) {
                     return const SizedBox(
                       height: 100,
                       child: Center(
@@ -221,6 +225,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                         ),
                       ),
                     );
+                  }
 
                   final managers = snapshot.data!.docs;
                   if (managers.isEmpty) {
@@ -314,9 +319,9 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
 
                     await batch.commit();
 
-                    if (mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
+                    if (screenContext.mounted) {
+                      Navigator.pop(screenContext);
+                      ScaffoldMessenger.of(screenContext).showSnackBar(
                         const SnackBar(
                           content: Text('تم تحديث إدارة الفرع'),
                           backgroundColor: Colors.green,
@@ -515,12 +520,13 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                     .collection('branches')
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting)
+                  if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(
                       child: CircularProgressIndicator(
                         color: AppTheme.adminColor,
                       ),
                     );
+                  }
                   if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                     return Center(
                       child: Column(
@@ -627,7 +633,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                                       .doc(managerId)
                                                       .get(),
                                                   builder: (context, userSnapshot) {
-                                                    if (!userSnapshot.hasData)
+                                                    if (!userSnapshot.hasData) {
                                                       return const Text(
                                                         'جاري جلب المدير...',
                                                         style: TextStyle(
@@ -636,9 +642,10 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                                               AppTheme.textHint,
                                                         ),
                                                       );
+                                                    }
                                                     if (!userSnapshot
                                                         .data!
-                                                        .exists)
+                                                        .exists) {
                                                       return const Text(
                                                         'المدير محذوف من النظام',
                                                         style: TextStyle(
@@ -646,6 +653,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                                           fontSize: 12,
                                                         ),
                                                       );
+                                                    }
                                                     final managerName =
                                                         (userSnapshot.data!
                                                                 .data()

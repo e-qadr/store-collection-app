@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:store_collection_app/models/transaction_model.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 import 'package:store_collection_app/utils/archive_workflow.dart';
@@ -134,7 +135,7 @@ class DatabaseService {
       );
       return transactionNumber;
     } catch (e) {
-      print('Database Error: $e');
+      debugPrint('Database Error: $e');
       rethrow;
     }
   }

@@ -293,17 +293,19 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: _dbService.getBranchTransactions(branchId: widget.branchId),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
             child: CircularProgressIndicator(color: AppTheme.managerColor),
           );
-        if (snapshot.hasError)
+        }
+        if (snapshot.hasError) {
           return const Center(
             child: Text(
               'حدث خطأ في جلب البيانات.',
               style: TextStyle(color: Colors.red),
             ),
           );
+        }
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return Center(
             child: Column(
@@ -510,17 +512,19 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
     return StreamBuilder<QuerySnapshot>(
       stream: _dbService.getBranchTransactions(branchId: widget.branchId),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
             child: CircularProgressIndicator(color: AppTheme.managerColor),
           );
-        if (snapshot.hasError)
+        }
+        if (snapshot.hasError) {
           return const Center(
             child: Text(
               'حدث خطأ في جلب البيانات.',
               style: TextStyle(color: Colors.red),
             ),
           );
+        }
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return Center(
             child: Column(

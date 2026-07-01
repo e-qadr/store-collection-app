@@ -151,8 +151,9 @@ class _CollectorEditRequestsScreenState
                             ),
                           ],
                           onChanged: (val) {
-                            if (val != null)
+                            if (val != null) {
                               setDialogState(() => selectedCurrency = val);
+                            }
                           },
                         ),
                       ),
@@ -278,13 +279,14 @@ class _CollectorEditRequestsScreenState
                             }
                           } catch (e) {
                             setDialogState(() => isSaving = false);
-                            if (context.mounted)
+                            if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text('حدث خطأ أثناء التعديل'),
                                   backgroundColor: Colors.red,
                                 ),
                               );
+                            }
                           }
                         },
                   icon: isSaving
@@ -314,9 +316,10 @@ class _CollectorEditRequestsScreenState
   ) async {
     TextEditingController reasonController = TextEditingController();
     bool isSubmitting = false;
+    final screenContext = context;
 
     await showDialog(
-      context: context,
+      context: screenContext,
       barrierDismissible: false,
       builder: (context) {
         return StatefulBuilder(
@@ -382,9 +385,9 @@ class _CollectorEditRequestsScreenState
                               rejectReason: reasonController.text.trim(),
                               returnToStatus: returnStatus,
                             );
-                            if (mounted) {
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
+                            if (screenContext.mounted) {
+                              Navigator.pop(screenContext);
+                              ScaffoldMessenger.of(screenContext).showSnackBar(
                                 const SnackBar(
                                   content: Text('تم إرسال الرد بنجاح'),
                                   backgroundColor: Colors.green,
@@ -393,13 +396,14 @@ class _CollectorEditRequestsScreenState
                             }
                           } catch (e) {
                             setDialogState(() => isSubmitting = false);
-                            if (mounted)
-                              ScaffoldMessenger.of(context).showSnackBar(
+                            if (screenContext.mounted) {
+                              ScaffoldMessenger.of(screenContext).showSnackBar(
                                 const SnackBar(
                                   content: Text('حدث خطأ'),
                                   backgroundColor: Colors.red,
                                 ),
                               );
+                            }
                           }
                         },
                   icon: isSubmitting
@@ -439,17 +443,19 @@ class _CollectorEditRequestsScreenState
         body: StreamBuilder<QuerySnapshot>(
           stream: _dbService.getBranchTransactions(branchId: widget.branchId),
           builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting)
+            if (snapshot.connectionState == ConnectionState.waiting) {
               return Center(
                 child: CircularProgressIndicator(color: Colors.orange.shade700),
               );
-            if (snapshot.hasError)
+            }
+            if (snapshot.hasError) {
               return const Center(
                 child: Text(
                   'حدث خطأ في جلب البيانات.',
                   style: TextStyle(color: Colors.red),
                 ),
               );
+            }
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return Center(
                 child: Column(

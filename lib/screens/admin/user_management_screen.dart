@@ -115,13 +115,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         .collection('users')
         .doc(uid)
         .update(updates);
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('تم تحديث الصلاحية بنجاح'),
           backgroundColor: Colors.green,
         ),
       );
+    }
   }
 
   // 3. الإيقاف والتفعيل
@@ -145,9 +146,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     String currentBranchId,
   ) async {
     String? newBranchId = currentBranchId.isEmpty ? null : currentBranchId;
+    final screenContext = context;
 
     await showDialog(
-      context: context,
+      context: screenContext,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -170,7 +172,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     .collection('branches')
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData)
+                  if (!snapshot.hasData) {
                     return const SizedBox(
                       height: 100,
                       child: Center(
@@ -179,6 +181,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                         ),
                       ),
                     );
+                  }
 
                   final branches = snapshot.data!.docs;
 
@@ -246,9 +249,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                           .doc(uid)
                           .update({'branchId': newBranchId});
                     }
-                    if (mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
+                    if (screenContext.mounted) {
+                      Navigator.pop(screenContext);
+                      ScaffoldMessenger.of(screenContext).showSnackBar(
                         const SnackBar(
                           content: Text('تم تحديث الفرع بنجاح'),
                           backgroundColor: Colors.green,
@@ -414,10 +417,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                 .collection('branches')
                                 .snapshots(),
                             builder: (context, snapshot) {
-                              if (!snapshot.hasData)
+                              if (!snapshot.hasData) {
                                 return const LinearProgressIndicator(
                                   color: AppTheme.adminColor,
                                 );
+                              }
 
                               if (_selectedBranchId != null &&
                                   !snapshot.data!.docs.any(
@@ -533,12 +537,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     .orderBy('createdAt', descending: true)
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting)
+                  if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(
                       child: CircularProgressIndicator(
                         color: AppTheme.adminColor,
                       ),
                     );
+                  }
                   if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                     return Center(
                       child: Column(
@@ -696,8 +701,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                       .doc(branchId)
                                                       .get(),
                                                   builder: (context, branchSnapshot) {
-                                                    if (!branchSnapshot.hasData)
+                                                    if (!branchSnapshot
+                                                        .hasData) {
                                                       return const SizedBox.shrink();
+                                                    }
                                                     final branchName =
                                                         (branchSnapshot.data
                                                                 ?.data()

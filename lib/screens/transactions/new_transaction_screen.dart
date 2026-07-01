@@ -369,8 +369,9 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
                                 ],
                                 onChanged: (value) => setState(() {
                                   _amountMatches = value ?? true;
-                                  if (_amountMatches)
+                                  if (_amountMatches) {
                                     _cashierAmountController.clear();
+                                  }
                                 }),
                               ),
                               if (!_amountMatches) ...[
