@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
 import 'package:store_collection_app/screens/transactions/new_transaction_screen.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/screens/transactions/collector_edit_requests_screen.dart';
@@ -8,9 +10,10 @@ import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
+import 'package:store_collection_app/utils/logout_confirmation.dart';
 
 class CollectorDashboard extends StatelessWidget {
-  // تمرير بيانات الفرع الخاص بالمحصل
+  // تمرير بيانات الفرع الخاص بالمدير العام
   final String branchId;
   final String branchName;
 
@@ -46,6 +49,27 @@ class CollectorDashboard extends StatelessWidget {
                     children: [
                       // ── Summary Stats ──────────────────────────────────
                       _buildCollectorStats(collectorId),
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'فواتير الطلبات بين الفروع',
+                        subtitle:
+                            'عرض كل الفواتير وإدخال أسعار المنتجات وطلب التعديلات',
+                        icon: Icons.swap_horiz_rounded,
+                        color: AppTheme.collectorColor,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  InterBranchInvoicesDashboard(
+                                    role: UserRole.collector,
+                                    branchName: branchName,
+                                    branchId: branchId,
+                                  ),
+                            ),
+                          );
+                        },
+                      ),
                       const SizedBox(height: 28),
 
                       // ── Quick Actions ──────────────────────────────────
@@ -59,7 +83,7 @@ class CollectorDashboard extends StatelessWidget {
                       // 1. زر إضافة سند جديد
                       ActionCard(
                         title: 'إضافة سند تحصيل جديد',
-                        subtitle: 'إدخال بيانات مبلغ محصل جديد ورفعه للاعتماد',
+                        subtitle: 'إدخال بيانات مبلغ جديد ورفعه للاعتماد',
                         icon: Icons.add_circle_outline_rounded,
                         color: const Color(0xFF2E7D32),
                         onTap: () {
@@ -157,25 +181,19 @@ class CollectorDashboard extends StatelessWidget {
       floating: false,
       pinned: true,
       backgroundColor: AppTheme.collectorColor,
-      automaticallyImplyLeading: false,
+      automaticallyImplyLeading: Navigator.of(context).canPop(),
       actions: [
         const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',
-          onPressed: () async {
-            await FirebaseAuth.instance.signOut();
-            if (context.mounted) {
-              // هذا السطر السحري يقوم بإغلاق جميع الشاشات المتراكمة والعودة للشاشة الرئيسية (AuthGate)
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            }
-          },
+          onPressed: () => confirmAndSignOut(context),
         ),
       ],
       flexibleSpace: FlexibleSpaceBar(
         centerTitle: true,
         title: const Text(
-          'لوحة المحصل',
+          'لوحة المدير العام',
           style: TextStyle(
             color: Colors.white,
             fontSize: 16,

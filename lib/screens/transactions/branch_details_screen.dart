@@ -26,18 +26,31 @@ class BranchDetailsScreen extends StatelessWidget {
               Card(
                 color: Colors.blue.shade50,
                 elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(20.0),
                   child: Column(
                     children: [
-                      const Icon(Icons.storefront, size: 50, color: Colors.blue),
+                      const Icon(
+                        Icons.storefront,
+                        size: 50,
+                        color: Colors.blue,
+                      ),
                       const SizedBox(height: 10),
                       Text(
                         branch.name,
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blue),
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
                       ),
-                      const Text('إدارة العمليات المالية الفورية', style: TextStyle(color: Colors.grey)),
+                      const Text(
+                        'إدارة العمليات المالية الفورية',
+                        style: TextStyle(color: Colors.grey),
+                      ),
                     ],
                   ),
                 ),
@@ -53,7 +66,7 @@ class BranchDetailsScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) => NewTransactionScreen(
-                          branchId: branch.id, 
+                          branchId: branch.id,
                           branchName: branch.name,
                         ),
                       ),
@@ -61,14 +74,29 @@ class BranchDetailsScreen extends StatelessWidget {
                   },
                   child: Card(
                     elevation: 3,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
                     child: const Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.add_box_rounded, size: 60, color: Colors.green),
+                        Icon(
+                          Icons.add_box_rounded,
+                          size: 60,
+                          color: Colors.green,
+                        ),
                         SizedBox(height: 10),
-                        Text('تسجيل تحصيل جديد', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        Text('إدخال مبالغ كاش، شبكة، أو تحويلات', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        Text(
+                          'تسجيل تحصيل جديد',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          'إدخال مبالغ كاش، شبكة، أو تحويلات',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
                       ],
                     ),
                   ),
@@ -85,7 +113,7 @@ class BranchDetailsScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) => BranchTransactionsScreen(
-                          branchId: branch.id, 
+                          branchId: branch.id,
                           branchName: branch.name,
                         ),
                       ),
@@ -93,14 +121,29 @@ class BranchDetailsScreen extends StatelessWidget {
                   },
                   child: Card(
                     elevation: 3,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
                     child: const Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.receipt_long, size: 60, color: Colors.orange),
+                        Icon(
+                          Icons.receipt_long,
+                          size: 60,
+                          color: Colors.orange,
+                        ),
                         SizedBox(height: 10),
-                        Text('سجل السندات والعمليات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        Text('متابعة حالة السندات المعلقة والمؤكدة', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        Text(
+                          'سجل السندات والعمليات',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          'متابعة حالة السندات المعلقة والمؤكدة',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
                       ],
                     ),
                   ),

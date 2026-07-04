@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/screens/admin/branch_management_screen.dart';
 import 'package:store_collection_app/screens/admin/brand_management_screen.dart';
 import 'package:store_collection_app/screens/admin/user_management_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
 class AdminDashboard extends StatelessWidget {
@@ -83,18 +83,13 @@ class AdminDashboard extends StatelessWidget {
       floating: false,
       pinned: true,
       backgroundColor: AppTheme.adminColor,
-      automaticallyImplyLeading: false,
+      automaticallyImplyLeading: Navigator.of(context).canPop(),
       actions: [
         const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',
-          onPressed: () async {
-            await FirebaseAuth.instance.signOut();
-            if (context.mounted) {
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            }
-          },
+          onPressed: () => confirmAndSignOut(context),
         ),
       ],
       flexibleSpace: FlexibleSpaceBar(

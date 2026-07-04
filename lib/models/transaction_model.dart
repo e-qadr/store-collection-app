@@ -14,7 +14,7 @@ class TransactionModel {
   final TransactionStatus status;
   final DateTime timestamp;
   final String currency;
-  final bool amountMatches;
+  final bool? amountMatches;
   final double? cashierAmount;
   final Map<String, dynamic>? pendingEditData;
   final List<Map<String, dynamic>>? history; // تمت إضافة هذا الحقل
@@ -54,7 +54,7 @@ class TransactionModel {
       ),
       timestamp: (json['timestamp'] as Timestamp).toDate(),
       currency: json['currency'] ?? 'YER',
-      amountMatches: json['amount_matches'] ?? true,
+      amountMatches: json['amount_matches'] as bool?,
       cashierAmount: (json['cashier_amount'] as num?)?.toDouble(),
       pendingEditData: json['pending_edit_data'], // قراءة التعديلات المعلقة
       history: (json['history'] as List?)

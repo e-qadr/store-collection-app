@@ -32,7 +32,20 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
   DateTime? _dateTo;
   bool _isLoading = false;
   String _selectedCurrency = 'YER';
-  bool _amountMatches = true;
+  String _amountMatchStatus = 'unreviewed';
+
+  bool get _requiresCashierAmount => _amountMatchStatus == 'unmatched';
+
+  bool? get _amountMatchesValue {
+    switch (_amountMatchStatus) {
+      case 'matched':
+        return true;
+      case 'unmatched':
+        return false;
+      default:
+        return null;
+    }
+  }
 
   // دالة اختيار التاريخ بذكاء لمنع التواريخ المتعارضة
   Future<void> _selectDate(BuildContext context, bool isFromDate) async {
@@ -100,7 +113,8 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
       return;
     }
 
-    if (!_amountMatches && _cashierAmountController.text.trim().isEmpty) {
+    if (_requiresCashierAmount &&
+        _cashierAmountController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('الرجاء إدخال المبلغ الموجود على الكاشير'),
@@ -117,6 +131,11 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
           .collection('transactions')
           .doc();
       final DateTime now = DateTime.now();
+      final double? cashierAmount = _requiresCashierAmount
+          ? double.parse(
+              _cashierAmountController.text.trim().replaceAll(',', ''),
+            )
+          : null;
 
       final transaction = TransactionModel(
         id: docRef.id,
@@ -125,12 +144,8 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
         collectorId: uid,
         amount: double.parse(_amountController.text.trim().replaceAll(',', '')),
         currency: _selectedCurrency,
-        amountMatches: _amountMatches,
-        cashierAmount: _amountMatches
-            ? null
-            : double.parse(
-                _cashierAmountController.text.trim().replaceAll(',', ''),
-              ),
+        amountMatches: _amountMatchesValue,
+        cashierAmount: cashierAmount,
         dateFrom: _dateFrom!,
         dateTo: _dateTo!,
         transactionDate: now,
@@ -343,8 +358,8 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
                                 ),
                               ),
                               const SizedBox(height: 16),
-                              DropdownButtonFormField<bool>(
-                                initialValue: _amountMatches,
+                              DropdownButtonFormField<String>(
+                                initialValue: _amountMatchStatus,
                                 decoration: const InputDecoration(
                                   labelText: 'حالة مطابقة المبلغ',
                                   border: OutlineInputBorder(
@@ -359,22 +374,26 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
                                 ),
                                 items: const [
                                   DropdownMenuItem(
-                                    value: true,
+                                    value: 'unreviewed',
+                                    child: Text('غير مراجع'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'matched',
                                     child: Text('المبلغ مطابق'),
                                   ),
                                   DropdownMenuItem(
-                                    value: false,
+                                    value: 'unmatched',
                                     child: Text('المبلغ غير مطابق'),
                                   ),
                                 ],
                                 onChanged: (value) => setState(() {
-                                  _amountMatches = value ?? true;
-                                  if (_amountMatches) {
+                                  _amountMatchStatus = value ?? 'unreviewed';
+                                  if (!_requiresCashierAmount) {
                                     _cashierAmountController.clear();
                                   }
                                 }),
                               ),
-                              if (!_amountMatches) ...[
+                              if (_requiresCashierAmount) ...[
                                 const SizedBox(height: 16),
                                 TextField(
                                   controller: _cashierAmountController,

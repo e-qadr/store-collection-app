@@ -398,7 +398,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                             ? 'مدير فرع'
                                             : role == 'accountant'
                                             ? 'محاسب'
-                                            : 'محصل',
+                                            : 'مدير عام',
                                       ),
                                     ),
                                   )
@@ -683,7 +683,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                       ? 'مدير فرع'
                                                       : role == 'accountant'
                                                       ? 'محاسب'
-                                                      : 'محصل',
+                                                      : 'مدير عام',
                                                   style: const TextStyle(
                                                     color: Colors.blue,
                                                     fontSize: 11,
@@ -792,7 +792,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                   size: 18,
                                                 ),
                                                 SizedBox(width: 8),
-                                                Text('تغيير لمحصل'),
+                                                Text('تغيير لمدير عام'),
                                               ],
                                             ),
                                           ),

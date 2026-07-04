@@ -62,19 +62,58 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
       case 'pending':
         return 'قيد الانتظار (سند جديد)';
       case 'approvedByCollector':
-        return 'معتمد من المحصل';
+        return 'معتمد من المدير العام';
       case 'approvedByManager':
         return 'تم الاعتماد من المدير';
       case 'approvedByAccountant':
         return 'تم الاعتماد النهائي (المحاسب)';
       case 'editRequestedByCollector':
-        return 'معلق - مطلوب تعديله من المحصل';
+        return 'معلق - مطلوب تعديله من المدير العام';
       case 'pendingApprovalOfEdit':
         return 'تعديل بانتظار موافقة المدير';
       case 'rejectedByManager':
         return 'مرفوض';
       default:
         return 'غير معروف';
+    }
+  }
+
+  String _amountMatchStatusFromValue(dynamic value) {
+    if (value == true) return 'matched';
+    if (value == false) return 'unmatched';
+    return 'unreviewed';
+  }
+
+  String _amountMatchLabel(String status) {
+    switch (status) {
+      case 'matched':
+        return 'المبلغ مطابق';
+      case 'unmatched':
+        return 'المبلغ غير مطابق';
+      default:
+        return 'غير مراجع';
+    }
+  }
+
+  Color _amountMatchColor(String status) {
+    switch (status) {
+      case 'matched':
+        return Colors.green;
+      case 'unmatched':
+        return Colors.orange;
+      default:
+        return AppTheme.textSecondary;
+    }
+  }
+
+  IconData _amountMatchIcon(String status) {
+    switch (status) {
+      case 'matched':
+        return Icons.check_circle_rounded;
+      case 'unmatched':
+        return Icons.warning_rounded;
+      default:
+        return Icons.help_outline_rounded;
     }
   }
 
@@ -87,9 +126,17 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
     final String status = _transactionData['status'] ?? 'pending';
     final String notes = _transactionData['notes'] ?? 'لا توجد ملاحظات';
     final String managerNotes = _transactionData['manager_notes'] ?? '';
-    final bool amountMatches = _transactionData['amount_matches'] ?? true;
+    final String accountantNotes = _transactionData['accountant_notes'] ?? '';
+    final String amountMatchStatus = _amountMatchStatusFromValue(
+      _transactionData['amount_matches'],
+    );
+    final Color amountMatchColor = _amountMatchColor(amountMatchStatus);
     final double? cashierAmount = (_transactionData['cashier_amount'] as num?)
         ?.toDouble();
+    final double? amountDifference =
+        amountMatchStatus == 'unmatched' && cashierAmount != null
+        ? (amount - cashierAmount).abs()
+        : null;
 
     final dateFrom = (_transactionData['dateFrom'] as Timestamp?)?.toDate();
     final dateTo = (_transactionData['dateTo'] as Timestamp?)?.toDate();
@@ -326,23 +373,27 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
                             borderRadius: BorderRadius.circular(16),
                           ),
                           leading: Icon(
-                            amountMatches
-                                ? Icons.check_circle_rounded
-                                : Icons.warning_rounded,
-                            color: amountMatches ? Colors.green : Colors.orange,
+                            _amountMatchIcon(amountMatchStatus),
+                            color: amountMatchColor,
                           ),
                           title: Text(
-                            amountMatches ? 'المبلغ مطابق' : 'المبلغ غير مطابق',
+                            _amountMatchLabel(amountMatchStatus),
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              color: amountMatches
-                                  ? Colors.green
-                                  : Colors.orange,
+                              color: amountMatchColor,
                             ),
                           ),
-                          subtitle: !amountMatches && cashierAmount != null
+                          subtitle:
+                              amountMatchStatus == 'unmatched' &&
+                                  cashierAmount != null
                               ? Text(
-                                  'المبلغ الموجود على الكاشير: ${NumberFormat('#,##0.##', 'en_US').format(cashierAmount)} $currency',
+                                  'مبلغ السند: ${NumberFormat('#,##0.##', 'en_US').format(amount)} $currency\n'
+                                  'المبلغ الموجود على الكاشير: ${NumberFormat('#,##0.##', 'en_US').format(cashierAmount)} $currency\n'
+                                  'الفرق: ${NumberFormat('#,##0.##', 'en_US').format(amountDifference ?? 0)} $currency',
+                                )
+                              : amountMatchStatus == 'unreviewed'
+                              ? const Text(
+                                  'لم تتم مراجعة مطابقة مبلغ الكاشير بعد',
                                 )
                               : null,
                         ),
@@ -378,7 +429,7 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
                                     ),
                                     const SizedBox(width: 8),
                                     const Text(
-                                      'ملاحظات المحصل:',
+                                      'ملاحظات المدير العام:',
                                       style: TextStyle(
                                         color: AppTheme.textSecondary,
                                         fontWeight: FontWeight.bold,
@@ -421,6 +472,39 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
                                   const SizedBox(height: 8),
                                   Text(
                                     managerNotes,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.textPrimary,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                ],
+                                if (accountantNotes.isNotEmpty) ...[
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 16),
+                                    child: Divider(height: 1),
+                                  ),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.verified_user_rounded,
+                                        color: Colors.green.shade700,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Text(
+                                        'ملاحظات المحاسب بعد الاعتماد:',
+                                        style: TextStyle(
+                                          color: Colors.green,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    accountantNotes,
                                     style: const TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w600,
@@ -602,7 +686,7 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
       case 'admin':
         return 'مسؤول النظام';
       case 'collector':
-        return 'المحصل';
+        return 'المدير العام';
       case 'manager':
         return 'مدير الفرع';
       case 'accountant':
@@ -618,6 +702,14 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
     final newAmount = (changes['newAmount'] as num?)?.toDouble() ?? 0.0;
     final oldCur = changes['oldCurrency'] ?? '';
     final newCur = changes['newCurrency'] ?? '';
+    final oldAmountMatchStatus = _amountMatchStatusFromValue(
+      changes['oldAmountMatches'],
+    );
+    final newAmountMatchStatus = _amountMatchStatusFromValue(
+      changes['newAmountMatches'],
+    );
+    final oldCashierAmount = (changes['oldCashierAmount'] as num?)?.toDouble();
+    final newCashierAmount = (changes['newCashierAmount'] as num?)?.toDouble();
 
     final oldDateFrom = (changes['oldDateFrom'] as Timestamp?)?.toDate();
     final newDateFrom = (changes['newDateFrom'] as Timestamp?)?.toDate();
@@ -653,6 +745,24 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
               'المبلغ:',
               '${NumberFormat('#,##0.##', 'en_US').format(oldAmount)} $oldCur',
               '${NumberFormat('#,##0.##', 'en_US').format(newAmount)} $newCur',
+            ),
+
+          if (oldAmountMatchStatus != newAmountMatchStatus)
+            _buildChangeRow(
+              'مطابقة الكاشير:',
+              _amountMatchLabel(oldAmountMatchStatus),
+              _amountMatchLabel(newAmountMatchStatus),
+            ),
+
+          if (oldCashierAmount != newCashierAmount)
+            _buildChangeRow(
+              'مبلغ الكاشير:',
+              oldCashierAmount == null
+                  ? '-'
+                  : '${NumberFormat('#,##0.##', 'en_US').format(oldCashierAmount)} $oldCur',
+              newCashierAmount == null
+                  ? '-'
+                  : '${NumberFormat('#,##0.##', 'en_US').format(newCashierAmount)} $newCur',
             ),
 
           if (oldDateFrom != newDateFrom)

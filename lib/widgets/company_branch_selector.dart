@@ -1,9 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
+import 'package:store_collection_app/utils/logout_confirmation.dart';
 
 class CompanyBranchSelector extends StatefulWidget {
   final String title;
@@ -43,12 +43,7 @@ class _CompanyBranchSelectorState extends State<CompanyBranchSelector> {
             IconButton(
               icon: const Icon(Icons.logout_rounded),
               tooltip: 'تسجيل الخروج',
-              onPressed: () async {
-                await FirebaseAuth.instance.signOut();
-                if (context.mounted) {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
-                }
-              },
+              onPressed: () => confirmAndSignOut(context),
             ),
           ],
         ),

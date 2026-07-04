@@ -85,6 +85,28 @@ void main() {
     expect(result.map((item) => item['amount']), [250, 100]);
   });
 
+  test('يفلتر حالة مطابقة الدخل ويفسر السند بلا حالة كغير مراجع', () {
+    final matchingRecords = [
+      {...records[0], 'amount_matches': true},
+      {...records[1], 'amount_matches': false},
+      records[2],
+    ];
+
+    final unmatched = filterAndSortTransactionRecords(
+      records: matchingRecords,
+      dataOf: (item) => item,
+      filters: const TransactionRecordFilters(amountMatchStatus: 'unmatched'),
+    );
+    expect(unmatched.map((item) => item['amount']), [250]);
+
+    final unreviewed = filterAndSortTransactionRecords(
+      records: matchingRecords,
+      dataOf: (item) => item,
+      filters: const TransactionRecordFilters(amountMatchStatus: 'unreviewed'),
+    );
+    expect(unreviewed.map((item) => item['amount']), [50]);
+  });
+
   test('يستبعد السجل ناقص التاريخ عند استخدام فلتر زمني', () {
     final incomplete = <String, dynamic>{
       'amount': 10,

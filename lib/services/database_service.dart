@@ -53,7 +53,7 @@ class DatabaseService {
       case 'pending':
         return 'قيد الانتظار';
       case 'approvedByCollector':
-        return 'معتمد من المحصل';
+        return 'معتمد من المدير العام';
       case 'approvedByManager':
         return 'معتمد من المدير';
       case 'approvedByAccountant':
@@ -198,6 +198,8 @@ class DatabaseService {
     required String transactionId,
     required double newAmount,
     required String newCurrency,
+    required bool? newAmountMatches,
+    double? newCashierAmount,
     required DateTime newDateFrom,
     required DateTime newDateTo,
     required String newNotes,
@@ -219,6 +221,10 @@ class DatabaseService {
           'newAmount': newAmount,
           'oldCurrency': oldData['currency'],
           'newCurrency': newCurrency,
+          'oldAmountMatches': oldData['amount_matches'],
+          'newAmountMatches': newAmountMatches,
+          'oldCashierAmount': oldData['cashier_amount'],
+          'newCashierAmount': newCashierAmount,
           'oldDateFrom': oldData['dateFrom'],
           'newDateFrom': Timestamp.fromDate(newDateFrom),
           'oldDateTo': oldData['dateTo'],
@@ -230,6 +236,8 @@ class DatabaseService {
         'pending_edit_data': {
           'amount': newAmount,
           'currency': newCurrency,
+          'amount_matches': newAmountMatches,
+          'cashier_amount': newCashierAmount,
           'dateFrom': Timestamp.fromDate(newDateFrom),
           'dateTo': Timestamp.fromDate(newDateTo),
           'notes': newNotes,
@@ -261,7 +269,7 @@ class DatabaseService {
         message: 'تمت الموافقة على التعديلات وتحديث بيانات السند',
         actor: actor,
       );
-      await _firestore.collection('transactions').doc(transactionId).update({
+      final updateData = <String, dynamic>{
         'amount': pendingData['amount'],
         'currency': pendingData['currency'],
         'dateFrom': pendingData['dateFrom'],
@@ -272,7 +280,18 @@ class DatabaseService {
         'manager_notes': FieldValue.delete(),
         'last_updated': FieldValue.serverTimestamp(),
         'history': FieldValue.arrayUnion([historyEntry]),
-      });
+      };
+      if (pendingData.containsKey('amount_matches')) {
+        updateData['amount_matches'] = pendingData['amount_matches'];
+      }
+      if (pendingData.containsKey('cashier_amount')) {
+        updateData['cashier_amount'] =
+            pendingData['cashier_amount'] ?? FieldValue.delete();
+      }
+      await _firestore
+          .collection('transactions')
+          .doc(transactionId)
+          .update(updateData);
       await _notifySafely(
         () => _notificationService.notifyForStatus(
           transactionId: transactionId,
@@ -315,16 +334,23 @@ class DatabaseService {
     }
   }
 
-  Future<void> approveByAccountant(String transactionId) async {
+  Future<void> approveByAccountant(
+    String transactionId, {
+    String? accountantNotes,
+  }) async {
     try {
       final actor = await _getCurrentActor();
+      final notes = accountantNotes?.trim() ?? '';
       final historyEntry = _historyEntry(
         action: 'approved_by_accountant',
-        message: 'تم الاعتماد والمراجعة النهائية للسند',
+        message: notes.isEmpty
+            ? 'تم الاعتماد والمراجعة النهائية للسند'
+            : 'تم الاعتماد والمراجعة النهائية للسند\nملاحظات المحاسب: $notes',
         actor: actor,
       );
       await _firestore.collection('transactions').doc(transactionId).update({
         'status': 'approvedByAccountant',
+        if (notes.isNotEmpty) 'accountant_notes': notes,
         'last_updated': FieldValue.serverTimestamp(),
         'history': FieldValue.arrayUnion([historyEntry]),
       });
@@ -454,7 +480,7 @@ class DatabaseService {
       throw Exception('هذا الحساب غير مخول لاعتماد الأرشفة');
     }
     if (role == 'collector' && transactionData['collectorId'] != uid) {
-      throw Exception('يمكن للمحصل اعتماد أرشفة سنداته فقط');
+      throw Exception('يمكن للمدير العام اعتماد أرشفة سنداته فقط');
     }
     if (role == 'manager' && transactionData['branchId'] != actor['branchId']) {
       throw Exception('يمكن للمدير اعتماد أرشفة سندات فرعه فقط');
@@ -475,7 +501,7 @@ class DatabaseService {
       );
       await _firestore.collection('transactions').doc(transactionId).update({
         'status': returnToStatus,
-        'manager_notes': 'رد المحصل (رفض التعديل): $rejectReason',
+        'manager_notes': 'رد المدير العام (رفض التعديل): $rejectReason',
         'last_updated': FieldValue.serverTimestamp(),
         'history': FieldValue.arrayUnion([historyEntry]),
       });

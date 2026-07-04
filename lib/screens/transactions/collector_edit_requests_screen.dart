@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
@@ -24,6 +25,45 @@ class CollectorEditRequestsScreen extends StatefulWidget {
 class _CollectorEditRequestsScreenState
     extends State<CollectorEditRequestsScreen> {
   final DatabaseService _dbService = DatabaseService();
+
+  String _amountMatchStatusFromValue(dynamic value) {
+    if (value == true) return 'matched';
+    if (value == false) return 'unmatched';
+    return 'unreviewed';
+  }
+
+  bool? _amountMatchValueFromStatus(String status) {
+    switch (status) {
+      case 'matched':
+        return true;
+      case 'unmatched':
+        return false;
+      default:
+        return null;
+    }
+  }
+
+  String _amountMatchLabel(String status) {
+    switch (status) {
+      case 'matched':
+        return 'مطابق';
+      case 'unmatched':
+        return 'غير مطابق';
+      default:
+        return 'غير مراجع';
+    }
+  }
+
+  Color _amountMatchColor(String status) {
+    switch (status) {
+      case 'matched':
+        return Colors.green;
+      case 'unmatched':
+        return Colors.orange;
+      default:
+        return AppTheme.textSecondary;
+    }
+  }
 
   // دالة التقويم الذكي
   Future<void> _pickDate(
@@ -76,7 +116,17 @@ class _CollectorEditRequestsScreenState
     final TextEditingController notesController = TextEditingController(
       text: currentData['notes'] ?? '',
     );
+    final currentCashierAmount = (currentData['cashier_amount'] as num?)
+        ?.toDouble();
+    final TextEditingController cashierAmountController = TextEditingController(
+      text: currentCashierAmount == null
+          ? ''
+          : NumberFormat('#,##0.##', 'en_US').format(currentCashierAmount),
+    );
     String selectedCurrency = currentData['currency'] ?? 'YER';
+    String selectedAmountMatchStatus = _amountMatchStatusFromValue(
+      currentData['amount_matches'],
+    );
     DateTime dateFrom =
         (currentData['dateFrom'] as Timestamp?)?.toDate() ?? DateTime.now();
     DateTime dateTo =
@@ -113,6 +163,9 @@ class _CollectorEditRequestsScreenState
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                      ],
                       decoration: const InputDecoration(
                         labelText: 'المبلغ',
                         border: OutlineInputBorder(
@@ -120,6 +173,67 @@ class _CollectorEditRequestsScreenState
                         ),
                       ),
                     ),
+                    const SizedBox(height: 15),
+                    InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'مطابقة مبلغ الكاشير',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: selectedAmountMatchStatus,
+                          isExpanded: true,
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'unreviewed',
+                              child: Text('غير مراجع'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'matched',
+                              child: Text('المبلغ مطابق'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'unmatched',
+                              child: Text('المبلغ غير مطابق'),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            if (val == null) return;
+                            setDialogState(() {
+                              selectedAmountMatchStatus = val;
+                              if (val != 'unmatched') {
+                                cashierAmountController.clear();
+                              }
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    if (selectedAmountMatchStatus == 'unmatched') ...[
+                      const SizedBox(height: 15),
+                      TextField(
+                        controller: cashierAmountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'المبلغ الموجود على الكاشير',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                          prefixIcon: Icon(Icons.point_of_sale_rounded),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 15),
                     InputDecorator(
                       decoration: const InputDecoration(
@@ -207,7 +321,7 @@ class _CollectorEditRequestsScreenState
                       controller: notesController,
                       maxLines: 2,
                       decoration: const InputDecoration(
-                        labelText: 'ملاحظات المحصل',
+                        labelText: 'ملاحظات المدير العام',
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(12)),
                         ),
@@ -238,9 +352,30 @@ class _CollectorEditRequestsScreenState
                           if (amountController.text.trim().isEmpty) return;
 
                           final double? amount = double.tryParse(
-                            amountController.text.trim(),
+                            amountController.text.trim().replaceAll(',', ''),
                           );
                           if (amount == null) return;
+                          double? cashierAmount;
+                          if (selectedAmountMatchStatus == 'unmatched') {
+                            if (cashierAmountController.text.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'الرجاء إدخال المبلغ الموجود على الكاشير',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                              return;
+                            }
+                            cashierAmount = double.tryParse(
+                              cashierAmountController.text.trim().replaceAll(
+                                ',',
+                                '',
+                              ),
+                            );
+                            if (cashierAmount == null) return;
+                          }
 
                           if (dateTo.isBefore(dateFrom)) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -261,6 +396,10 @@ class _CollectorEditRequestsScreenState
                               transactionId: transactionId,
                               newAmount: amount,
                               newCurrency: selectedCurrency,
+                              newAmountMatches: _amountMatchValueFromStatus(
+                                selectedAmountMatchStatus,
+                              ),
+                              newCashierAmount: cashierAmount,
                               newDateFrom: dateFrom,
                               newDateTo: dateTo,
                               newNotes: notesController.text.trim(),
@@ -526,6 +665,19 @@ class _CollectorEditRequestsScreenState
                   final String trnNumber = data['transaction_number'] ?? '#';
                   final String managerNotes =
                       data['manager_notes'] ?? 'لا توجد ملاحظات مرفقة';
+                  final amountMatchStatus = _amountMatchStatusFromValue(
+                    data['amount_matches'],
+                  );
+                  final amountMatchColor = _amountMatchColor(amountMatchStatus);
+                  final cashierAmount = (data['cashier_amount'] as num?)
+                      ?.toDouble();
+                  final amountDiff =
+                      amountMatchStatus == 'unmatched' && cashierAmount != null
+                      ? NumberFormat(
+                          '#,##0.##',
+                          'en_US',
+                        ).format((rawAmount - cashierAmount).abs())
+                      : null;
 
                   return Container(
                     margin: const EdgeInsets.only(bottom: 16),
@@ -587,6 +739,27 @@ class _CollectorEditRequestsScreenState
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
                               color: AppTheme.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: amountMatchColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              amountDiff == null
+                                  ? 'مطابقة الدخل: ${_amountMatchLabel(amountMatchStatus)}'
+                                  : 'مطابقة الدخل: ${_amountMatchLabel(amountMatchStatus)} - فرق $amountDiff $currency',
+                              style: TextStyle(
+                                color: amountMatchColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                           const Padding(

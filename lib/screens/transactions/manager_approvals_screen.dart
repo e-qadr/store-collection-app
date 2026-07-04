@@ -24,6 +24,38 @@ class ManagerApprovalsScreen extends StatefulWidget {
 class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
   final DatabaseService _dbService = DatabaseService();
 
+  String _amountMatchStatusFromValue(dynamic value) {
+    if (value == true) return 'matched';
+    if (value == false) return 'unmatched';
+    return 'unreviewed';
+  }
+
+  String _amountMatchLabel(String status) {
+    switch (status) {
+      case 'matched':
+        return 'مطابق';
+      case 'unmatched':
+        return 'غير مطابق';
+      default:
+        return 'غير مراجع';
+    }
+  }
+
+  String _amountMatchSummary({
+    required String status,
+    required double amount,
+    required String currency,
+    double? cashierAmount,
+  }) {
+    if (status != 'unmatched' || cashierAmount == null) {
+      return _amountMatchLabel(status);
+    }
+    final difference = (amount - cashierAmount).abs();
+    return '${_amountMatchLabel(status)}\n'
+        'الكاشير: ${NumberFormat('#,##0.##', 'en_US').format(cashierAmount)} $currency\n'
+        'الفرق: ${NumberFormat('#,##0.##', 'en_US').format(difference)} $currency';
+  }
+
   // --- دوال تبويبة الطلبات الجديدة ---
 
   Future<void> _approveNewTransaction(
@@ -52,7 +84,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
   ) async {
     TextEditingController notesController = TextEditingController();
 
-    // actionType: 'reject' (رفض نهائي) أو 'edit' (طلب تعديل من المحصل)
+    // actionType: 'reject' (رفض نهائي) أو 'edit' (طلب تعديل من المدير العام)
     bool isReject = actionType == 'reject';
 
     await showDialog(
@@ -141,7 +173,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                 isReject ? Icons.block_rounded : Icons.send_rounded,
                 size: 18,
               ),
-              label: Text(isReject ? 'تأكيد الرفض' : 'إرسال للمحصل'),
+              label: Text(isReject ? 'تأكيد الرفض' : 'إرسال للمدير العام'),
             ),
           ],
         );
@@ -184,7 +216,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
             'تم رفض التعديل الأخير، يرجى مراجعة البيانات وإعادة الإرسال بدقة.',
       );
       _closeLoadingAndShowSnackBar(
-        'تم رفض التعديل وإعادته للمحصل',
+        'تم رفض التعديل وإعادته للمدير العام',
         Colors.orange,
       );
     } catch (e) {
@@ -482,7 +514,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                             onPressed: () =>
                                 _rejectTransaction(doc.id, trnNumber, 'edit'),
                             icon: const Icon(Icons.edit_note_rounded, size: 18),
-                            label: const Text('طلب تعديل من المحصل'),
+                            label: const Text('طلب تعديل من المدير العام'),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: Colors.orange,
                               side: BorderSide(
@@ -594,6 +626,18 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                   (pendingData['dateFrom'] as Timestamp?)?.toDate();
               final DateTime? newDateTo = (pendingData['dateTo'] as Timestamp?)
                   ?.toDate();
+              final oldAmountMatchStatus = _amountMatchStatusFromValue(
+                data['amount_matches'],
+              );
+              final newAmountMatchStatus =
+                  pendingData.containsKey('amount_matches')
+                  ? _amountMatchStatusFromValue(pendingData['amount_matches'])
+                  : oldAmountMatchStatus;
+              final oldCashierAmount = (data['cashier_amount'] as num?)
+                  ?.toDouble();
+              final newCashierAmount = pendingData.containsKey('cashier_amount')
+                  ? (pendingData['cashier_amount'] as num?)?.toDouble()
+                  : oldCashierAmount;
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 16),
@@ -745,6 +789,105 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                       Row(
                         children: [
                           Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 12,
+                                horizontal: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withValues(alpha: 0.05),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.red.withValues(alpha: 0.1),
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  const Text(
+                                    'مطابقة الدخل الحالية',
+                                    style: TextStyle(
+                                      color: Colors.red,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _amountMatchSummary(
+                                      status: oldAmountMatchStatus,
+                                      amount: oldAmount,
+                                      currency: oldCurrency,
+                                      cashierAmount: oldCashierAmount,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: AppTheme.textSecondary,
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10.0,
+                            ),
+                            child: Icon(
+                              Icons.arrow_forward_rounded,
+                              color: Colors.grey.shade400,
+                              size: 20,
+                            ),
+                          ),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 12,
+                                horizontal: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withValues(alpha: 0.05),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: Colors.green.withValues(alpha: 0.1),
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  const Text(
+                                    'مطابقة الدخل المقترحة',
+                                    style: TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _amountMatchSummary(
+                                      status: newAmountMatchStatus,
+                                      amount: newAmount,
+                                      currency: newCurrency,
+                                      cashierAmount: newCashierAmount,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
                             child: _buildDatePeriod(
                               title: 'الفترة الحالية',
                               dateFrom: oldDateFrom,
@@ -781,7 +924,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'ملاحظات المحصل: $newNotes',
+                                'ملاحظات المدير العام: $newNotes',
                                 style: const TextStyle(
                                   fontSize: 13,
                                   color: AppTheme.textSecondary,
@@ -947,7 +1090,11 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        _buildArchiveRoleChip(data, 'collector', 'المحصل'),
+                        _buildArchiveRoleChip(
+                          data,
+                          'collector',
+                          'المدير العام',
+                        ),
                         _buildArchiveRoleChip(data, 'manager', 'المدير'),
                         _buildArchiveRoleChip(data, 'accountant', 'المحاسب'),
                       ],

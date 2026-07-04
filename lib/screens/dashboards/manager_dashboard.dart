@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/screens/transactions/manager_approvals_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
@@ -8,6 +7,7 @@ import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
 import 'package:store_collection_app/utils/archive_workflow.dart';
+import 'package:store_collection_app/utils/logout_confirmation.dart';
 
 class ManagerDashboard extends StatelessWidget {
   final String branchId;
@@ -142,19 +142,13 @@ class ManagerDashboard extends StatelessWidget {
       floating: false,
       pinned: true,
       backgroundColor: AppTheme.managerColor,
-      automaticallyImplyLeading: false,
+      automaticallyImplyLeading: Navigator.of(context).canPop(),
       actions: [
         const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',
-          onPressed: () async {
-            await FirebaseAuth.instance.signOut();
-            if (context.mounted) {
-              // هذا السطر السحري يقوم بإغلاق جميع الشاشات المتراكمة والعودة للشاشة الرئيسية (AuthGate)
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            }
-          },
+          onPressed: () => confirmAndSignOut(context),
         ),
       ],
       flexibleSpace: FlexibleSpaceBar(

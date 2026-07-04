@@ -31,6 +31,23 @@ class PdfService {
   static String _status(dynamic value) =>
       AppTheme.statusLabel(value?.toString() ?? '');
 
+  static String _amountMatchStatus(dynamic value) {
+    if (value == true) return 'matched';
+    if (value == false) return 'unmatched';
+    return 'unreviewed';
+  }
+
+  static String _amountMatchLabel(dynamic value) {
+    switch (_amountMatchStatus(value)) {
+      case 'matched':
+        return 'مطابق';
+      case 'unmatched':
+        return 'غير مطابق';
+      default:
+        return 'غير مراجع';
+    }
+  }
+
   static String _actor(Map<String, dynamic> data) {
     final history = (data['history'] as List?)?.cast<Map>() ?? [];
     for (final item in history) {
@@ -52,8 +69,13 @@ class PdfService {
     final theme = await _theme();
     final currency = data['currency']?.toString() ?? 'YER';
     final transactionNumber = data['transaction_number']?.toString() ?? '-';
-    final amountMatches = data['amount_matches'] != false;
+    final amountMatchStatus = _amountMatchStatus(data['amount_matches']);
+    final amount = (data['amount'] as num?)?.toDouble() ?? 0;
     final cashierAmount = (data['cashier_amount'] as num?)?.toDouble();
+    final amountDifference =
+        amountMatchStatus == 'unmatched' && cashierAmount != null
+        ? (amount - cashierAmount).abs()
+        : null;
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -73,7 +95,7 @@ class PdfService {
             ['رقم السند', transactionNumber],
             ['الفرع', branchName],
             ['حالة السند', _status(data['status'])],
-            ['المحصل', _actor(data)],
+            ['المدير العام', _actor(data)],
             ['تاريخ ووقت الإدخال', _date(data['timestamp'], withTime: true)],
             [
               'فترة التحصيل',
@@ -84,16 +106,24 @@ class PdfService {
           _amountSummary(
             amount: _amount(data['amount']),
             currency: currency,
-            amountMatches: amountMatches,
+            amountMatchStatus: amountMatchStatus,
             cashierAmount: cashierAmount == null
                 ? null
                 : _amount(cashierAmount),
+            amountDifference: amountDifference == null
+                ? null
+                : _amount(amountDifference),
           ),
           pw.SizedBox(height: 14),
           _sectionTitle('الملاحظات'),
-          _noteBox('ملاحظات المحصل', data['notes']?.toString()),
+          _noteBox('ملاحظات المدير العام', data['notes']?.toString()),
           if ((data['manager_notes']?.toString() ?? '').isNotEmpty)
             _noteBox('ملاحظات الإدارة', data['manager_notes']?.toString()),
+          if ((data['accountant_notes']?.toString() ?? '').isNotEmpty)
+            _noteBox(
+              'ملاحظات المحاسب بعد الاعتماد',
+              data['accountant_notes']?.toString(),
+            ),
           pw.SizedBox(height: 28),
           _signatures(),
         ],
@@ -158,7 +188,7 @@ class PdfService {
               'رقم السند',
               'المبلغ',
               'العملة',
-              'المحصل',
+              'المدير العام',
               'من',
               'إلى',
               'تاريخ الإدخال',
@@ -176,7 +206,7 @@ class PdfService {
                     _date(data['dateFrom']),
                     _date(data['dateTo']),
                     _date(data['timestamp'], withTime: true),
-                    data['amount_matches'] == false ? 'غير مطابق' : 'مطابق',
+                    _amountMatchLabel(data['amount_matches']),
                     _status(data['status']),
                     data['notes']?.toString() ?? '',
                   ],
@@ -204,6 +234,147 @@ class PdfService {
       ),
     );
     return pdf.save();
+  }
+
+  static Future<Uint8List> buildInterBranchInvoice({
+    required Map<String, dynamic> data,
+    bool showPrices = true,
+  }) async {
+    final pdf = pw.Document();
+    final theme = await _theme();
+    final invoiceNumber = data['invoice_number']?.toString() ?? '-';
+    final rawItems = data['items'];
+    final items = rawItems is List && rawItems.isNotEmpty
+        ? rawItems.whereType<Map>().toList()
+        : [
+            {
+              'name': data['item_name'],
+              'unit': data['unit'],
+              'requested_quantity': data['requested_quantity'],
+              'approved_quantity': data['approved_quantity'],
+              'received_quantity': data['received_quantity'],
+              'unit_price': data['unit_price'],
+              'total_price': data['total_price'],
+            },
+          ];
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        theme: theme,
+        textDirection: pw.TextDirection.rtl,
+        margin: const pw.EdgeInsets.all(32),
+        footer: _footer,
+        build: (_) => [
+          _documentHeader(
+            title: 'فاتورة بين الفروع',
+            subtitle: 'رقم الفاتورة: $invoiceNumber',
+            branchName: data['sending_branch_name']?.toString() ?? '-',
+          ),
+          pw.SizedBox(height: 18),
+          _sectionTitle('بيانات الفاتورة'),
+          _detailsGrid([
+            ['رقم الفاتورة', invoiceNumber],
+            ['التاريخ', _date(data['invoice_created_at'], withTime: true)],
+            ['من الفرع', data['sending_branch_name']?.toString() ?? '-'],
+            ['إلى الفرع', data['receiving_branch_name']?.toString() ?? '-'],
+            [
+              'المرجع المحاسبي',
+              data['accounting_reference']?.toString().isEmpty ?? true
+                  ? '-'
+                  : data['accounting_reference'].toString(),
+            ],
+          ]),
+          pw.SizedBox(height: 14),
+          _sectionTitle('الأصناف'),
+          pw.TableHelper.fromTextArray(
+            headers: [
+              'الصنف',
+              'الكمية المطلوبة',
+              'الكمية المعتمدة',
+              'الكمية المستلمة',
+              'الوحدة',
+              if (showPrices) ...['السعر', 'الإجمالي'],
+            ],
+            data: items.map((item) {
+              final row = [
+                item['name']?.toString() ??
+                    item['item_name']?.toString() ??
+                    '-',
+                _amount(item['requested_quantity']),
+                _amount(
+                  item['approved_quantity'] ?? item['requested_quantity'],
+                ),
+                _amount(
+                  item['received_quantity'] ??
+                      item['approved_quantity'] ??
+                      item['requested_quantity'],
+                ),
+                item['unit']?.toString() ?? '-',
+              ];
+              if (showPrices) {
+                row.addAll([
+                  item['unit_price'] == null
+                      ? '-'
+                      : _amount(item['unit_price']),
+                  item['total_price'] == null
+                      ? '-'
+                      : _amount(item['total_price']),
+                ]);
+              }
+              return row;
+            }).toList(),
+            border: pw.TableBorder.all(color: PdfColors.grey300),
+            headerDecoration: const pw.BoxDecoration(
+              color: PdfColors.indigo700,
+            ),
+            headerStyle: pw.TextStyle(
+              color: PdfColors.white,
+              fontWeight: pw.FontWeight.bold,
+              fontSize: 9,
+            ),
+            cellStyle: const pw.TextStyle(fontSize: 9),
+            cellAlignment: pw.Alignment.centerRight,
+            cellPadding: const pw.EdgeInsets.all(6),
+          ),
+          pw.SizedBox(height: 20),
+          _signatures(),
+        ],
+      ),
+    );
+    return pdf.save();
+  }
+
+  static Future<void> printInterBranchInvoice({
+    required Map<String, dynamic> data,
+    bool showPrices = true,
+  }) async {
+    final bytes = await buildInterBranchInvoice(
+      data: data,
+      showPrices: showPrices,
+    );
+    await Printing.layoutPdf(
+      onLayout: (_) async => bytes,
+      name:
+          'فاتورة_فروع_${_safeName(data['invoice_number']?.toString() ?? 'جديدة')}.pdf',
+    );
+  }
+
+  static Future<String?> saveInterBranchInvoice({
+    required Map<String, dynamic> data,
+    bool showPrices = true,
+  }) async {
+    final bytes = await buildInterBranchInvoice(
+      data: data,
+      showPrices: showPrices,
+    );
+    return FileSaver.instance.saveFile(
+      name:
+          'فاتورة_فروع_${_safeName(data['invoice_number']?.toString() ?? 'جديدة')}',
+      bytes: bytes,
+      fileExtension: 'pdf',
+      mimeType: MimeType.pdf,
+    );
   }
 
   static Future<void> printSingleTransaction({
@@ -362,16 +533,27 @@ class PdfService {
   static pw.Widget _amountSummary({
     required String amount,
     required String currency,
-    required bool amountMatches,
+    required String amountMatchStatus,
     required String? cashierAmount,
+    required String? amountDifference,
   }) {
+    final isMatched = amountMatchStatus == 'matched';
+    final isUnmatched = amountMatchStatus == 'unmatched';
+    final borderColor = isMatched
+        ? PdfColors.green300
+        : isUnmatched
+        ? PdfColors.orange400
+        : PdfColors.grey500;
+    final matchText = isMatched
+        ? 'مبلغ الكاشير مطابق'
+        : isUnmatched
+        ? 'مبلغ الكاشير غير مطابق'
+        : 'مبلغ الكاشير غير مراجع';
     return pw.Container(
       width: double.infinity,
       padding: const pw.EdgeInsets.all(14),
       decoration: pw.BoxDecoration(
-        border: pw.Border.all(
-          color: amountMatches ? PdfColors.green300 : PdfColors.orange400,
-        ),
+        border: pw.Border.all(color: borderColor),
         borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
       ),
       child: pw.Row(
@@ -384,11 +566,11 @@ class PdfService {
           pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.end,
             children: [
-              pw.Text(
-                amountMatches ? 'مبلغ الكاشير مطابق' : 'مبلغ الكاشير غير مطابق',
-              ),
-              if (!amountMatches && cashierAmount != null)
+              pw.Text(matchText),
+              if (isUnmatched && cashierAmount != null)
                 pw.Text('الموجود على الكاشير: $cashierAmount $currency'),
+              if (isUnmatched && amountDifference != null)
+                pw.Text('الفرق: $amountDifference $currency'),
             ],
           ),
         ],
@@ -437,7 +619,7 @@ class PdfService {
     mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
     children: [
       pw.Text(
-        'توقيع المحصل\n........................',
+        'توقيع المدير العام\n........................',
         textAlign: pw.TextAlign.center,
       ),
       pw.Text(

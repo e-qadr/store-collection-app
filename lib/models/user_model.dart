@@ -1,4 +1,5 @@
 import 'package:store_collection_app/models/enums.dart';
+
 class UserModel {
   final String uid;
   final String name;

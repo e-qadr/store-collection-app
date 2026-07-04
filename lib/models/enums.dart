@@ -1,18 +1,18 @@
 // أدوار المستخدمين
-enum UserRole { 
+enum UserRole {
   admin, // تمت إضافة دور مسؤول النظام
   collector,
   manager,
-  accountant
+  accountant,
 }
 
 // حالة السند المالي
-enum TransactionStatus { 
-  pending,  
-  approvedByCollector,       
-  approvedByManager, 
-  approvedByAccountant, 
-  reviewRequestedByAccountant, 
+enum TransactionStatus {
+  pending,
+  approvedByCollector,
+  approvedByManager,
+  approvedByAccountant,
+  reviewRequestedByAccountant,
   reviewRequestedByManager,
   editRequestedByCollector,
   rejectedByManager,

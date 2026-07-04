@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class TransactionRecordFilters {
   final String? currency;
   final String? status;
+  final String? amountMatchStatus;
   final DateTime? createdFrom;
   final DateTime? createdTo;
   final DateTime? periodFrom;
@@ -11,6 +12,7 @@ class TransactionRecordFilters {
   const TransactionRecordFilters({
     this.currency,
     this.status,
+    this.amountMatchStatus,
     this.createdFrom,
     this.createdTo,
     this.periodFrom,
@@ -20,6 +22,7 @@ class TransactionRecordFilters {
   bool get isActive =>
       currency != null ||
       status != null ||
+      amountMatchStatus != null ||
       createdFrom != null ||
       createdTo != null ||
       periodFrom != null ||
@@ -28,6 +31,7 @@ class TransactionRecordFilters {
   int get activeCount => [
     currency,
     status,
+    amountMatchStatus,
     createdFrom,
     createdTo,
     periodFrom,
@@ -56,6 +60,15 @@ bool matchesTransactionRecord(
   }
   if (filters.status != null && data['status'] != filters.status) {
     return false;
+  }
+  if (filters.amountMatchStatus != null) {
+    final value = data['amount_matches'];
+    final currentStatus = value == true
+        ? 'matched'
+        : value == false
+        ? 'unmatched'
+        : 'unreviewed';
+    if (currentStatus != filters.amountMatchStatus) return false;
   }
 
   final createdAt = transactionDate(data['timestamp']);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/screens/transactions/transaction_details_screen.dart';
@@ -32,6 +33,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   // الفلاتر الأساسية
   String? _selectedCurrency;
   String? _selectedStatus;
+  String? _selectedAmountMatchStatus;
 
   // فلتر تاريخ الإدخال (Timestamp)
   DateTime? _filterStartDate;
@@ -69,7 +71,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     final confirmed = await _confirmArchiveAction(
       title: 'طلب أرشفة السند',
       message:
-          'سيتم إرسال طلب أرشفة السند $trnNumber للمحصل والمدير والمحاسب. لن تتم الأرشفة حتى يوافق الجميع.',
+          'سيتم إرسال طلب أرشفة السند $trnNumber للمدير العام ومدير الفرع والمحاسب. لن تتم الأرشفة حتى يوافق الجميع.',
       actionLabel: 'إرسال الطلب',
     );
     if (!confirmed) return;
@@ -261,12 +263,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                 }
               },
               icon: const Icon(Icons.send_rounded, size: 18),
-              label: const Text('إرسال للمحصل'),
+              label: const Text('إرسال للمدير العام'),
             ),
           ],
         );
       },
     );
+    notesController.dispose();
   }
 
   // --- دوال المحاسب ---
@@ -296,7 +299,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
             controller: notesController,
             maxLines: 3,
             decoration: const InputDecoration(
-              hintText: 'اكتب سبب التعديل للمحصل...',
+              hintText: 'اكتب سبب التعديل للمدير العام...',
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.all(Radius.circular(12)),
               ),
@@ -348,18 +351,20 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                 }
               },
               icon: const Icon(Icons.send_rounded, size: 18),
-              label: const Text('إرسال للمحصل'),
+              label: const Text('إرسال للمدير العام'),
             ),
           ],
         );
       },
     );
+    notesController.dispose();
   }
 
   Future<void> _accountantApprove(
     String transactionId,
     String trnNumber,
   ) async {
+    final accountantNotesController = TextEditingController();
     await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -374,8 +379,25 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
             ),
           ],
         ),
-        content: Text(
-          'هل أنت متأكد من الاعتماد النهائي للسند رقم $trnNumber؟ لا يمكن التراجع بعد الاعتماد.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'هل أنت متأكد من الاعتماد النهائي للسند رقم $trnNumber؟ لا يمكن التراجع بعد الاعتماد.',
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: accountantNotesController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'ملاحظات المحاسب بعد الاعتماد',
+                hintText: 'اكتب أي ملاحظات نهائية على السند...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(12)),
+                ),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -393,7 +415,10 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
             onPressed: () async {
               Navigator.pop(context);
               try {
-                await _dbService.approveByAccountant(transactionId);
+                await _dbService.approveByAccountant(
+                  transactionId,
+                  accountantNotes: accountantNotesController.text,
+                );
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
@@ -421,7 +446,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     );
   }
 
-  // --- التعديل المباشر (المحصل) ---
+  // --- التعديل المباشر (المدير العام) ---
   Future<void> _collectorProposeEdit(
     String transactionId,
     Map<String, dynamic> currentData,
@@ -432,7 +457,17 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     final TextEditingController notesController = TextEditingController(
       text: currentData['notes'] ?? '',
     );
+    final currentCashierAmount = (currentData['cashier_amount'] as num?)
+        ?.toDouble();
+    final TextEditingController cashierAmountController = TextEditingController(
+      text: currentCashierAmount == null
+          ? ''
+          : NumberFormat('#,##0.##', 'en_US').format(currentCashierAmount),
+    );
     String selectedCurrency = currentData['currency'] ?? 'YER';
+    String selectedAmountMatchStatus = _amountMatchStatusFromValue(
+      currentData['amount_matches'],
+    );
     DateTime dateFrom =
         (currentData['dateFrom'] as Timestamp?)?.toDate() ?? DateTime.now();
     DateTime dateTo =
@@ -471,6 +506,9 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                      ],
                       decoration: const InputDecoration(
                         labelText: 'المبلغ',
                         border: OutlineInputBorder(
@@ -478,6 +516,67 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 15),
+                    InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'مطابقة مبلغ الكاشير',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: selectedAmountMatchStatus,
+                          isExpanded: true,
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'unreviewed',
+                              child: Text('غير مراجع'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'matched',
+                              child: Text('المبلغ مطابق'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'unmatched',
+                              child: Text('المبلغ غير مطابق'),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            if (val == null) return;
+                            setDialogState(() {
+                              selectedAmountMatchStatus = val;
+                              if (val != 'unmatched') {
+                                cashierAmountController.clear();
+                              }
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    if (selectedAmountMatchStatus == 'unmatched') ...[
+                      const SizedBox(height: 15),
+                      TextField(
+                        controller: cashierAmountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'المبلغ الموجود على الكاشير',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(12)),
+                          ),
+                          prefixIcon: Icon(Icons.point_of_sale_rounded),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 15),
                     InputDecorator(
                       decoration: const InputDecoration(
@@ -592,9 +691,30 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                       : () async {
                           if (amountController.text.trim().isEmpty) return;
                           final double? amount = double.tryParse(
-                            amountController.text.trim(),
+                            amountController.text.trim().replaceAll(',', ''),
                           );
                           if (amount == null) return;
+                          double? cashierAmount;
+                          if (selectedAmountMatchStatus == 'unmatched') {
+                            if (cashierAmountController.text.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'الرجاء إدخال المبلغ الموجود على الكاشير',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                              return;
+                            }
+                            cashierAmount = double.tryParse(
+                              cashierAmountController.text.trim().replaceAll(
+                                ',',
+                                '',
+                              ),
+                            );
+                            if (cashierAmount == null) return;
+                          }
 
                           if (dateTo.isBefore(dateFrom)) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -615,6 +735,10 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                               transactionId: transactionId,
                               newAmount: amount,
                               newCurrency: selectedCurrency,
+                              newAmountMatches: _amountMatchValueFromStatus(
+                                selectedAmountMatchStatus,
+                              ),
+                              newCashierAmount: cashierAmount,
                               newDateFrom: dateFrom,
                               newDateTo: dateTo,
                               newNotes: notesController.text.trim(),
@@ -694,7 +818,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
               color: Colors.orange,
               size: 24,
             ),
-            tooltip: 'طلب تعديل من المحصل',
+            tooltip: 'طلب تعديل من المدير العام',
             onPressed: () => _accountantRequestEdit(transactionId, trnNumber),
           ),
           IconButton(
@@ -723,7 +847,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
           color: Colors.orange,
           size: 24,
         ),
-        tooltip: 'إرجاع للمحصل للتعديل',
+        tooltip: 'إرجاع للمدير العام للتعديل',
         onPressed: () => _managerRequestEdit(transactionId, trnNumber),
       );
     } else if (_currentUserRole == 'collector') {
@@ -1010,6 +1134,14 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                               child: Text('تعديلات بانتظار المدير'),
                             ),
                             DropdownMenuItem(
+                              value: 'editRequestedByCollector',
+                              child: Text('مطلوب تعديل'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'rejectedByManager',
+                              child: Text('مرفوض من المدير'),
+                            ),
+                            DropdownMenuItem(
                               value: 'approvedByManager',
                               child: Text('معتمد من المدير'),
                             ),
@@ -1020,6 +1152,43 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                           ],
                           onChanged: (val) =>
                               setDialogState(() => _selectedStatus = val),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'مطابقة الدخل',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedAmountMatchStatus,
+                          isExpanded: true,
+                          items: const [
+                            DropdownMenuItem(value: null, child: Text('الكل')),
+                            DropdownMenuItem(
+                              value: 'unreviewed',
+                              child: Text('غير مراجع'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'matched',
+                              child: Text('مطابق'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'unmatched',
+                              child: Text('غير مطابق'),
+                            ),
+                          ],
+                          onChanged: (val) => setDialogState(
+                            () => _selectedAmountMatchStatus = val,
+                          ),
                         ),
                       ),
                     ),
@@ -1055,6 +1224,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                     setState(() {
                       _selectedCurrency = null;
                       _selectedStatus = null;
+                      _selectedAmountMatchStatus = null;
                       _filterStartDate = null;
                       _filterEndDate = null;
                       _periodStartDate = null;
@@ -1098,6 +1268,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   TransactionRecordFilters get _recordFilters => TransactionRecordFilters(
     currency: _selectedCurrency,
     status: _selectedStatus,
+    amountMatchStatus: _selectedAmountMatchStatus,
     createdFrom: _filterStartDate,
     createdTo: _filterEndDate,
     periodFrom: _periodStartDate,
@@ -1108,6 +1279,7 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     setState(() {
       _selectedCurrency = null;
       _selectedStatus = null;
+      _selectedAmountMatchStatus = null;
       _filterStartDate = null;
       _filterEndDate = null;
       _periodStartDate = null;
@@ -1125,6 +1297,45 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
         return 'دولار أمريكي';
       default:
         return currency;
+    }
+  }
+
+  String _amountMatchStatusFromValue(dynamic value) {
+    if (value == true) return 'matched';
+    if (value == false) return 'unmatched';
+    return 'unreviewed';
+  }
+
+  bool? _amountMatchValueFromStatus(String status) {
+    switch (status) {
+      case 'matched':
+        return true;
+      case 'unmatched':
+        return false;
+      default:
+        return null;
+    }
+  }
+
+  String _amountMatchLabel(String status) {
+    switch (status) {
+      case 'matched':
+        return 'مطابق';
+      case 'unmatched':
+        return 'غير مطابق';
+      default:
+        return 'غير مراجع';
+    }
+  }
+
+  Color _amountMatchColor(String status) {
+    switch (status) {
+      case 'matched':
+        return Colors.green;
+      case 'unmatched':
+        return Colors.orange;
+      default:
+        return AppTheme.textSecondary;
     }
   }
 
@@ -1385,6 +1596,21 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                           dateRange =
                               '${DateFormat('yyyy/MM/dd').format(dateFrom)} - ${DateFormat('yyyy/MM/dd').format(dateTo)}';
                         }
+                        final String amountMatchStatus =
+                            _amountMatchStatusFromValue(data['amount_matches']);
+                        final Color amountMatchColor = _amountMatchColor(
+                          amountMatchStatus,
+                        );
+                        final double? cashierAmount =
+                            (data['cashier_amount'] as num?)?.toDouble();
+                        final String? amountDiff =
+                            amountMatchStatus == 'unmatched' &&
+                                cashierAmount != null
+                            ? NumberFormat(
+                                '#,##0.##',
+                                'en_US',
+                              ).format((rawAmount - cashierAmount).abs())
+                            : null;
 
                         final statusColor = AppTheme.statusColor(status);
                         final archiveStatus = data['archive_status'] as String?;
@@ -1464,6 +1690,30 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                                           const SizedBox(height: 6),
                                           Row(
                                             children: [
+                                              const Icon(
+                                                Icons.date_range_rounded,
+                                                size: 13,
+                                                color: AppTheme.textHint,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  dateRange,
+                                                  style: const TextStyle(
+                                                    fontSize: 11,
+                                                    color: AppTheme.textHint,
+                                                  ),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Wrap(
+                                            spacing: 6,
+                                            runSpacing: 4,
+                                            children: [
                                               Container(
                                                 padding:
                                                     const EdgeInsets.symmetric(
@@ -1486,8 +1736,32 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                                                   ),
                                                 ),
                                               ),
-                                              if (archiveStatus != null) ...[
-                                                const SizedBox(width: 6),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 2,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: amountMatchColor
+                                                      .withValues(alpha: 0.1),
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
+                                                ),
+                                                child: Text(
+                                                  amountDiff == null
+                                                      ? _amountMatchLabel(
+                                                          amountMatchStatus,
+                                                        )
+                                                      : '${_amountMatchLabel(amountMatchStatus)} - فرق $amountDiff $currency',
+                                                  style: TextStyle(
+                                                    color: amountMatchColor,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 10,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (archiveStatus != null)
                                                 Container(
                                                   padding:
                                                       const EdgeInsets.symmetric(
@@ -1525,19 +1799,6 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                                                     ),
                                                   ),
                                                 ),
-                                              ],
-                                              const SizedBox(width: 6),
-                                              Expanded(
-                                                child: Text(
-                                                  dateRange,
-                                                  style: const TextStyle(
-                                                    fontSize: 11,
-                                                    color: AppTheme.textHint,
-                                                  ),
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                              ),
                                             ],
                                           ),
                                         ],

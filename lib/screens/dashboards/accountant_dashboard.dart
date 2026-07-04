@@ -1,11 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
+import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
@@ -264,6 +266,27 @@ class AccountantDashboard extends StatelessWidget {
                     children: [
                       // ── Summary Stats ──────────────────────────────────
                       _buildAccountantStats(),
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'فواتير الطلبات بين الفروع',
+                        subtitle:
+                            'عرض كل الفواتير وترحيلها محاسبياً واعتماد طلبات التعديل أو الإلغاء',
+                        icon: Icons.account_balance_wallet_rounded,
+                        color: AppTheme.accountantColor,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  InterBranchInvoicesDashboard(
+                                    role: UserRole.accountant,
+                                    branchName: branchName,
+                                    branchId: branchId,
+                                  ),
+                            ),
+                          );
+                        },
+                      ),
                       const SizedBox(height: 28),
 
                       // ── Quick Actions ──────────────────────────────────
@@ -330,18 +353,13 @@ class AccountantDashboard extends StatelessWidget {
       floating: false,
       pinned: true,
       backgroundColor: AppTheme.accountantColor,
-      automaticallyImplyLeading: false,
+      automaticallyImplyLeading: Navigator.of(context).canPop(),
       actions: [
         const NotificationBell(),
         IconButton(
           icon: const Icon(Icons.logout_rounded),
           tooltip: 'تسجيل الخروج',
-          onPressed: () async {
-            await FirebaseAuth.instance.signOut();
-            if (context.mounted) {
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            }
-          },
+          onPressed: () => confirmAndSignOut(context),
         ),
       ],
       flexibleSpace: FlexibleSpaceBar(

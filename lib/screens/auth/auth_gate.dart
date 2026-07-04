@@ -6,10 +6,9 @@ import 'package:store_collection_app/models/user_model.dart';
 import 'package:store_collection_app/models/enums.dart';
 
 import 'package:store_collection_app/screens/auth/login_screen.dart';
-import 'package:store_collection_app/screens/dashboards/collector_branches_screen.dart';
-import 'package:store_collection_app/screens/dashboards/manager_dashboard.dart';
-import 'package:store_collection_app/screens/dashboards/accountant_branches_screen.dart'; // تم إضافة هذا السطر
-import 'package:store_collection_app/screens/dashboards/admin_dashboard.dart'; 
+import 'package:store_collection_app/screens/dashboards/admin_dashboard.dart';
+import 'package:store_collection_app/screens/systems/system_selection_screen.dart';
+import 'package:store_collection_app/utils/logout_confirmation.dart';
 
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
@@ -20,27 +19,42 @@ class AuthGate extends StatelessWidget {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
         }
 
         if (snapshot.hasData && snapshot.data != null) {
           return FutureBuilder<DocumentSnapshot>(
-            future: FirebaseFirestore.instance.collection('users').doc(snapshot.data!.uid).get(),
+            future: FirebaseFirestore.instance
+                .collection('users')
+                .doc(snapshot.data!.uid)
+                .get(),
             builder: (context, roleSnapshot) {
               if (roleSnapshot.connectionState == ConnectionState.waiting) {
-                return const Scaffold(body: Center(child: CircularProgressIndicator()));
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
               }
 
               if (roleSnapshot.hasData && roleSnapshot.data!.exists) {
-                UserModel user = UserModel.fromJson(roleSnapshot.data!.data() as Map<String, dynamic>);
-                
+                UserModel user = UserModel.fromJson(
+                  roleSnapshot.data!.data() as Map<String, dynamic>,
+                );
+
                 switch (user.role) {
                   case UserRole.admin:
                     return const AdminDashboard();
                   case UserRole.collector:
-                    return const CollectorBranchesScreen();
+                    return const SystemSelectionScreen(
+                      role: UserRole.collector,
+                      branchName: 'اختيار النظام',
+                    );
                   case UserRole.accountant:
-                    return const AccountantBranchesScreen(); // تحديث التوجيه للمحاسب
+                    return const SystemSelectionScreen(
+                      role: UserRole.accountant,
+                      branchName: 'اختيار النظام',
+                    );
                   case UserRole.manager:
                     if (user.branchId == null || user.branchId!.isEmpty) {
                       return Scaffold(
@@ -49,29 +63,41 @@ class AuthGate extends StatelessWidget {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Text('حسابك كمدير غير مربوط بأي فرع حالياً. تواصل مع الإدارة.'),
+                              const Text(
+                                'حسابك كمدير غير مربوط بأي فرع حالياً. تواصل مع الإدارة.',
+                              ),
                               const SizedBox(height: 20),
                               ElevatedButton(
-                                onPressed: () async {
-                                  await FirebaseAuth.instance.signOut();
-                                },
-                                child: const Text('تسجيل الخروج')
-                              )
+                                onPressed: () => confirmAndSignOut(context),
+                                child: const Text('تسجيل الخروج'),
+                              ),
                             ],
                           ),
                         ),
                       );
                     }
                     return FutureBuilder<DocumentSnapshot>(
-                      future: FirebaseFirestore.instance.collection('branches').doc(user.branchId).get(),
+                      future: FirebaseFirestore.instance
+                          .collection('branches')
+                          .doc(user.branchId)
+                          .get(),
                       builder: (context, branchSnap) {
-                        if (branchSnap.connectionState == ConnectionState.waiting) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-                        
+                        if (branchSnap.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Scaffold(
+                            body: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+
                         String branchName = 'الفرع غير معروف';
                         if (branchSnap.hasData && branchSnap.data!.exists) {
                           branchName = branchSnap.data!.get('name');
                         }
-                        return ManagerDashboard(branchId: user.branchId!, branchName: branchName);
+                        return SystemSelectionScreen(
+                          role: UserRole.manager,
+                          branchId: user.branchId!,
+                          branchName: branchName,
+                        );
                       },
                     );
                 }
@@ -85,11 +111,9 @@ class AuthGate extends StatelessWidget {
                       const Text('لا توجد بيانات لهذا المستخدم أو تم حذفها.'),
                       const SizedBox(height: 10),
                       ElevatedButton(
-                        onPressed: () async {
-                          await FirebaseAuth.instance.signOut();
-                        },
+                        onPressed: () => confirmAndSignOut(context),
                         child: const Text('تسجيل الخروج'),
-                      )
+                      ),
                     ],
                   ),
                 ),
