@@ -1,5 +1,36 @@
 import 'dart:convert';
 
+const uncategorizedProductGroupSystemKey = 'uncategorized';
+const uncategorizedProductGroupDisplayName = 'غير مصنف';
+
+/// Stable Firestore document ID for the single system fallback group of a brand.
+String uncategorizedProductGroupDocumentId(String brandId) {
+  final cleanBrandId = brandId.trim();
+  if (cleanBrandId.isEmpty) throw ArgumentError('Brand ID is required.');
+  if (cleanBrandId.contains('/')) {
+    throw ArgumentError('Brand ID cannot contain a path separator.');
+  }
+  return 'system-group-$cleanBrandId-$uncategorizedProductGroupSystemKey';
+}
+
+/// Stable Firestore document ID for a normal, brand-scoped product group.
+///
+/// The display name is normalized only for identity generation. Callers must
+/// continue to preserve the original Arabic display value separately.
+String productGroupDocumentId({
+  required String brandId,
+  required String groupName,
+}) {
+  final cleanBrandId = brandId.trim();
+  if (cleanBrandId.isEmpty) throw ArgumentError('Brand ID is required.');
+  if (cleanBrandId.contains('/')) {
+    throw ArgumentError('Brand ID cannot contain a path separator.');
+  }
+  final normalizedName = normalizeCatalogText(groupName);
+  if (normalizedName.isEmpty) throw ArgumentError('Group name is required.');
+  return 'group-${catalogKeyFragment('$cleanBrandId\u001F$normalizedName')}';
+}
+
 /// Normalization used only for duplicate detection and deterministic keys.
 ///
 /// The original display value is always stored separately. In particular, this

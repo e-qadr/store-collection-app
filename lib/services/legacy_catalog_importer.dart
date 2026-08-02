@@ -3,6 +3,13 @@ import 'dart:io';
 
 import '../utils/catalog_normalization.dart';
 
+const legacyCatalogUncategorizedGroupKey = uncategorizedProductGroupSystemKey;
+const legacyCatalogUncategorizedGroupName =
+    uncategorizedProductGroupDisplayName;
+
+String legacyCatalogUncategorizedGroupId(String brandId) =>
+    uncategorizedProductGroupDocumentId(brandId);
+
 enum LegacyCatalogSourceProfileId {
   alAsalahLegacyCatalog('al_asalah_legacy_catalog'),
   eqlidLegacyCatalog('eqlid_legacy_catalog');
@@ -278,6 +285,10 @@ class LegacyCatalogRecord {
 
   bool get hasMissingGroup => rawGroupValue.trim().isEmpty;
 
+  bool get originalGroupMissing => hasMissingGroup;
+
+  bool get canUseFallbackSystemGroup => hasMissingGroup && !hasBlockingIssue;
+
   LegacyCatalogRecord copyWith({LegacyGroupSuggestion? groupSuggestion}) {
     return LegacyCatalogRecord(
       sourceProfile: sourceProfile,
@@ -301,47 +312,74 @@ class LegacyCatalogRecord {
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    'source_profile': sourceProfile.value,
-    'source_hash': sourceHash,
-    'source_sheet': sheetName,
-    'source_row': rowNumber,
-    'brand_id': brandId,
-    'raw_material_value': rawMaterialValue,
-    'raw_group_value': rawGroupValue,
-    'raw_units': {
-      'primary': rawPrimaryUnit,
-      'unit_2': rawUnit2,
-      'unit_3': rawUnit3,
-    },
-    'legacy_code': legacyCode,
-    'product_name': productName,
-    'group_legacy_code': groupLegacyCode,
-    'group_name': groupName,
-    'fingerprint': fingerprint,
-    'issues': issues.map((issue) => issue.toJson()).toList(),
-    'group_suggestion': groupSuggestion?.toJson(),
-    'unit_normalization_suggestions': unitSuggestions
-        .map((suggestion) => suggestion.toJson())
-        .toList(),
-  };
+  Map<String, dynamic> toJson({bool fallbackAssignmentConfirmed = false}) {
+    final fallbackAssigned =
+        canUseFallbackSystemGroup && fallbackAssignmentConfirmed;
+    return {
+      'source_profile': sourceProfile.value,
+      'source_hash': sourceHash,
+      'source_sheet': sheetName,
+      'source_row': rowNumber,
+      'brand_id': brandId,
+      'raw_material_value': rawMaterialValue,
+      'raw_group_value': rawGroupValue,
+      'raw_units': {
+        'primary': rawPrimaryUnit,
+        'unit_2': rawUnit2,
+        'unit_3': rawUnit3,
+      },
+      'legacy_code': legacyCode,
+      'product_name': productName,
+      'group_legacy_code': groupLegacyCode,
+      'group_name': groupName,
+      'group_resolution': {
+        'original_group_missing': originalGroupMissing,
+        'fallback_system_group_assigned': fallbackAssigned,
+        if (fallbackAssigned)
+          'fallback_system_group_key': legacyCatalogUncategorizedGroupKey,
+        if (fallbackAssigned)
+          'fallback_system_group_id': legacyCatalogUncategorizedGroupId(
+            brandId,
+          ),
+      },
+      'fingerprint': fingerprint,
+      'issues': issues.map((issue) => issue.toJson()).toList(),
+      'group_suggestion': groupSuggestion?.toJson(),
+      'unit_normalization_suggestions': unitSuggestions
+          .map((suggestion) => suggestion.toJson())
+          .toList(),
+    };
+  }
 
   /// Flattened metadata aligned with the catalog product source contract.
   ///
   /// This helper does not write anything; the importer remains dry-run only.
-  Map<String, dynamic> toProductSourceMetadata({String? importId}) => {
-    'source_profile': sourceProfile.value,
-    'source_file_sha256': sourceHash,
-    'source_sheet': sheetName,
-    'source_row': rowNumber,
-    'raw_material_value': rawMaterialValue,
-    'raw_group_value': rawGroupValue,
-    'raw_primary_unit': rawPrimaryUnit,
-    'raw_unit_2': rawUnit2,
-    'raw_unit_3': rawUnit3,
-    if (importId != null && importId.trim().isNotEmpty)
-      'import_id': importId.trim(),
-  };
+  Map<String, dynamic> _toProductSourceMetadata({
+    String? importId,
+    required bool fallbackAssignmentConfirmed,
+  }) {
+    final fallbackAssigned =
+        canUseFallbackSystemGroup && fallbackAssignmentConfirmed;
+    return {
+      'source_profile': sourceProfile.value,
+      'source_file_sha256': sourceHash,
+      'source_sheet': sheetName,
+      'source_row': rowNumber,
+      'raw_material_value': rawMaterialValue,
+      'raw_group_value': rawGroupValue,
+      'raw_primary_unit': rawPrimaryUnit,
+      'raw_unit_2': rawUnit2,
+      'raw_unit_3': rawUnit3,
+      'original_group_missing': originalGroupMissing,
+      'fallback_system_group_assigned': fallbackAssigned,
+      if (fallbackAssigned)
+        'fallback_system_group_key': legacyCatalogUncategorizedGroupKey,
+      if (fallbackAssigned)
+        'fallback_system_group_id': legacyCatalogUncategorizedGroupId(brandId),
+      if (importId != null && importId.trim().isNotEmpty)
+        'import_id': importId.trim(),
+    };
+  }
 }
 
 class LegacyCatalogSkippedRow {
@@ -385,10 +423,104 @@ class LegacyCatalogPlanEntry {
     this.existingProductId,
   });
 
+  bool get assignsUncategorizedGroup => record.originalGroupMissing;
+
+  bool get assignsNormalSourceGroup => !assignsUncategorizedGroup;
+
+  String? get assignedSystemGroupId => assignsUncategorizedGroup
+      ? legacyCatalogUncategorizedGroupId(record.brandId)
+      : null;
+
+  String get assignedGroupId {
+    if (assignsUncategorizedGroup) {
+      return legacyCatalogUncategorizedGroupId(record.brandId);
+    }
+    final groupName = record.groupName?.trim() ?? '';
+    if (groupName.isEmpty) {
+      throw StateError(
+        'A ready legacy product with a populated source group must have a '
+        'parsed group name.',
+      );
+    }
+    return productGroupDocumentId(
+      brandId: record.brandId,
+      groupName: groupName,
+    );
+  }
+
+  Map<String, dynamic> toProductSourceMetadata({String? importId}) =>
+      record._toProductSourceMetadata(
+        importId: importId,
+        fallbackAssignmentConfirmed: assignsUncategorizedGroup,
+      );
+
   Map<String, dynamic> toJson() => {
     'action': action,
     'existing_product_id': existingProductId,
-    'record': record.toJson(),
+    'assigned_group_id': assignedGroupId,
+    'assigned_group_kind': assignsUncategorizedGroup
+        ? 'system_uncategorized'
+        : 'normal_source_group',
+    'record': record.toJson(
+      fallbackAssignmentConfirmed: assignsUncategorizedGroup,
+    ),
+  };
+}
+
+class LegacyCatalogNormalGroupPlan {
+  final String brandId;
+  final String groupId;
+  final String name;
+  final String normalizedName;
+  final List<String> sourceLegacyCodes;
+  final List<String> rawGroupValues;
+  final List<int> sourceRows;
+
+  const LegacyCatalogNormalGroupPlan({
+    required this.brandId,
+    required this.groupId,
+    required this.name,
+    required this.normalizedName,
+    required this.sourceLegacyCodes,
+    required this.rawGroupValues,
+    required this.sourceRows,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'brand_id': brandId,
+    'group_id': groupId,
+    'name': name,
+    'normalized_name': normalizedName,
+    'source_legacy_codes': sourceLegacyCodes,
+    'raw_group_values': rawGroupValues,
+    'source_rows': sourceRows,
+    'record_count': sourceRows.length,
+    'action': 'ensure_or_validate',
+    'system_managed': false,
+    'production_validation_required': true,
+  };
+}
+
+class LegacyCatalogSystemGroupPlan {
+  final String brandId;
+  final String groupId;
+  final String key;
+  final String name;
+  const LegacyCatalogSystemGroupPlan({
+    required this.brandId,
+    required this.groupId,
+    required this.key,
+    required this.name,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'brand_id': brandId,
+    'group_id': groupId,
+    'key': key,
+    'name': name,
+    'action': 'ensure',
+    'system_managed': true,
+    'production_validation_required': true,
   };
 }
 
@@ -437,7 +569,8 @@ class LegacyCatalogDryRunReport {
   final List<LegacyCatalogPlanEntry> creates;
   final List<LegacyCatalogPlanEntry> updates;
   final List<LegacyCatalogPlanEntry> unchanged;
-  final List<LegacyCatalogPlanEntry> reviewRequired;
+  final List<LegacyCatalogNormalGroupPlan> normalGroupPlans;
+  final List<LegacyCatalogSystemGroupPlan> systemGroupPlans;
   final List<LegacyCatalogDuplicate> duplicates;
   final List<LegacyCatalogInvalidEntry> invalidRecords;
   final List<LegacyCatalogSkippedRow> skippedRows;
@@ -454,7 +587,8 @@ class LegacyCatalogDryRunReport {
     required this.creates,
     required this.updates,
     required this.unchanged,
-    required this.reviewRequired,
+    required this.normalGroupPlans,
+    required this.systemGroupPlans,
     required this.duplicates,
     required this.invalidRecords,
     required this.skippedRows,
@@ -489,6 +623,44 @@ class LegacyCatalogDryRunReport {
 
   int get unitSuggestionCount =>
       records.fold(0, (count, record) => count + record.unitSuggestions.length);
+
+  List<LegacyCatalogPlanEntry> get readyEntries =>
+      List.unmodifiable([...creates, ...updates, ...unchanged]);
+
+  List<LegacyCatalogPlanEntry> get realGroupReady => List.unmodifiable(
+    readyEntries.where((entry) => !entry.record.originalGroupMissing),
+  );
+
+  List<LegacyCatalogPlanEntry> get uncategorizedReady => List.unmodifiable(
+    readyEntries.where((entry) => entry.record.originalGroupMissing),
+  );
+
+  List<LegacyCatalogRecord> get blockedOtherRecords {
+    final readyRows = readyEntries
+        .map((entry) => entry.record.rowNumber)
+        .toSet();
+    return List.unmodifiable(
+      records.where((record) => !readyRows.contains(record.rowNumber)),
+    );
+  }
+
+  int get invalidOrAmbiguousCount => records.where((record) {
+    return record.issues.any(
+      (issue) =>
+          issue.code.startsWith('invalid_') ||
+          issue.code.startsWith('ambiguous_'),
+    );
+  }).length;
+
+  int get duplicateRecordCount =>
+      duplicates.expand((duplicate) => duplicate.sourceRows).toSet().length;
+
+  int get systemGroupsToEnsureCount => systemGroupPlans.length;
+
+  int get normalGroupsToEnsureOrValidateCount => normalGroupPlans.length;
+
+  bool isReadyRecord(LegacyCatalogRecord record) =>
+      readyEntries.any((entry) => entry.record.rowNumber == record.rowNumber);
 
   Map<String, int> get groupSuggestionsByConfidence => _countValues(
     records
@@ -563,12 +735,16 @@ class LegacyCatalogDryRunReport {
       'records_to_create': creates.length,
       'records_to_update': updates.length,
       'unchanged_records': unchanged.length,
-      'review_required': reviewRequired.length,
-      'pending_group_approval': reviewRequired
-          .where((entry) => entry.action == 'pending_group_approval')
-          .length,
+      'real_group_ready': realGroupReady.length,
+      'uncategorized_ready': uncategorizedReady.length,
+      'blocked_other': blockedOtherRecords.length,
+      'normal_groups_to_ensure_or_validate':
+          normalGroupsToEnsureOrValidateCount,
+      'system_groups_to_ensure': systemGroupsToEnsureCount,
       'duplicate_groups': duplicates.length,
+      'duplicate_records': duplicateRecordCount,
       'invalid_records': invalidRecords.length,
+      'invalid_or_ambiguous_records': invalidOrAmbiguousCount,
       'skipped_report_rows': skippedRows.length,
       'distinct_populated_groups': distinctPopulatedGroupCount,
       'missing_group': missingGroupCount,
@@ -585,8 +761,8 @@ class LegacyCatalogDryRunReport {
       'group_suggestions_by_confidence': groupSuggestionsByConfidence,
       'unit_suggestions_by_confidence': unitSuggestionsByConfidence,
     },
-    'blocking_rows': invalidRecords
-        .map((entry) => entry.record.rowNumber)
+    'blocking_rows': blockedOtherRecords
+        .map((record) => record.rowNumber)
         .toList(),
   };
 
@@ -595,7 +771,19 @@ class LegacyCatalogDryRunReport {
     'creates': creates.map((entry) => entry.toJson()).toList(),
     'updates': updates.map((entry) => entry.toJson()).toList(),
     'unchanged': unchanged.map((entry) => entry.toJson()).toList(),
-    'review_required': reviewRequired.map((entry) => entry.toJson()).toList(),
+    'real_group_ready': realGroupReady.map((entry) => entry.toJson()).toList(),
+    'uncategorized_ready': uncategorizedReady
+        .map((entry) => entry.toJson())
+        .toList(),
+    'blocked_other': blockedOtherRecords
+        .map((record) => record.toJson())
+        .toList(),
+    'normal_group_plans': normalGroupPlans
+        .map((plan) => plan.toJson())
+        .toList(),
+    'system_group_plans': systemGroupPlans
+        .map((plan) => plan.toJson())
+        .toList(),
     'bulk_prefix_mapping_candidates': prefixMappingCandidates
         .map((candidate) => candidate.toJson())
         .toList(),
@@ -604,7 +792,10 @@ class LegacyCatalogDryRunReport {
     'skipped_rows': skippedRows.map((row) => row.toJson()).toList(),
     'missing_group_records': records
         .where((record) => record.hasMissingGroup)
-        .map((record) => record.toJson())
+        .map(
+          (record) =>
+              record.toJson(fallbackAssignmentConfirmed: isReadyRecord(record)),
+        )
         .toList(),
   };
 }
@@ -686,6 +877,28 @@ class LegacyCatalogImporter {
       brandId: brandSelection.documentId,
       existingProducts: existingProducts,
     );
+    final readyEntries = <LegacyCatalogPlanEntry>[
+      ...plan.creates,
+      ...plan.updates,
+      ...plan.unchanged,
+    ];
+    final needsUncategorizedGroup = readyEntries.any(
+      (entry) => entry.record.originalGroupMissing,
+    );
+    final fallbackGroupId = legacyCatalogUncategorizedGroupId(
+      brandSelection.documentId,
+    );
+    final systemGroupPlans = needsUncategorizedGroup
+        ? <LegacyCatalogSystemGroupPlan>[
+            LegacyCatalogSystemGroupPlan(
+              brandId: brandSelection.documentId,
+              groupId: fallbackGroupId,
+              key: legacyCatalogUncategorizedGroupKey,
+              name: legacyCatalogUncategorizedGroupName,
+            ),
+          ]
+        : const <LegacyCatalogSystemGroupPlan>[];
+    final normalGroupPlans = _buildNormalGroupPlans(readyEntries);
 
     return LegacyCatalogDryRunReport(
       profile: profile,
@@ -699,11 +912,52 @@ class LegacyCatalogImporter {
       creates: plan.creates,
       updates: plan.updates,
       unchanged: plan.unchanged,
-      reviewRequired: plan.reviewRequired,
+      normalGroupPlans: normalGroupPlans,
+      systemGroupPlans: systemGroupPlans,
       duplicates: plan.duplicates,
       invalidRecords: plan.invalidRecords,
       skippedRows: parsed.skippedRows,
     );
+  }
+
+  List<LegacyCatalogNormalGroupPlan> _buildNormalGroupPlans(
+    List<LegacyCatalogPlanEntry> readyEntries,
+  ) {
+    final entriesByGroupId = <String, List<LegacyCatalogPlanEntry>>{};
+    for (final entry in readyEntries.where(
+      (candidate) => candidate.assignsNormalSourceGroup,
+    )) {
+      entriesByGroupId.putIfAbsent(entry.assignedGroupId, () => []).add(entry);
+    }
+
+    final plans = entriesByGroupId.entries.map((groupEntries) {
+      final entries = groupEntries.value;
+      final firstRecord = entries.first.record;
+      final groupName = firstRecord.groupName!.trim();
+      final sourceLegacyCodes =
+          entries
+              .map((entry) => entry.record.groupLegacyCode?.trim() ?? '')
+              .where((value) => value.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+      final rawGroupValues =
+          entries.map((entry) => entry.record.rawGroupValue).toSet().toList()
+            ..sort();
+      final sourceRows = entries.map((entry) => entry.record.rowNumber).toList()
+        ..sort();
+      return LegacyCatalogNormalGroupPlan(
+        brandId: firstRecord.brandId,
+        groupId: groupEntries.key,
+        name: groupName,
+        normalizedName: normalizeCatalogText(groupName),
+        sourceLegacyCodes: List.unmodifiable(sourceLegacyCodes),
+        rawGroupValues: List.unmodifiable(rawGroupValues),
+        sourceRows: List.unmodifiable(sourceRows),
+      );
+    }).toList();
+    plans.sort((left, right) => left.groupId.compareTo(right.groupId));
+    return List.unmodifiable(plans);
   }
 
   void _validateBrandSelection(
@@ -1004,7 +1258,6 @@ class LegacyCatalogImporter {
     final creates = <LegacyCatalogPlanEntry>[];
     final updates = <LegacyCatalogPlanEntry>[];
     final unchanged = <LegacyCatalogPlanEntry>[];
-    final reviewRequired = <LegacyCatalogPlanEntry>[];
     final invalidRecords = <LegacyCatalogInvalidEntry>[];
     final duplicates = <LegacyCatalogDuplicate>[];
     final duplicateRows = <int>{};
@@ -1067,20 +1320,6 @@ class LegacyCatalogImporter {
       final blocking = record.issues
           .where((issue) => issue.severity == LegacyCatalogIssueSeverity.error)
           .toList();
-      if (record.hasMissingGroup) {
-        reviewRequired.add(
-          LegacyCatalogPlanEntry(
-            record: record,
-            action: 'pending_group_approval',
-          ),
-        );
-        if (blocking.isNotEmpty) {
-          invalidRecords.add(
-            LegacyCatalogInvalidEntry(record: record, issues: blocking),
-          );
-        }
-        continue;
-      }
       if (blocking.isNotEmpty) {
         invalidRecords.add(
           LegacyCatalogInvalidEntry(record: record, issues: blocking),
@@ -1187,7 +1426,6 @@ class LegacyCatalogImporter {
       creates: creates,
       updates: updates,
       unchanged: unchanged,
-      reviewRequired: reviewRequired,
       duplicates: duplicates,
       invalidRecords: invalidRecords,
     );
@@ -1205,7 +1443,6 @@ class _ImportPlan {
   final List<LegacyCatalogPlanEntry> creates;
   final List<LegacyCatalogPlanEntry> updates;
   final List<LegacyCatalogPlanEntry> unchanged;
-  final List<LegacyCatalogPlanEntry> reviewRequired;
   final List<LegacyCatalogDuplicate> duplicates;
   final List<LegacyCatalogInvalidEntry> invalidRecords;
 
@@ -1213,7 +1450,6 @@ class _ImportPlan {
     required this.creates,
     required this.updates,
     required this.unchanged,
-    required this.reviewRequired,
     required this.duplicates,
     required this.invalidRecords,
   });

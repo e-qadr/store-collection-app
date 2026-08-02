@@ -76,7 +76,7 @@ class ProductPriceService {
     required String currency,
     required String sourceInvoiceId,
   }) async {
-    _requirePricingActor(actor);
+    validateConfirmedPriceWriter(actor);
     final cleanBrandId = _required(brandId, 'Brand ID');
     final cleanProductId = _required(productId, 'Product ID');
     final cleanUnitId = _required(unitId, 'Unit ID');
@@ -181,11 +181,15 @@ class ProductPriceService {
     throw StateError('Selected unit does not belong to the product.');
   }
 
-  void _requirePricingActor(CatalogActor actor) {
-    _required(actor.uid, 'Actor UID');
-    _required(actor.name, 'Actor name');
-    if (!actor.canManageProtectedPrices) {
-      throw StateError('This role cannot access protected product prices.');
+  static void validateConfirmedPriceWriter(CatalogActor actor) {
+    if (actor.uid.trim().isEmpty) throw ArgumentError('Actor UID is required.');
+    if (actor.name.trim().isEmpty) {
+      throw ArgumentError('Actor name is required.');
+    }
+    if (!actor.canWriteProtectedPrices) {
+      throw StateError(
+        'Only the general manager can confirm protected product prices.',
+      );
     }
   }
 

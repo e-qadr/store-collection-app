@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:store_collection_app/utils/catalog_normalization.dart';
 
 class ProductCatalogCollections {
   ProductCatalogCollections._();
@@ -27,6 +28,8 @@ class ProductCatalogFields {
   static const legacyCodeUniqueKeyId = 'legacy_code_unique_key_id';
   static const sourceMetadata = 'source_metadata';
   static const lastAuditEventId = 'last_audit_event_id';
+  static const isSystemGroup = 'is_system_group';
+  static const systemKey = 'system_key';
   static const createdBy = 'created_by';
   static const createdByName = 'created_by_name';
   static const createdAt = 'created_at';
@@ -38,21 +41,71 @@ class ProductCatalogFields {
   static const archivedAt = 'archived_at';
 }
 
+class ProductSourceMetadataFields {
+  ProductSourceMetadataFields._();
+
+  static const originalGroupMissing = 'original_group_missing';
+  static const fallbackSystemGroupAssigned = 'fallback_system_group_assigned';
+  static const fallbackSystemGroupKey = 'fallback_system_group_key';
+  static const fallbackSystemGroupId = 'fallback_system_group_id';
+}
+
 class CatalogActor {
   final String uid;
   final String name;
   final String role;
+  final bool active;
 
   const CatalogActor({
     required this.uid,
     required this.name,
     required this.role,
+    this.active = true,
   });
 
-  bool get isAccountant => role == 'accountant';
+  bool get isAccountant => active && role == 'accountant';
 
-  bool get canManageProtectedPrices =>
-      role == 'collector' || role == 'accountant' || role == 'admin';
+  bool get canReadProtectedPrices =>
+      active &&
+      (role == 'collector' || role == 'accountant' || role == 'admin');
+
+  bool get canWriteProtectedPrices => active && role == 'collector';
+}
+
+class UncategorizedProductGroupContract {
+  UncategorizedProductGroupContract._();
+
+  static const systemKey = uncategorizedProductGroupSystemKey;
+  static const displayName = uncategorizedProductGroupDisplayName;
+
+  static String documentIdForBrand(String brandId) =>
+      uncategorizedProductGroupDocumentId(brandId);
+
+  static bool isReservedIdentity({required String name, String? legacyCode}) {
+    final normalizedName = normalizeCatalogText(name);
+    return normalizedName == normalizeCatalogText(displayName) ||
+        normalizedName == systemKey ||
+        normalizeLegacyCode(legacyCode).toLowerCase() == systemKey;
+  }
+
+  static bool matchesExistingDocument({
+    required String documentId,
+    required String brandId,
+    required Map<String, dynamic> data,
+  }) {
+    final cleanBrandId = brandId.trim();
+    return documentId == documentIdForBrand(cleanBrandId) &&
+        data[ProductCatalogFields.id] == documentId &&
+        data[ProductCatalogFields.brandId] == cleanBrandId &&
+        data[ProductCatalogFields.name] == displayName &&
+        data[ProductCatalogFields.normalizedName] ==
+            normalizeCatalogText(displayName) &&
+        data[ProductCatalogFields.isSystemGroup] == true &&
+        data[ProductCatalogFields.systemKey] == systemKey &&
+        data[ProductCatalogFields.active] == true &&
+        data[ProductCatalogFields.lastAuditEventId] is String &&
+        (data[ProductCatalogFields.lastAuditEventId] as String).isNotEmpty;
+  }
 }
 
 class CatalogUnit {
@@ -101,6 +154,8 @@ class ProductGroupModel {
   final String? legacyCode;
   final bool active;
   final String lastAuditEventId;
+  final bool isSystemGroup;
+  final String? systemKey;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -112,6 +167,8 @@ class ProductGroupModel {
     this.legacyCode,
     this.active = true,
     this.lastAuditEventId = '',
+    this.isSystemGroup = false,
+    this.systemKey,
     this.createdAt,
     this.updatedAt,
   });
@@ -130,10 +187,14 @@ class ProductGroupModel {
       active: data[ProductCatalogFields.active] as bool? ?? true,
       lastAuditEventId:
           data[ProductCatalogFields.lastAuditEventId]?.toString() ?? '',
+      isSystemGroup: data[ProductCatalogFields.isSystemGroup] as bool? ?? false,
+      systemKey: _nonEmptyString(data[ProductCatalogFields.systemKey]),
       createdAt: _dateTimeOf(data[ProductCatalogFields.createdAt]),
       updatedAt: _dateTimeOf(data[ProductCatalogFields.updatedAt]),
     );
   }
+
+  bool get canBeArchived => !isSystemGroup;
 }
 
 class ProductCatalogModel {

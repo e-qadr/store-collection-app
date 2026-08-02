@@ -122,10 +122,20 @@ class ProductCatalogService {
     _requireAccountant(actor);
     final cleanBrandId = _required(brandId, 'Brand ID');
     final cleanName = _required(name, 'Group name');
+    if (UncategorizedProductGroupContract.isReservedIdentity(
+      name: cleanName,
+      legacyCode: legacyCode,
+    )) {
+      throw ArgumentError(
+        'The uncategorized system-group identity is reserved.',
+      );
+    }
     final normalizedName = normalizeCatalogText(cleanName);
     final cleanLegacyCode = _optional(legacyCode);
-    final groupId =
-        'group-${catalogKeyFragment('$cleanBrandId\u001F$normalizedName')}';
+    final groupId = productGroupDocumentId(
+      brandId: cleanBrandId,
+      groupName: cleanName,
+    );
     final brandRef = _firestore.collection('brands').doc(cleanBrandId);
     final groupRef = _groups.doc(groupId);
     final auditRef = _auditEvents.doc();
@@ -145,6 +155,7 @@ class ProductCatalogService {
         ProductCatalogFields.normalizedName: normalizedName,
         if (cleanLegacyCode != null)
           ProductCatalogFields.legacyCode: cleanLegacyCode,
+        ProductCatalogFields.isSystemGroup: false,
         ProductCatalogFields.active: true,
         ProductCatalogFields.lastAuditEventId: auditRef.id,
         ProductCatalogFields.createdBy: actor.uid,
@@ -171,6 +182,78 @@ class ProductCatalogService {
     return groupId;
   }
 
+  /// Ensures exactly one reserved Uncategorized group for [brandId].
+  ///
+  /// Repeated and concurrent calls are idempotent. A document occupying the
+  /// deterministic ID with another identity is never overwritten.
+  Future<String> ensureUncategorizedGroup({
+    required CatalogActor actor,
+    required String brandId,
+  }) async {
+    _requireAccountant(actor);
+    final cleanBrandId = _required(brandId, 'Brand ID');
+    final groupId = UncategorizedProductGroupContract.documentIdForBrand(
+      cleanBrandId,
+    );
+    final brandRef = _firestore.collection('brands').doc(cleanBrandId);
+    final groupRef = _groups.doc(groupId);
+    final auditRef = _auditEvents.doc();
+
+    await _firestore.runTransaction((transaction) async {
+      final brand = await transaction.get(brandRef);
+      final existing = await transaction.get(groupRef);
+      if (!brand.exists) throw StateError('The selected brand does not exist.');
+      final existingData = existing.data();
+      if (existingData != null) {
+        if (!UncategorizedProductGroupContract.matchesExistingDocument(
+          documentId: existing.id,
+          brandId: cleanBrandId,
+          data: existingData,
+        )) {
+          throw StateError(
+            'The reserved uncategorized group ID is occupied by a conflicting document.',
+          );
+        }
+        return;
+      }
+
+      final groupData = <String, dynamic>{
+        ProductCatalogFields.id: groupId,
+        ProductCatalogFields.brandId: cleanBrandId,
+        ProductCatalogFields.name:
+            UncategorizedProductGroupContract.displayName,
+        ProductCatalogFields.normalizedName: normalizeCatalogText(
+          UncategorizedProductGroupContract.displayName,
+        ),
+        ProductCatalogFields.active: true,
+        ProductCatalogFields.isSystemGroup: true,
+        ProductCatalogFields.systemKey:
+            UncategorizedProductGroupContract.systemKey,
+        ProductCatalogFields.lastAuditEventId: auditRef.id,
+        ProductCatalogFields.createdBy: actor.uid,
+        ProductCatalogFields.createdByName: actor.name,
+        ProductCatalogFields.createdAt: FieldValue.serverTimestamp(),
+        ProductCatalogFields.updatedBy: actor.uid,
+        ProductCatalogFields.updatedByName: actor.name,
+        ProductCatalogFields.updatedAt: FieldValue.serverTimestamp(),
+      };
+      transaction.set(groupRef, groupData);
+      transaction.set(
+        auditRef,
+        _auditData(
+          id: auditRef.id,
+          entityType: 'product_group',
+          entityId: groupId,
+          brandId: cleanBrandId,
+          action: 'system_group_created',
+          actor: actor,
+          after: _groupAuditSnapshot(groupData),
+        ),
+      );
+    });
+    return groupId;
+  }
+
   Future<String> createProduct({
     required CatalogActor actor,
     required String brandId,
@@ -179,15 +262,22 @@ class ProductCatalogService {
     String? legacyCode,
     required List<CatalogUnit> units,
     required String primaryUnitId,
-    Map<String, dynamic> sourceMetadata = const {},
+    Map<String, dynamic>? sourceMetadata,
   }) async {
     _requireAccountant(actor);
     final cleanBrandId = _required(brandId, 'Brand ID');
     final cleanGroupId = _required(groupId, 'Group ID');
     final cleanName = _required(name, 'Product name');
     final cleanPrimaryUnitId = _required(primaryUnitId, 'Primary unit ID');
+    final cleanSourceMetadata = Map<String, dynamic>.from(
+      sourceMetadata ?? const {},
+    );
     _validateUnits(units, cleanPrimaryUnitId);
-    _rejectProtectedPriceData(sourceMetadata);
+    _rejectProtectedPriceData(
+      cleanSourceMetadata,
+      brandId: cleanBrandId,
+      creationGroupId: cleanGroupId,
+    );
 
     final normalizedName = normalizeCatalogText(cleanName);
     final normalizedCode = normalizeLegacyCode(legacyCode);
@@ -233,7 +323,7 @@ class ProductCatalogService {
         primaryUnitId: cleanPrimaryUnitId,
         nameKeyId: nameKeyId,
         codeKeyId: codeKeyId,
-        sourceMetadata: sourceMetadata,
+        sourceMetadata: cleanSourceMetadata,
         actor: actor,
         lastAuditEventId: auditRef.id,
       );
@@ -290,7 +380,7 @@ class ProductCatalogService {
     String? legacyCode,
     required List<CatalogUnit> units,
     required String primaryUnitId,
-    Map<String, dynamic> sourceMetadata = const {},
+    Map<String, dynamic>? sourceMetadata,
   }) async {
     _requireAccountant(actor);
     final cleanProductId = _required(productId, 'Product ID');
@@ -298,7 +388,9 @@ class ProductCatalogService {
     final cleanName = _required(name, 'Product name');
     final cleanPrimaryUnitId = _required(primaryUnitId, 'Primary unit ID');
     _validateUnits(units, cleanPrimaryUnitId);
-    _rejectProtectedPriceData(sourceMetadata);
+    if (sourceMetadata != null) {
+      _rejectProtectedPriceData(sourceMetadata);
+    }
     final productRef = _products.doc(cleanProductId);
     final auditRef = _auditEvents.doc();
 
@@ -315,6 +407,15 @@ class ProductCatalogService {
         current[ProductCatalogFields.brandId]?.toString() ?? '',
         'Product brand ID',
       );
+      final currentSourceMetadata = Map<String, dynamic>.from(
+        current[ProductCatalogFields.sourceMetadata] as Map? ?? const {},
+      );
+      if (sourceMetadata != null) {
+        _rejectProtectedPriceData(sourceMetadata, brandId: brandId);
+        if (!_sameFlatMap(sourceMetadata, currentSourceMetadata)) {
+          throw StateError('Product source provenance cannot be rewritten.');
+        }
+      }
       final normalizedName = normalizeCatalogText(cleanName);
       final normalizedCode = normalizeLegacyCode(legacyCode);
       final nameKeyId = productUniqueKeyId(
@@ -355,7 +456,7 @@ class ProductCatalogService {
         ProductCatalogFields.legacyCodeUniqueKeyId:
             codeKeyId ?? FieldValue.delete(),
         ProductCatalogFields.sourceMetadata: Map<String, dynamic>.from(
-          sourceMetadata,
+          currentSourceMetadata,
         ),
         ProductCatalogFields.version: nextVersion + 1,
         ProductCatalogFields.lastAuditEventId: auditRef.id,
@@ -400,7 +501,10 @@ class ProductCatalogService {
           entityType: 'product',
           entityId: cleanProductId,
           brandId: brandId,
-          action: 'updated',
+          action:
+              current[ProductCatalogFields.groupId]?.toString() == cleanGroupId
+              ? 'updated'
+              : 'recategorized',
           actor: actor,
           before: _productAuditSnapshot(current),
           after: _productAuditSnapshot(after),
@@ -702,7 +806,6 @@ class ProductCatalogService {
         ProductCatalogFields.version,
         ProductCatalogFields.nameUniqueKeyId,
         ProductCatalogFields.legacyCodeUniqueKeyId,
-        ProductCatalogFields.sourceMetadata,
         ProductCatalogFields.lastAuditEventId,
       ])
         if (data[field] != null && data[field] is! FieldValue)
@@ -720,6 +823,8 @@ class ProductCatalogService {
         ProductCatalogFields.legacyCode,
         ProductCatalogFields.active,
         ProductCatalogFields.lastAuditEventId,
+        ProductCatalogFields.isSystemGroup,
+        ProductCatalogFields.systemKey,
       ])
         if (data[field] != null && data[field] is! FieldValue)
           field: data[field],
@@ -771,7 +876,11 @@ class ProductCatalogService {
     }
   }
 
-  void _rejectProtectedPriceData(Map<String, dynamic> sourceMetadata) {
+  void _rejectProtectedPriceData(
+    Map<String, dynamic> sourceMetadata, {
+    String? brandId,
+    String? creationGroupId,
+  }) {
     const allowedSourceFields = <String>{
       'source_profile',
       'source_file_sha256',
@@ -783,12 +892,79 @@ class ProductCatalogService {
       'raw_unit_2',
       'raw_unit_3',
       'import_id',
+      ProductSourceMetadataFields.originalGroupMissing,
+      ProductSourceMetadataFields.fallbackSystemGroupAssigned,
+      ProductSourceMetadataFields.fallbackSystemGroupKey,
+      ProductSourceMetadataFields.fallbackSystemGroupId,
     };
     final unsupportedFields = sourceMetadata.keys.toSet().difference(
       allowedSourceFields,
     );
     if (unsupportedFields.isNotEmpty) {
       throw ArgumentError('Unsupported product source metadata field.');
+    }
+    for (final field in const [
+      ProductSourceMetadataFields.originalGroupMissing,
+      ProductSourceMetadataFields.fallbackSystemGroupAssigned,
+    ]) {
+      if (sourceMetadata.containsKey(field) && sourceMetadata[field] is! bool) {
+        throw ArgumentError('$field must be a boolean.');
+      }
+    }
+    for (final field in const [
+      ProductSourceMetadataFields.fallbackSystemGroupKey,
+      ProductSourceMetadataFields.fallbackSystemGroupId,
+    ]) {
+      if (sourceMetadata.containsKey(field) &&
+          (sourceMetadata[field] is! String ||
+              (sourceMetadata[field] as String).trim().isEmpty)) {
+        throw ArgumentError('$field must be a non-empty string.');
+      }
+    }
+    final originalGroupMissing =
+        sourceMetadata[ProductSourceMetadataFields.originalGroupMissing] ==
+        true;
+    final fallbackAssigned =
+        sourceMetadata[ProductSourceMetadataFields
+            .fallbackSystemGroupAssigned] ==
+        true;
+    if (originalGroupMissing != fallbackAssigned) {
+      throw ArgumentError(
+        'Missing-group provenance and fallback assignment must agree.',
+      );
+    }
+    if (fallbackAssigned) {
+      if (sourceMetadata[ProductSourceMetadataFields.originalGroupMissing] !=
+              true ||
+          sourceMetadata[ProductSourceMetadataFields.fallbackSystemGroupKey] !=
+              UncategorizedProductGroupContract.systemKey) {
+        throw ArgumentError(
+          'Uncategorized fallback metadata is internally inconsistent.',
+        );
+      }
+      if (brandId != null &&
+          sourceMetadata[ProductSourceMetadataFields.fallbackSystemGroupId] !=
+              UncategorizedProductGroupContract.documentIdForBrand(brandId)) {
+        throw ArgumentError(
+          'Uncategorized fallback group does not match the product brand.',
+        );
+      }
+      if (creationGroupId != null &&
+          sourceMetadata[ProductSourceMetadataFields.fallbackSystemGroupId] !=
+              creationGroupId) {
+        throw ArgumentError(
+          'A new missing-group product must use its Uncategorized group.',
+        );
+      }
+    } else if (sourceMetadata.containsKey(
+          ProductSourceMetadataFields.fallbackSystemGroupKey,
+        ) ||
+        sourceMetadata.containsKey(
+          ProductSourceMetadataFields.fallbackSystemGroupId,
+        )) {
+      throw ArgumentError(
+        'Fallback group identity requires fallback assignment to be true.',
+      );
     }
 
     bool containsPrice(dynamic value) {
@@ -813,6 +989,11 @@ class ProductCatalogService {
         'Protected price data cannot be stored in product documents.',
       );
     }
+  }
+
+  bool _sameFlatMap(Map<String, dynamic> left, Map<String, dynamic> right) {
+    return left.length == right.length &&
+        left.entries.every((entry) => right[entry.key] == entry.value);
   }
 
   void _requireAccountant(CatalogActor actor) {

@@ -39,7 +39,7 @@ service cloud.firestore {
     }
 
     function protectedPriceWriter() {
-      return protectedPriceUser();
+      return operationalUser() && role() == 'collector';
     }
 
     function branchBrandId() {
@@ -85,7 +85,6 @@ service cloud.firestore {
           'raw_value',
           'normalized_value'
         ]) &&
-        unit.keys().hasAll(['unit_id', 'display_value', 'raw_value']) &&
         unit.unit_id is string && unit.unit_id.size() > 0 &&
         unit.display_value is string && unit.display_value.size() > 0 &&
         unit.raw_value is string && unit.raw_value.size() > 0 &&
@@ -94,10 +93,11 @@ service cloud.firestore {
     }
 
     function validCatalogUnits(units) {
-      return units is list && units.size() > 0 && units.size() <= 3 &&
+      let unitCount = units.size();
+      return units is list && unitCount > 0 && unitCount <= 3 &&
         validCatalogUnit(units[0]) &&
-        (units.size() < 2 || validCatalogUnit(units[1])) &&
-        (units.size() < 3 || validCatalogUnit(units[2]));
+        (unitCount < 2 || validCatalogUnit(units[1])) &&
+        (unitCount < 3 || validCatalogUnit(units[2]));
     }
 
     function validSourceMetadata(metadata) {
@@ -113,28 +113,64 @@ service cloud.firestore {
         'raw_primary_unit',
         'raw_unit_2',
         'raw_unit_3',
-        'import_id'
+        'import_id',
+        'original_group_missing',
+        'fallback_system_group_assigned',
+        'fallback_system_group_key',
+        'fallback_system_group_id'
       ]) &&
-        (!metadata.keys().hasAny(['source_profile']) ||
-          metadata.source_profile is string) &&
-        (!metadata.keys().hasAny(['source_file_sha256']) ||
-          metadata.source_file_sha256 is string) &&
-        (!metadata.keys().hasAny(['source_sheet']) ||
-          metadata.source_sheet is string) &&
-        (!metadata.keys().hasAny(['source_row']) ||
-          metadata.source_row is int) &&
-        (!metadata.keys().hasAny(['raw_material_value']) ||
-          metadata.raw_material_value is string) &&
-        (!metadata.keys().hasAny(['raw_group_value']) ||
-          metadata.raw_group_value is string) &&
-        (!metadata.keys().hasAny(['raw_primary_unit']) ||
-          metadata.raw_primary_unit is string) &&
-        (!metadata.keys().hasAny(['raw_unit_2']) ||
-          metadata.raw_unit_2 is string) &&
-        (!metadata.keys().hasAny(['raw_unit_3']) ||
-          metadata.raw_unit_3 is string) &&
-        (!metadata.keys().hasAny(['import_id']) ||
-          metadata.import_id is string);
+        metadata.get('source_profile', '') is string &&
+        metadata.get('source_file_sha256', '') is string &&
+        metadata.get('source_sheet', '') is string &&
+        metadata.get('source_row', 0) is int &&
+        metadata.get('raw_material_value', '') is string &&
+        metadata.get('raw_group_value', '') is string &&
+        metadata.get('raw_primary_unit', '') is string &&
+        metadata.get('raw_unit_2', '') is string &&
+        metadata.get('raw_unit_3', '') is string &&
+        metadata.get('import_id', '') is string &&
+        metadata.get('original_group_missing', false) is bool &&
+        metadata.get('fallback_system_group_assigned', false) is bool &&
+        metadata.get('fallback_system_group_key', '') is string &&
+        metadata.get('fallback_system_group_id', '') is string;
+    }
+
+    function uncategorizedGroupId(brandId) {
+      return 'system-group-' + brandId + '-uncategorized';
+    }
+
+    function validFallbackSystemGroupMetadata(data) {
+      let metadata = data.source_metadata;
+      let fallbackAssigned = metadata.get(
+        'fallback_system_group_assigned',
+        false
+      );
+      let originalGroupMissing = metadata.get(
+        'original_group_missing',
+        false
+      );
+      return fallbackAssigned != originalGroupMissing
+        ? false
+        : fallbackAssigned == true
+        ? (metadata.get('original_group_missing', false) == true &&
+            metadata.fallback_system_group_key == 'uncategorized' &&
+            metadata.fallback_system_group_id ==
+              uncategorizedGroupId(data.brand_id))
+        : !metadata.keys().hasAny([
+            'fallback_system_group_key',
+            'fallback_system_group_id'
+          ]);
+    }
+
+    function validFallbackSystemGroupCreateAssignment(data) {
+      return !data.keys().hasAny(['source_metadata']) ||
+        data.source_metadata.get('fallback_system_group_assigned', false) != true ||
+        data.group_id == data.source_metadata.fallback_system_group_id;
+    }
+
+    function validProductSourceProvenanceTransition() {
+      return request.resource.data.get('source_metadata', {}) ==
+        resource.data.get('source_metadata', {});
     }
 
     function validProductGroup(groupId, data) {
@@ -144,6 +180,8 @@ service cloud.firestore {
           'name',
           'normalized_name',
           'legacy_code',
+          'is_system_group',
+          'system_key',
           'active',
           'created_by',
           'created_by_name',
@@ -156,24 +194,12 @@ service cloud.firestore {
           'archived_by_name',
           'archived_at'
         ]) &&
-        data.keys().hasAll([
-          'id',
-          'brand_id',
-          'name',
-          'normalized_name',
-          'active',
-          'created_by',
-          'created_by_name',
-          'created_at',
-          'updated_by',
-          'updated_by_name',
-          'updated_at',
-          'last_audit_event_id'
-        ]) &&
         data.id == groupId &&
         brandExists(data.brand_id) &&
         data.name is string && data.name.size() > 0 &&
         data.normalized_name is string && data.normalized_name.size() > 0 &&
+        data.is_system_group is bool &&
+        validProductGroupIdentity(groupId, data) &&
         data.created_by is string && data.created_by.size() > 0 &&
         data.created_by_name is string &&
         data.created_at is timestamp &&
@@ -186,9 +212,39 @@ service cloud.firestore {
         validArchiveMetadata(data);
     }
 
+    function emptySystemKey(data) {
+      return !data.keys().hasAny(['system_key']) ||
+        data.system_key == null || data.system_key == '';
+    }
+
+    function validProductGroupIdentity(groupId, data) {
+      return data.is_system_group == true
+        ? (groupId == uncategorizedGroupId(data.brand_id) &&
+            data.system_key == 'uncategorized' &&
+            data.name == 'غير مصنف' &&
+            data.normalized_name == 'غير مصنف' &&
+            data.active == true &&
+            !data.keys().hasAny(['legacy_code']))
+        : (emptySystemKey(data) &&
+            groupId != uncategorizedGroupId(data.brand_id) &&
+            data.name != 'غير مصنف' &&
+            data.normalized_name != 'غير مصنف' &&
+            data.name != 'uncategorized' &&
+            data.name != 'Uncategorized' &&
+            data.name != 'UNCATEGORIZED' &&
+            data.normalized_name != 'uncategorized' &&
+            data.normalized_name != 'Uncategorized' &&
+            data.normalized_name != 'UNCATEGORIZED' &&
+            (!data.keys().hasAny(['legacy_code']) ||
+              (data.legacy_code != 'uncategorized' &&
+                data.legacy_code != 'Uncategorized' &&
+                data.legacy_code != 'UNCATEGORIZED')));
+    }
+
     function validProductSource(data) {
       return !data.keys().hasAny(['source_metadata']) ||
-        validSourceMetadata(data.source_metadata);
+        (validSourceMetadata(data.source_metadata) &&
+          validFallbackSystemGroupMetadata(data));
     }
 
     function validLegacyKeyPair(data) {
@@ -258,25 +314,6 @@ service cloud.firestore {
           'archived_by_name',
           'archived_at'
         ]) &&
-        data.keys().hasAll([
-          'id',
-          'brand_id',
-          'group_id',
-          'name',
-          'normalized_name',
-          'units',
-          'primary_unit_id',
-          'active',
-          'version',
-          'name_unique_key_id',
-          'created_by',
-          'created_by_name',
-          'created_at',
-          'updated_by',
-          'updated_by_name',
-          'updated_at',
-          'last_audit_event_id'
-        ]) &&
         data.id == productId &&
         brandExists(data.brand_id) &&
         data.group_id is string && data.group_id.size() > 0 &&
@@ -286,14 +323,8 @@ service cloud.firestore {
         data.primary_unit_id is string && data.primary_unit_id.size() > 0 &&
         data.version is int && data.version > 0 &&
         data.name_unique_key_id is string && data.name_unique_key_id.size() > 0 &&
-        data.created_by is string && data.created_by.size() > 0 &&
         data.created_by_name is string &&
-        data.created_at is timestamp &&
-        data.updated_by is string && data.updated_by.size() > 0 &&
         data.updated_by_name is string &&
-        data.updated_at is timestamp &&
-        data.last_audit_event_id is string &&
-        data.last_audit_event_id.size() > 0 &&
         validLegacyKeyPair(data) &&
         validProductSource(data) &&
         validArchiveMetadata(data) &&
@@ -314,28 +345,12 @@ service cloud.firestore {
           'updated_by',
           'updated_at'
         ]) &&
-        data.keys().hasAll([
-          'id',
-          'brand_id',
-          'key_type',
-          'normalized_value',
-          'product_id',
-          'active',
-          'created_by',
-          'created_at',
-          'updated_by',
-          'updated_at'
-        ]) &&
         data.id == keyId &&
         brandExists(data.brand_id) &&
         (data.key_type == 'name' || data.key_type == 'legacy_code') &&
         data.normalized_value is string && data.normalized_value.size() > 0 &&
         data.product_id is string && data.product_id.size() > 0 &&
-        data.active is bool &&
-        data.created_by is string && data.created_by.size() > 0 &&
-        data.created_at is timestamp &&
-        data.updated_by is string && data.updated_by.size() > 0 &&
-        data.updated_at is timestamp;
+        data.active is bool;
     }
 
     function uniqueKeyReferencesProduct(keyId, data) {
@@ -364,17 +379,6 @@ service cloud.firestore {
           'actor_role',
           'created_at'
         ]) &&
-        data.keys().hasAll([
-          'id',
-          'entity_type',
-          'entity_id',
-          'brand_id',
-          'action',
-          'actor_uid',
-          'actor_name',
-          'actor_role',
-          'created_at'
-        ]) &&
         data.id == eventId &&
         (data.entity_type == 'product' ||
           data.entity_type == 'product_group' ||
@@ -388,7 +392,7 @@ service cloud.firestore {
           ? (data.keys().hasAny(['reason']) &&
               data.reason is string && data.reason.size() > 0)
           : (!data.keys().hasAny(['reason']) || data.reason is string)) &&
-        (data.action == 'created'
+        ((data.action == 'created' || data.action == 'system_group_created')
           ? (data.keys().hasAny(['after']) &&
               data.after is map && data.after.keys().size() > 0)
           : (data.keys().hasAll(['before', 'after']) &&
@@ -423,7 +427,33 @@ service cloud.firestore {
     function productMutationAction() {
       return request.resource.data.active != resource.data.active
         ? (request.resource.data.active == true ? 'reactivated' : 'archived')
-        : 'updated';
+        : (request.resource.data.group_id != resource.data.group_id
+            ? 'recategorized'
+            : 'updated');
+    }
+
+    function validRecategorizationAuditSnapshot() {
+      let auditId = request.resource.data.last_audit_event_id;
+      let audit = getAfter(
+        /databases/$(database)/documents/product_audit_events/$(auditId)
+      ).data;
+      return request.resource.data.group_id == resource.data.group_id ||
+        (audit.before.get('group_id', '') == resource.data.group_id &&
+          audit.after.get('group_id', '') == request.resource.data.group_id &&
+          audit.before.get('version', 0) == resource.data.version &&
+          audit.after.get('version', 0) == request.resource.data.version &&
+          !audit.before.keys().hasAny(['source_metadata']) &&
+          !audit.after.keys().hasAny(['source_metadata']));
+    }
+
+    function groupCreateAuditAction(data) {
+      return data.is_system_group == true ? 'system_group_created' : 'created';
+    }
+
+    function validProductGroupIdentityTransition() {
+      return resource.data.keys().hasAny(['is_system_group'])
+        ? request.resource.data.is_system_group == resource.data.is_system_group
+        : request.resource.data.is_system_group == false;
     }
 
     function validProductArchiveTransition() {
@@ -750,14 +780,17 @@ service cloud.firestore {
           'product_group',
           groupId,
           request.resource.data.brand_id,
-          'created'
+          groupCreateAuditAction(request.resource.data)
         );
       allow update: if accountantUser() &&
         validProductGroup(groupId, request.resource.data) &&
+        validProductGroupIdentityTransition() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name',
           'normalized_name',
           'legacy_code',
+          'is_system_group',
+          'system_key',
           'updated_by',
           'updated_by_name',
           'updated_at',
@@ -780,6 +813,7 @@ service cloud.firestore {
     match /products/{productId} {
       allow get, list: if mayReadCatalogDocument(resource.data);
       allow create: if accountantUser() &&
+        validFallbackSystemGroupCreateAssignment(request.resource.data) &&
         validProduct(productId, request.resource.data) &&
         request.resource.data.active == true &&
         request.resource.data.version == 1 &&
@@ -795,7 +829,9 @@ service cloud.firestore {
           'created'
         );
       allow update: if accountantUser() &&
+        validProductSourceProvenanceTransition() &&
         validProduct(productId, request.resource.data) &&
+        validRecategorizationAuditSnapshot() &&
         validProductArchiveTransition() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'group_id',

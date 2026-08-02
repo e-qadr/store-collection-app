@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
+import 'package:store_collection_app/services/product_price_service.dart';
 
 void main() {
   test(
@@ -28,4 +30,41 @@ void main() {
       expect(latest.version, 2);
     },
   );
+
+  test('only collector can directly confirm protected price memory', () {
+    const collector = CatalogActor(
+      uid: 'collector-1',
+      name: 'المدير العام',
+      role: 'collector',
+    );
+    const accountant = CatalogActor(
+      uid: 'accountant-1',
+      name: 'محاسب',
+      role: 'accountant',
+    );
+    const admin = CatalogActor(uid: 'admin-1', name: 'مسؤول', role: 'admin');
+    const inactiveCollector = CatalogActor(
+      uid: 'collector-2',
+      name: 'مدير غير نشط',
+      role: 'collector',
+      active: false,
+    );
+
+    expect(
+      () => ProductPriceService.validateConfirmedPriceWriter(collector),
+      returnsNormally,
+    );
+    expect(
+      () => ProductPriceService.validateConfirmedPriceWriter(accountant),
+      throwsStateError,
+    );
+    expect(
+      () => ProductPriceService.validateConfirmedPriceWriter(admin),
+      throwsStateError,
+    );
+    expect(
+      () => ProductPriceService.validateConfirmedPriceWriter(inactiveCollector),
+      throwsStateError,
+    );
+  });
 }

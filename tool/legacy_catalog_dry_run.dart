@@ -16,7 +16,6 @@ Future<void> main(List<String> arguments) async {
     final brandId = _required(options, 'brand-id');
     final brandName = _required(options, 'brand-name');
     final details = options['details'] == 'true';
-
     final report = await const LegacyCatalogImporter().createDryRun(
       sourceFile: File(sourcePath),
       profileId: LegacyCatalogSourceProfileId.parse(profileValue),
@@ -91,6 +90,10 @@ Usage:
 The command never writes to Firebase or to the source workbook. It validates
 the exact profile/brand contract locally. The resulting report intentionally
 marks production brand-document validation as pending. Use --details to emit
-all row-level suggestions and findings as JSON on stdout.
+all row-level suggestions and findings as JSON on stdout. Missing source groups
+are previewed against the deterministic brand-scoped "غير مصنف" system group;
+the plan reports an idempotent ensure operation because production existence is
+not checked in this phase. Legacy prefix suggestions remain advisory and are
+never applied automatically.
 ''');
 }

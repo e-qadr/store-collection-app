@@ -27,6 +27,41 @@ void main() {
     );
   });
 
+  test('Uncategorized system group ID is deterministic and brand scoped', () {
+    expect(
+      legacyCatalogUncategorizedGroupId('TlOswncJiWX7mwsf3U4e'),
+      'system-group-TlOswncJiWX7mwsf3U4e-uncategorized',
+    );
+    expect(
+      legacyCatalogUncategorizedGroupId('WLMnMVT6u1H2VQ0qziJ3'),
+      'system-group-WLMnMVT6u1H2VQ0qziJ3-uncategorized',
+    );
+    expect(legacyCatalogUncategorizedGroupKey, 'uncategorized');
+    expect(legacyCatalogUncategorizedGroupName, 'غير مصنف');
+  });
+
+  test('Normal product group ID is deterministic and brand scoped', () {
+    final alAsalahGroupId = productGroupDocumentId(
+      brandId: 'TlOswncJiWX7mwsf3U4e',
+      groupName: 'Perfume Group',
+    );
+    final eqlidGroupId = productGroupDocumentId(
+      brandId: 'WLMnMVT6u1H2VQ0qziJ3',
+      groupName: 'Perfume Group',
+    );
+
+    expect(
+      productGroupDocumentId(
+        brandId: 'TlOswncJiWX7mwsf3U4e',
+        groupName: '  PERFUME   GROUP ',
+      ),
+      alAsalahGroupId,
+    );
+    expect(alAsalahGroupId, startsWith('group-'));
+    expect(eqlidGroupId, startsWith('group-'));
+    expect(alAsalahGroupId, isNot(eqlidGroupId));
+  });
+
   test(
     'Al-Asalah profile preserves raw values and ignores price columns',
     () async {
@@ -68,18 +103,53 @@ void main() {
       expect(record.rawUnit2, 'علبه');
       expect(record.rawUnit3, 'اوقيه');
       expect(record.unitSuggestions, hasLength(3));
-      expect(record.toProductSourceMetadata(importId: 'preview-1'), {
-        'source_profile': 'al_asalah_legacy_catalog',
-        'source_file_sha256': report.sourceHash,
-        'source_sheet': 'Page1',
-        'source_row': record.rowNumber,
-        'raw_material_value': '1001-عطر الاختبار',
-        'raw_group_value': '1-العطور',
-        'raw_primary_unit': 'حبه',
-        'raw_unit_2': 'علبه',
-        'raw_unit_3': 'اوقيه',
-        'import_id': 'preview-1',
-      });
+      expect(
+        report.realGroupReady.single.toProductSourceMetadata(
+          importId: 'preview-1',
+        ),
+        {
+          'source_profile': 'al_asalah_legacy_catalog',
+          'source_file_sha256': report.sourceHash,
+          'source_sheet': 'Page1',
+          'source_row': record.rowNumber,
+          'raw_material_value': '1001-عطر الاختبار',
+          'raw_group_value': '1-العطور',
+          'raw_primary_unit': 'حبه',
+          'raw_unit_2': 'علبه',
+          'raw_unit_3': 'اوقيه',
+          'original_group_missing': false,
+          'fallback_system_group_assigned': false,
+          'import_id': 'preview-1',
+        },
+      );
+      expect(record.canUseFallbackSystemGroup, isFalse);
+      expect(report.realGroupReady, hasLength(1));
+      final expectedGroupId = productGroupDocumentId(
+        brandId: record.brandId,
+        groupName: record.groupName!,
+      );
+      expect(report.realGroupReady.single.assignedGroupId, expectedGroupId);
+      expect(
+        report.realGroupReady.single.toJson()['assigned_group_id'],
+        expectedGroupId,
+      );
+      expect(report.normalGroupPlans, hasLength(1));
+      final normalGroupPlan = report.normalGroupPlans.single;
+      expect(normalGroupPlan.groupId, expectedGroupId);
+      expect(normalGroupPlan.brandId, record.brandId);
+      expect(normalGroupPlan.name, record.groupName);
+      expect(normalGroupPlan.sourceLegacyCodes, [record.groupLegacyCode]);
+      expect(normalGroupPlan.rawGroupValues, [record.rawGroupValue]);
+      expect(normalGroupPlan.sourceRows, [record.rowNumber]);
+      expect(
+        normalGroupPlan.toJson(),
+        containsPair('action', 'ensure_or_validate'),
+      );
+      expect(report.normalGroupsToEnsureOrValidateCount, 1);
+      expect(report.uncategorizedReady, isEmpty);
+      expect(report.blockedOtherRecords, isEmpty);
+      expect(report.systemGroupPlans, isEmpty);
+      expect(report.systemGroupsToEnsureCount, 0);
       expect(report.creates, hasLength(1));
       expect(report.toDetailedJson().toString(), isNot(contains('999.99')));
       expect(jsonEncode(report.toDetailedJson()), isNot(contains('"price"')));
@@ -141,9 +211,37 @@ void main() {
       );
       expect(missing.unitSuggestions.single.suggestedValue, 'حبة');
       expect(missing.unitSuggestions.single.toJson()['approved'], isFalse);
-      expect(report.creates, hasLength(1));
-      expect(report.reviewRequired, hasLength(1));
-      expect(report.reviewRequired.single.action, 'pending_group_approval');
+      expect(missing.canUseFallbackSystemGroup, isTrue);
+      final fallbackEntry = report.uncategorizedReady.single;
+      expect(fallbackEntry.assignsUncategorizedGroup, isTrue);
+      expect(
+        fallbackEntry.assignedSystemGroupId,
+        'system-group-WLMnMVT6u1H2VQ0qziJ3-uncategorized',
+      );
+      final sourceMetadata = fallbackEntry.toProductSourceMetadata();
+      expect(sourceMetadata['raw_group_value'], isEmpty);
+      expect(sourceMetadata, containsPair('original_group_missing', true));
+      expect(
+        sourceMetadata,
+        containsPair('fallback_system_group_assigned', true),
+      );
+      expect(report.creates, hasLength(2));
+      expect(report.realGroupReady, hasLength(1));
+      expect(report.realGroupReady.single.assignedGroupId, isNotEmpty);
+      expect(report.normalGroupPlans, hasLength(1));
+      expect(
+        report.normalGroupPlans.single.groupId,
+        report.realGroupReady.single.assignedGroupId,
+      );
+      expect(report.uncategorizedReady, hasLength(1));
+      expect(report.blockedOtherRecords, isEmpty);
+      expect(report.systemGroupPlans, hasLength(1));
+      expect(report.systemGroupsToEnsureCount, 1);
+      expect(report.systemGroupPlans.single.toJson()['action'], 'ensure');
+      expect(
+        report.systemGroupPlans.single.groupId,
+        'system-group-WLMnMVT6u1H2VQ0qziJ3-uncategorized',
+      );
     },
   );
 
@@ -177,7 +275,22 @@ void main() {
       expect(report.records, hasLength(2));
       expect(report.invalidRecords, hasLength(2));
       expect(report.creates, isEmpty);
-      expect(report.reviewRequired, hasLength(2));
+      expect(report.uncategorizedReady, isEmpty);
+      expect(report.blockedOtherRecords, hasLength(2));
+      expect(report.systemGroupPlans, isEmpty);
+      expect(
+        report.records.every((record) => !record.canUseFallbackSystemGroup),
+        isTrue,
+      );
+      expect(
+        (report.toDetailedJson()['blocked_other'] as List<dynamic>).every(
+          (entry) =>
+              !((entry as Map<String, dynamic>)['group_resolution']
+                      as Map<String, dynamic>)
+                  .containsKey('fallback_system_group_id'),
+        ),
+        isTrue,
+      );
       expect(report.missingPrimaryUnitCount, 1);
       expect(
         report.invalidRecords
@@ -346,7 +459,62 @@ void main() {
       'normalized_name',
     });
     expect(report.creates, isEmpty);
+    expect(report.blockedOtherRecords, hasLength(3));
+    expect(report.duplicateRecordCount, 3);
+    expect(
+      report.toSummaryJson()['blocking_rows'],
+      unorderedEquals(
+        report.blockedOtherRecords.map((record) => record.rowNumber),
+      ),
+    );
   });
+
+  test(
+    'blocked missing-group duplicates never claim a fallback assignment',
+    () async {
+      final source = await _writeWorkbook(
+        temporaryDirectory,
+        name: 'missing_group_duplicates.xls',
+        materialColumn: 8,
+        groupColumn: 12,
+        productRows: const [
+          _FixtureProductRow(
+            material: '09-100-المنتج الأول',
+            group: '',
+            primaryUnit: 'حبه',
+          ),
+          _FixtureProductRow(
+            material: '09-100-المنتج الثاني',
+            group: '',
+            primaryUnit: 'حبه',
+          ),
+        ],
+      );
+      final report = await const LegacyCatalogImporter().createDryRun(
+        sourceFile: source,
+        profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
+        brandSelection: const LegacyCatalogBrandSelection.contractOnly(
+          documentId: 'WLMnMVT6u1H2VQ0qziJ3',
+          name: 'اقليد',
+        ),
+      );
+
+      expect(report.creates, isEmpty);
+      expect(report.blockedOtherRecords, hasLength(2));
+      expect(report.systemGroupPlans, isEmpty);
+      final blocked = report.toDetailedJson()['blocked_other'] as List<dynamic>;
+      expect(
+        blocked.every((entry) {
+          final record = entry as Map<String, dynamic>;
+          final resolution = record['group_resolution'] as Map<String, dynamic>;
+          return resolution['original_group_missing'] == true &&
+              resolution['fallback_system_group_assigned'] == false &&
+              !resolution.containsKey('fallback_system_group_id');
+        }),
+        isTrue,
+      );
+    },
+  );
 
   test(
     'a repeated plan is idempotent and respects manual corrections',
@@ -359,7 +527,7 @@ void main() {
         productRows: const [
           _FixtureProductRow(
             material: '1001-منتج ثابت',
-            group: '1-مجموعة',
+            group: '',
             primaryUnit: 'حبه',
           ),
         ],
@@ -375,6 +543,11 @@ void main() {
         brandSelection: brand,
       );
       final record = first.records.single;
+      final fallbackGroupId = legacyCatalogUncategorizedGroupId(record.brandId);
+      expect(first.creates, hasLength(1));
+      expect(first.uncategorizedReady, hasLength(1));
+      expect(first.systemGroupsToEnsureCount, 1);
+      expect(first.systemGroupPlans.single.groupId, fallbackGroupId);
 
       final repeated = await importer.createDryRun(
         sourceFile: source,
@@ -393,6 +566,11 @@ void main() {
       expect(repeated.creates, isEmpty);
       expect(repeated.updates, isEmpty);
       expect(repeated.unchanged, hasLength(1));
+      expect(repeated.uncategorizedReady, hasLength(1));
+      expect(repeated.systemGroupsToEnsureCount, 1);
+      expect(repeated.systemGroupPlans.single.groupId, fallbackGroupId);
+      expect(repeated.systemGroupPlans.single.toJson()['action'], 'ensure');
+      expect(repeated.duplicates, isEmpty);
 
       final protected = await importer.createDryRun(
         sourceFile: source,
@@ -410,6 +588,8 @@ void main() {
         ],
       );
       expect(protected.updates, isEmpty);
+      expect(protected.blockedOtherRecords, hasLength(1));
+      expect(protected.systemGroupPlans, isEmpty);
       expect(
         protected.invalidRecords.single.issues.single.code,
         'manual_correction_conflict',
@@ -454,7 +634,21 @@ void main() {
       expect(report.duplicates, isEmpty);
       expect(report.skippedRows, hasLength(14));
       expect(report.creates, hasLength(91));
-      expect(report.reviewRequired, isEmpty);
+      expect(report.realGroupReady, hasLength(91));
+      expect(report.normalGroupPlans, hasLength(10));
+      final plannedGroupIds = report.normalGroupPlans
+          .map((plan) => plan.groupId)
+          .toSet();
+      expect(
+        report.realGroupReady.every(
+          (entry) => plannedGroupIds.contains(entry.assignedGroupId),
+        ),
+        isTrue,
+      );
+      expect(report.uncategorizedReady, isEmpty);
+      expect(report.blockedOtherRecords, isEmpty);
+      expect(report.systemGroupPlans, isEmpty);
+      expect(report.systemGroupsToEnsureCount, 0);
     },
     skip: alAsalahSource.existsSync()
         ? false
@@ -496,8 +690,25 @@ void main() {
         2180,
       });
       expect(report.skippedRows, hasLength(124));
-      expect(report.creates, hasLength(845));
-      expect(report.reviewRequired, hasLength(1293));
+      expect(report.creates, hasLength(2131));
+      expect(report.realGroupReady, hasLength(845));
+      expect(report.normalGroupPlans, hasLength(22));
+      final plannedGroupIds = report.normalGroupPlans
+          .map((plan) => plan.groupId)
+          .toSet();
+      expect(
+        report.realGroupReady.every(
+          (entry) => plannedGroupIds.contains(entry.assignedGroupId),
+        ),
+        isTrue,
+      );
+      expect(report.uncategorizedReady, hasLength(1286));
+      expect(report.blockedOtherRecords, hasLength(7));
+      expect(report.systemGroupsToEnsureCount, 1);
+      expect(
+        report.systemGroupPlans.single.groupId,
+        'system-group-WLMnMVT6u1H2VQ0qziJ3-uncategorized',
+      );
       expect(report.groupSuggestionCount, 1287);
     },
     skip: eqlidSource.existsSync()

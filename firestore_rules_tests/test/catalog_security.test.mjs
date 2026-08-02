@@ -25,6 +25,8 @@ import {
 const projectId = 'demo-store-collection-catalog';
 const brandA = 'TlOswncJiWX7mwsf3U4e';
 const brandB = 'WLMnMVT6u1H2VQ0qziJ3';
+const uncategorizedKey = 'uncategorized';
+const uncategorizedName = 'غير مصنف';
 const fixedTimestamp = Timestamp.fromMillis(1_700_000_000_000);
 
 let testEnvironment;
@@ -77,6 +79,11 @@ beforeEach(async () => {
       ...user('manager', 'branch-a'),
       isActive: false,
     });
+    writes.set(doc(database, 'users', 'inactive-collector-user'), {
+      ...user('collector'),
+      isActive: false,
+    });
+    writes.set(doc(database, 'users', 'unknown-role-user'), user('mystery'));
 
     writes.set(doc(database, 'product_groups', 'group-a'), seededGroup({
       id: 'group-a',
@@ -133,6 +140,67 @@ function seededGroup({ id, brandId, name }) {
     updated_by_name: 'Seed',
     updated_at: fixedTimestamp,
   };
+}
+
+function systemGroupId(brandId) {
+  return `system-group-${brandId}-uncategorized`;
+}
+
+function systemGroupPayload({
+  brandId,
+  groupId = systemGroupId(brandId),
+  auditId = `${groupId}-audit`,
+  actorUid = 'accountant-user',
+  actorName = 'Accountant',
+}) {
+  return {
+    id: groupId,
+    brand_id: brandId,
+    name: uncategorizedName,
+    normalized_name: uncategorizedName,
+    is_system_group: true,
+    system_key: uncategorizedKey,
+    active: true,
+    last_audit_event_id: auditId,
+    created_by: actorUid,
+    created_by_name: actorName,
+    created_at: serverTimestamp(),
+    updated_by: actorUid,
+    updated_by_name: actorName,
+    updated_at: serverTimestamp(),
+  };
+}
+
+async function createSystemGroupWithAudit(database, {
+  brandId = brandA,
+  groupId = systemGroupId(brandId),
+  auditId = `${groupId}-audit`,
+  actorUid = 'accountant-user',
+  actorName = 'Accountant',
+  actorRole = 'accountant',
+} = {}) {
+  const batch = writeBatch(database);
+  batch.set(
+    doc(database, 'product_groups', groupId),
+    systemGroupPayload({ brandId, groupId, auditId, actorUid, actorName }),
+  );
+  batch.set(doc(database, 'product_audit_events', auditId), {
+    id: auditId,
+    entity_type: 'product_group',
+    entity_id: groupId,
+    brand_id: brandId,
+    action: 'system_group_created',
+    after: {
+      id: groupId,
+      name: uncategorizedName,
+      system_key: uncategorizedKey,
+    },
+    actor_uid: actorUid,
+    actor_name: actorName,
+    actor_role: actorRole,
+    created_at: serverTimestamp(),
+  });
+  return batch.commit();
 }
 
 function seededProduct({ id, brandId, groupId, uniqueKeyId, name }) {
@@ -202,12 +270,13 @@ function newProduct({
 function newUniqueKey({
   id = 'new-name-key',
   productId = 'new-product',
+  keyType = 'name',
   normalizedValue = 'منتج جديد',
 } = {}) {
   return {
     id,
     brand_id: brandA,
-    key_type: 'name',
+    key_type: keyType,
     normalized_value: normalizedValue,
     product_id: productId,
     active: true,
@@ -221,12 +290,33 @@ function newUniqueKey({
 async function createProductAndKey(database, options = {}) {
   const id = options.id ?? 'new-product';
   const uniqueKeyId = options.uniqueKeyId ?? 'new-name-key';
+  const legacyKeyId = options.legacyKeyId;
   const auditId = options.auditId ?? `${id}-audit`;
+  const productExtra = {
+    ...(options.extra ?? {}),
+    ...(legacyKeyId
+      ? {
+          legacy_code: options.legacyCode,
+          legacy_code_unique_key_id: legacyKeyId,
+        }
+      : {}),
+  };
   const batch = writeBatch(database);
   batch.set(
     doc(database, 'products', id),
-    newProduct({ ...options, id, uniqueKeyId, auditId }),
+    newProduct({ ...options, id, uniqueKeyId, auditId, extra: productExtra }),
   );
+  if (legacyKeyId) {
+    batch.set(
+      doc(database, 'product_unique_keys', legacyKeyId),
+      newUniqueKey({
+        id: legacyKeyId,
+        productId: id,
+        keyType: 'legacy_code',
+        normalizedValue: options.legacyCode,
+      }),
+    );
+  }
   batch.set(
     doc(database, 'product_unique_keys', uniqueKeyId),
     newUniqueKey({
@@ -257,6 +347,9 @@ function latestPrice({
   price = 125,
   unitId = 'primary',
   unitValue = 'حبه',
+  actorUid = 'collector-user',
+  actorName = 'General manager',
+  actorRole = 'collector',
 } = {}) {
   return {
     id,
@@ -269,9 +362,9 @@ function latestPrice({
     currency: 'YER',
     price,
     source_invoice_id: 'invoice-local-test',
-    changed_by: 'collector-user',
-    changed_by_name: 'General manager',
-    changed_by_role: 'collector',
+    changed_by: actorUid,
+    changed_by_name: actorName,
+    changed_by_role: actorRole,
     changed_at: serverTimestamp(),
     version,
   };
@@ -286,6 +379,9 @@ function historyPrice({
   previousSourceInvoiceId,
   unitId = 'primary',
   unitValue = 'حبه',
+  actorUid = 'collector-user',
+  actorName = 'General manager',
+  actorRole = 'collector',
 } = {}) {
   return {
     id,
@@ -304,18 +400,42 @@ function historyPrice({
             previousSourceInvoiceId ?? 'invoice-local-test',
         }),
     source_invoice_id: 'invoice-local-test',
-    changed_by: 'collector-user',
-    changed_by_name: 'General manager',
-    changed_by_role: 'collector',
+    changed_by: actorUid,
+    changed_by_name: actorName,
+    changed_by_role: actorRole,
     changed_at: serverTimestamp(),
     version,
   };
 }
 
-async function createPricePair(database) {
+async function createPricePair(database, {
+  latestId = 'latest-a',
+  historyId = 'history-a',
+  actorUid = 'collector-user',
+  actorName = 'General manager',
+  actorRole = 'collector',
+} = {}) {
   const batch = writeBatch(database);
-  batch.set(doc(database, 'product_price_latest', 'latest-a'), latestPrice());
-  batch.set(doc(database, 'product_price_history', 'history-a'), historyPrice());
+  batch.set(
+    doc(database, 'product_price_latest', latestId),
+    latestPrice({
+      id: latestId,
+      historyId,
+      actorUid,
+      actorName,
+      actorRole,
+    }),
+  );
+  batch.set(
+    doc(database, 'product_price_history', historyId),
+    historyPrice({
+      id: historyId,
+      latestId,
+      actorUid,
+      actorName,
+      actorRole,
+    }),
+  );
   return batch.commit();
 }
 
@@ -373,6 +493,7 @@ test('group creation requires a linked audit and group deactivation is unavailab
     brand_id: brandA,
     name: 'مجموعة جديدة',
     normalized_name: 'مجموعة جديدة',
+    is_system_group: false,
     active: true,
     last_audit_event_id: auditId,
     created_by: 'accountant-user',
@@ -421,6 +542,506 @@ test('group creation requires a linked audit and group deactivation is unavailab
   }));
 });
 
+test('each brand has one immutable deterministic uncategorized system group', async () => {
+  const accountant = databaseFor('accountant-user');
+  const groupAId = systemGroupId(brandA);
+  const groupBId = systemGroupId(brandB);
+
+  await assertSucceeds(createSystemGroupWithAudit(accountant, {
+    brandId: brandA,
+  }));
+
+  const reservedIdAuditId = 'ordinary-reserved-id-audit';
+  const reservedIdBatch = writeBatch(accountant);
+  reservedIdBatch.set(doc(accountant, 'product_groups', groupBId), {
+    id: groupBId,
+    brand_id: brandB,
+    name: 'مجموعة عادية',
+    normalized_name: 'مجموعة عادية',
+    is_system_group: false,
+    active: true,
+    last_audit_event_id: reservedIdAuditId,
+    created_by: 'accountant-user',
+    created_by_name: 'Accountant',
+    created_at: serverTimestamp(),
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  reservedIdBatch.set(
+    doc(accountant, 'product_audit_events', reservedIdAuditId),
+    {
+      id: reservedIdAuditId,
+      entity_type: 'product_group',
+      entity_id: groupBId,
+      brand_id: brandB,
+      action: 'created',
+      after: { id: groupBId, name: 'مجموعة عادية' },
+      actor_uid: 'accountant-user',
+      actor_name: 'Accountant',
+      actor_role: 'accountant',
+      created_at: serverTimestamp(),
+    },
+  );
+  await assertFails(reservedIdBatch.commit());
+
+  await assertSucceeds(createSystemGroupWithAudit(accountant, {
+    brandId: brandB,
+  }));
+  assert.notEqual(groupAId, groupBId);
+
+  const systemGroups = await assertSucceeds(getDocs(query(
+    collection(accountant, 'product_groups'),
+    where('is_system_group', '==', true),
+  )));
+  assert.deepEqual(
+    systemGroups.docs.map((snapshot) => snapshot.id).sort(),
+    [groupAId, groupBId].sort(),
+  );
+
+  await assertFails(createSystemGroupWithAudit(accountant, {
+    brandId: brandA,
+    groupId: 'system-group-alternate-uncategorized',
+    auditId: 'alternate-system-group-audit',
+  }));
+  await assertFails(createSystemGroupWithAudit(accountant, {
+    brandId: brandA,
+  }));
+
+  const reservedNormalId = 'normal-group-claiming-system-name';
+  const reservedAuditId = 'reserved-normal-group-audit';
+  const reservedBatch = writeBatch(accountant);
+  reservedBatch.set(doc(accountant, 'product_groups', reservedNormalId), {
+    id: reservedNormalId,
+    brand_id: brandA,
+    name: uncategorizedName,
+    normalized_name: uncategorizedName,
+    is_system_group: false,
+    active: true,
+    last_audit_event_id: reservedAuditId,
+    created_by: 'accountant-user',
+    created_by_name: 'Accountant',
+    created_at: serverTimestamp(),
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  reservedBatch.set(
+    doc(accountant, 'product_audit_events', reservedAuditId),
+    {
+      id: reservedAuditId,
+      entity_type: 'product_group',
+      entity_id: reservedNormalId,
+      brand_id: brandA,
+      action: 'created',
+      after: { id: reservedNormalId, name: uncategorizedName },
+      actor_uid: 'accountant-user',
+      actor_name: 'Accountant',
+      actor_role: 'accountant',
+      created_at: serverTimestamp(),
+    },
+  );
+  await assertFails(reservedBatch.commit());
+
+  for (const [suffix, overrides] of [
+    ['title-name', {
+      name: 'Uncategorized',
+      normalized_name: 'Uncategorized',
+    }],
+    ['uppercase-normalized-name', {
+      name: 'مجموعة عادية',
+      normalized_name: 'UNCATEGORIZED',
+    }],
+    ['title-legacy-code', {
+      name: 'مجموعة عادية',
+      normalized_name: 'مجموعة عادية',
+      legacy_code: 'Uncategorized',
+    }],
+  ]) {
+    const variantGroupId = `normal-group-reserved-${suffix}`;
+    const variantAuditId = `${variantGroupId}-audit`;
+    const variantBatch = writeBatch(accountant);
+    variantBatch.set(doc(accountant, 'product_groups', variantGroupId), {
+      id: variantGroupId,
+      brand_id: brandA,
+      is_system_group: false,
+      active: true,
+      last_audit_event_id: variantAuditId,
+      created_by: 'accountant-user',
+      created_by_name: 'Accountant',
+      created_at: serverTimestamp(),
+      updated_by: 'accountant-user',
+      updated_by_name: 'Accountant',
+      updated_at: serverTimestamp(),
+      ...overrides,
+    });
+    variantBatch.set(
+      doc(accountant, 'product_audit_events', variantAuditId),
+      {
+        id: variantAuditId,
+        entity_type: 'product_group',
+        entity_id: variantGroupId,
+        brand_id: brandA,
+        action: 'created',
+        after: { id: variantGroupId, ...overrides },
+        actor_uid: 'accountant-user',
+        actor_name: 'Accountant',
+        actor_role: 'accountant',
+        created_at: serverTimestamp(),
+      },
+    );
+    await assertFails(variantBatch.commit());
+  }
+
+  const renameAuditId = 'system-group-rename-audit';
+  const renameBatch = writeBatch(accountant);
+  renameBatch.update(doc(accountant, 'product_groups', groupAId), {
+    name: 'اسم آخر',
+    normalized_name: 'اسم اخر',
+    last_audit_event_id: renameAuditId,
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  renameBatch.set(doc(accountant, 'product_audit_events', renameAuditId), {
+    id: renameAuditId,
+    entity_type: 'product_group',
+    entity_id: groupAId,
+    brand_id: brandA,
+    action: 'updated',
+    before: { name: uncategorizedName },
+    after: { name: 'اسم آخر' },
+    actor_uid: 'accountant-user',
+    actor_name: 'Accountant',
+    actor_role: 'accountant',
+    created_at: serverTimestamp(),
+  });
+  await assertFails(renameBatch.commit());
+
+  const archiveAuditId = 'system-group-archive-audit';
+  const archiveBatch = writeBatch(accountant);
+  archiveBatch.update(doc(accountant, 'product_groups', groupAId), {
+    active: false,
+    archived_by: 'accountant-user',
+    archived_by_name: 'Accountant',
+    archived_at: serverTimestamp(),
+    last_audit_event_id: archiveAuditId,
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  archiveBatch.set(doc(accountant, 'product_audit_events', archiveAuditId), {
+    id: archiveAuditId,
+    entity_type: 'product_group',
+    entity_id: groupAId,
+    brand_id: brandA,
+    action: 'updated',
+    before: { active: true },
+    after: { active: false },
+    actor_uid: 'accountant-user',
+    actor_name: 'Accountant',
+    actor_role: 'accountant',
+    created_at: serverTimestamp(),
+  });
+  await assertFails(archiveBatch.commit());
+  await assertFails(deleteDoc(doc(accountant, 'product_groups', groupAId)));
+});
+
+test('only the accountant can create or manipulate system groups', async () => {
+  for (const actor of [
+    {
+      uid: 'collector-user',
+      name: 'General manager',
+      role: 'collector',
+    },
+    { uid: 'admin-user', name: 'Admin', role: 'admin' },
+    { uid: 'manager-a', name: 'Manager', role: 'manager' },
+    { uid: 'unknown-role-user', name: 'Unknown', role: 'mystery' },
+  ]) {
+    await assertFails(createSystemGroupWithAudit(databaseFor(actor.uid), {
+      brandId: brandA,
+      auditId: `system-group-${actor.uid}-audit`,
+      actorUid: actor.uid,
+      actorName: actor.name,
+      actorRole: actor.role,
+    }));
+  }
+
+  const accountant = databaseFor('accountant-user');
+  await assertSucceeds(createSystemGroupWithAudit(accountant, {
+    brandId: brandA,
+  }));
+  const groupId = systemGroupId(brandA);
+  for (const actor of [
+    {
+      uid: 'collector-user',
+      name: 'General manager',
+      role: 'collector',
+    },
+    { uid: 'admin-user', name: 'Admin', role: 'admin' },
+    { uid: 'manager-a', name: 'Manager', role: 'manager' },
+    { uid: 'unknown-role-user', name: 'Unknown', role: 'mystery' },
+  ]) {
+    const database = databaseFor(actor.uid);
+    const auditId = `system-group-update-${actor.uid}`;
+    const batch = writeBatch(database);
+    batch.update(doc(database, 'product_groups', groupId), {
+      last_audit_event_id: auditId,
+      updated_by: actor.uid,
+      updated_by_name: actor.name,
+      updated_at: serverTimestamp(),
+    });
+    batch.set(doc(database, 'product_audit_events', auditId), {
+      id: auditId,
+      entity_type: 'product_group',
+      entity_id: groupId,
+      brand_id: brandA,
+      action: 'updated',
+      before: { updated_by: 'accountant-user' },
+      after: { updated_by: actor.uid },
+      actor_uid: actor.uid,
+      actor_name: actor.name,
+      actor_role: actor.role,
+      created_at: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+  }
+});
+
+test('an audited product can move from fallback system group to a normal group', async () => {
+  const accountant = databaseFor('accountant-user');
+  const fallbackGroupId = systemGroupId(brandA);
+  const fallbackSourceMetadata = {
+    source_profile: 'eqlid_legacy_catalog',
+    source_file_sha256: 'fallback-source-hash',
+    source_sheet: 'Page1',
+    source_row: 321,
+    raw_material_value: '101 Legacy Material',
+    raw_group_value: '',
+    raw_primary_unit: 'حبه',
+    raw_unit_2: 'علبة',
+    raw_unit_3: '',
+    import_id: 'dry-run-eqlid',
+    original_group_missing: true,
+    fallback_system_group_assigned: true,
+    fallback_system_group_key: uncategorizedKey,
+    fallback_system_group_id: fallbackGroupId,
+  };
+  await assertSucceeds(createSystemGroupWithAudit(accountant, {
+    brandId: brandA,
+  }));
+
+  await assertFails(createProductAndKey(accountant, {
+    id: 'invalid-fallback-metadata-product',
+    uniqueKeyId: 'invalid-fallback-metadata-key',
+    extra: {
+      source_metadata: { original_group_missing: 'true' },
+    },
+  }));
+
+  await assertFails(createProductAndKey(accountant, {
+    id: 'missing-without-fallback-product',
+    uniqueKeyId: 'missing-without-fallback-key',
+    extra: {
+      source_metadata: {
+        source_profile: 'eqlid_legacy_catalog',
+        original_group_missing: true,
+        fallback_system_group_assigned: false,
+      },
+    },
+  }));
+
+  await assertFails(createProductAndKey(accountant, {
+    id: 'invalid-fallback-group-product',
+    uniqueKeyId: 'invalid-fallback-group-key',
+    extra: {
+      group_id: 'group-a',
+      source_metadata: {
+        source_profile: 'eqlid_legacy_catalog',
+        original_group_missing: true,
+        fallback_system_group_assigned: true,
+        fallback_system_group_key: uncategorizedKey,
+        fallback_system_group_id: fallbackGroupId,
+      },
+    },
+  }));
+
+  const productId = 'fallback-product';
+  await assertSucceeds(createProductAndKey(accountant, {
+    id: productId,
+    uniqueKeyId: 'fallback-product-key',
+    extra: {
+      group_id: fallbackGroupId,
+      source_metadata: fallbackSourceMetadata,
+    },
+  }));
+
+  const productReference = doc(accountant, 'products', productId);
+  const provenanceMutationAuditId = 'fallback-provenance-mutation-audit';
+  const provenanceMutationBatch = writeBatch(accountant);
+  provenanceMutationBatch.update(productReference, {
+    group_id: 'group-a',
+    source_metadata: {
+      source_profile: 'eqlid_legacy_catalog',
+      source_file_sha256: 'fallback-source-hash',
+      source_sheet: 'Page1',
+      source_row: 321,
+      raw_material_value: '101 Legacy Material',
+      raw_group_value: 'tampered group value',
+      raw_primary_unit: 'حبه',
+      raw_unit_2: 'علبة',
+      raw_unit_3: '',
+      import_id: 'dry-run-eqlid',
+      original_group_missing: true,
+      fallback_system_group_assigned: true,
+      fallback_system_group_key: uncategorizedKey,
+      fallback_system_group_id: fallbackGroupId,
+    },
+    version: 2,
+    last_audit_event_id: provenanceMutationAuditId,
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  provenanceMutationBatch.set(
+    doc(accountant, 'product_audit_events', provenanceMutationAuditId),
+    {
+      id: provenanceMutationAuditId,
+      entity_type: 'product',
+      entity_id: productId,
+      brand_id: brandA,
+      action: 'recategorized',
+      before: {
+        group_id: fallbackGroupId,
+        fallback_system_group_assigned: true,
+      },
+      after: {
+        group_id: 'group-a',
+        fallback_system_group_assigned: true,
+      },
+      actor_uid: 'accountant-user',
+      actor_name: 'Accountant',
+      actor_role: 'accountant',
+      created_at: serverTimestamp(),
+    },
+  );
+  await assertFails(provenanceMutationBatch.commit());
+
+  const untruthfulAuditId = 'fallback-untruthful-audit';
+  const untruthfulBatch = writeBatch(accountant);
+  untruthfulBatch.update(productReference, {
+    group_id: 'group-a',
+    version: 2,
+    last_audit_event_id: untruthfulAuditId,
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  untruthfulBatch.set(
+    doc(accountant, 'product_audit_events', untruthfulAuditId),
+    {
+      id: untruthfulAuditId,
+      entity_type: 'product',
+      entity_id: productId,
+      brand_id: brandA,
+      action: 'recategorized',
+      before: {
+        group_id: 'fabricated-group',
+        version: 1,
+      },
+      after: {
+        group_id: 'group-a',
+        version: 2,
+      },
+      actor_uid: 'accountant-user',
+      actor_name: 'Accountant',
+      actor_role: 'accountant',
+      created_at: serverTimestamp(),
+    },
+  );
+  await assertFails(untruthfulBatch.commit());
+
+  const fabricatedProvenanceAuditId = 'fallback-fabricated-provenance-audit';
+  const fabricatedProvenanceBatch = writeBatch(accountant);
+  fabricatedProvenanceBatch.update(productReference, {
+    group_id: 'group-a',
+    version: 2,
+    last_audit_event_id: fabricatedProvenanceAuditId,
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  fabricatedProvenanceBatch.set(
+    doc(accountant, 'product_audit_events', fabricatedProvenanceAuditId),
+    {
+      id: fabricatedProvenanceAuditId,
+      entity_type: 'product',
+      entity_id: productId,
+      brand_id: brandA,
+      action: 'recategorized',
+      before: {
+        group_id: fallbackGroupId,
+        version: 1,
+        source_metadata: {
+          ...fallbackSourceMetadata,
+          raw_group_value: 'fabricated audit-only provenance',
+        },
+      },
+      after: {
+        group_id: 'group-a',
+        version: 2,
+        source_metadata: fallbackSourceMetadata,
+      },
+      actor_uid: 'accountant-user',
+      actor_name: 'Accountant',
+      actor_role: 'accountant',
+      created_at: serverTimestamp(),
+    },
+  );
+  await assertFails(fabricatedProvenanceBatch.commit());
+
+  const recategorizeAuditId = 'fallback-reassignment-audit';
+  const recategorizeBatch = writeBatch(accountant);
+  recategorizeBatch.update(productReference, {
+    group_id: 'group-a',
+    version: 2,
+    last_audit_event_id: recategorizeAuditId,
+    updated_by: 'accountant-user',
+    updated_by_name: 'Accountant',
+    updated_at: serverTimestamp(),
+  });
+  recategorizeBatch.set(
+    doc(accountant, 'product_audit_events', recategorizeAuditId),
+    {
+      id: recategorizeAuditId,
+      entity_type: 'product',
+      entity_id: productId,
+      brand_id: brandA,
+      action: 'recategorized',
+      before: {
+        group_id: fallbackGroupId,
+        version: 1,
+      },
+      after: {
+        group_id: 'group-a',
+        version: 2,
+      },
+      actor_uid: 'accountant-user',
+      actor_name: 'Accountant',
+      actor_role: 'accountant',
+      created_at: serverTimestamp(),
+    },
+  );
+  await assertSucceeds(recategorizeBatch.commit());
+
+  const product = (await getDoc(productReference)).data();
+  assert.equal(product.group_id, 'group-a');
+  assert.equal(product.source_metadata.original_group_missing, true);
+  assert.equal(product.source_metadata.fallback_system_group_assigned, true);
+  assert.equal(product.source_metadata.fallback_system_group_key, uncategorizedKey);
+  assert.equal(product.source_metadata.fallback_system_group_id, fallbackGroupId);
+});
+
 test('catalog rules reject top-level and nested protected-price fields', async () => {
   const accountant = databaseFor('accountant-user');
 
@@ -441,6 +1062,50 @@ test('catalog rules reject top-level and nested protected-price fields', async (
         price: 500,
       },
     ],
+  }));
+});
+
+test('a full three-unit legacy-coded import product stays under the rule limit', async () => {
+  const accountant = databaseFor('accountant-user');
+  await assertSucceeds(createProductAndKey(accountant, {
+    id: 'full-import-product',
+    name: 'منتج استيراد كامل',
+    uniqueKeyId: 'full-import-name-key',
+    legacyKeyId: 'full-import-code-key',
+    legacyCode: '09-123',
+    units: [
+      {
+        unit_id: 'primary',
+        display_value: 'حبه',
+        raw_value: 'حبه',
+      },
+      {
+        unit_id: 'unit_2',
+        display_value: 'علبة',
+        raw_value: 'علبة',
+      },
+      {
+        unit_id: 'unit_3',
+        display_value: 'تولة',
+        raw_value: 'تولة',
+      },
+    ],
+    extra: {
+      source_metadata: {
+        source_profile: 'al_asalah_legacy_catalog',
+        source_file_sha256: 'full-import-source-hash',
+        source_sheet: 'Page1',
+        source_row: 42,
+        raw_material_value: '09-123-منتج استيراد كامل',
+        raw_group_value: '9-عطور',
+        raw_primary_unit: 'حبه',
+        raw_unit_2: 'علبة',
+        raw_unit_3: 'تولة',
+        import_id: 'full-import-preview',
+        original_group_missing: false,
+        fallback_system_group_assigned: false,
+      },
+    },
   }));
 });
 
@@ -814,20 +1479,38 @@ test('accounting profiles are private and every upsert requires a fresh audit', 
   ));
 });
 
-test('manager, branch employee, and inactive users cannot directly read prices', async () => {
+test('branch, inactive, and unknown users cannot directly read or write prices', async () => {
   const collector = databaseFor('collector-user');
   await assertSucceeds(createPricePair(collector));
 
-  for (const uid of ['manager-a', 'employee-a', 'inactive-user']) {
-    const database = databaseFor(uid);
+  for (const actor of [
+    { uid: 'manager-a', name: 'Manager', role: 'manager' },
+    { uid: 'employee-a', name: 'Employee', role: 'employee' },
+    { uid: 'inactive-user', name: 'Inactive', role: 'manager' },
+    {
+      uid: 'inactive-collector-user',
+      name: 'Inactive collector',
+      role: 'collector',
+    },
+    { uid: 'unknown-role-user', name: 'Unknown', role: 'mystery' },
+    { uid: 'missing-profile-user', name: 'Missing', role: 'mystery' },
+  ]) {
+    const database = databaseFor(actor.uid);
     await assertFails(getDoc(doc(database, 'product_price_latest', 'latest-a')));
     await assertFails(getDocs(collection(database, 'product_price_latest')));
     await assertFails(getDoc(doc(database, 'product_price_history', 'history-a')));
     await assertFails(getDocs(collection(database, 'product_price_history')));
+    await assertFails(createPricePair(database, {
+      latestId: `latest-${actor.uid}`,
+      historyId: `history-${actor.uid}`,
+      actorUid: actor.uid,
+      actorName: actor.name,
+      actorRole: actor.role,
+    }));
   }
 });
 
-test('protected roles can read price memory but standalone latest writes fail', async () => {
+test('collector alone writes price memory while accountant and admin are read-only', async () => {
   const collector = databaseFor('collector-user');
   const accountant = databaseFor('accountant-user');
   const admin = databaseFor('admin-user');
@@ -841,6 +1524,68 @@ test('protected roles can read price memory but standalone latest writes fail', 
   for (const database of [collector, accountant, admin]) {
     await assertSucceeds(getDoc(doc(database, 'product_price_latest', 'latest-a')));
     await assertSucceeds(getDocs(collection(database, 'product_price_history')));
+  }
+
+  for (const actor of [
+    {
+      database: accountant,
+      uid: 'accountant-user',
+      name: 'Accountant',
+      role: 'accountant',
+    },
+    {
+      database: admin,
+      uid: 'admin-user',
+      name: 'Admin',
+      role: 'admin',
+    },
+  ]) {
+    await assertFails(createPricePair(actor.database, {
+      latestId: `latest-${actor.role}`,
+      historyId: `history-${actor.role}`,
+      actorUid: actor.uid,
+      actorName: actor.name,
+      actorRole: actor.role,
+    }));
+
+    const updateHistoryId = `history-update-${actor.role}`;
+    const updateBatch = writeBatch(actor.database);
+    updateBatch.update(
+      doc(actor.database, 'product_price_latest', 'latest-a'),
+      {
+        history_event_id: updateHistoryId,
+        price: 130,
+        source_invoice_id: 'invoice-local-test',
+        changed_by: actor.uid,
+        changed_by_name: actor.name,
+        changed_by_role: actor.role,
+        changed_at: serverTimestamp(),
+        version: 2,
+      },
+    );
+    updateBatch.set(
+      doc(actor.database, 'product_price_history', updateHistoryId),
+      historyPrice({
+        id: updateHistoryId,
+        price: 130,
+        previousPrice: 125,
+        version: 2,
+        actorUid: actor.uid,
+        actorName: actor.name,
+        actorRole: actor.role,
+      }),
+    );
+    await assertFails(updateBatch.commit());
+    await assertFails(deleteDoc(doc(
+      actor.database,
+      'product_price_latest',
+      'latest-a',
+    )));
+    await assertFails(deleteDoc(doc(
+      actor.database,
+      'product_price_history',
+      'history-a',
+    )));
   }
 });
 

@@ -7,6 +7,69 @@ import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/catalog_normalization.dart';
 
+({CatalogUnit? unit2, CatalogUnit? unit3}) catalogEditorSecondaryUnitSlots(
+  ProductCatalogModel? product,
+) {
+  if (product == null) return (unit2: null, unit3: null);
+
+  final secondaryUnits = product.units
+      .where((unit) => unit.id != product.primaryUnitId)
+      .toList(growable: false);
+  CatalogUnit? unit2;
+  CatalogUnit? unit3;
+  final legacyUnits = <CatalogUnit>[];
+
+  for (final unit in secondaryUnits) {
+    if (unit.id == 'unit_2' && unit2 == null) {
+      unit2 = unit;
+    } else if (unit.id == 'unit_3' && unit3 == null) {
+      unit3 = unit;
+    } else {
+      legacyUnits.add(unit);
+    }
+  }
+
+  if (unit2 == null && unit3 == null) {
+    if (legacyUnits.length == 1 &&
+        _legacySingleSecondaryWasUnit3(product.sourceMetadata)) {
+      unit3 = legacyUnits.single;
+    } else {
+      if (legacyUnits.isNotEmpty) unit2 = legacyUnits.first;
+      if (legacyUnits.length > 1) unit3 = legacyUnits[1];
+    }
+  } else {
+    for (final unit in legacyUnits) {
+      if (unit2 == null) {
+        unit2 = unit;
+      } else {
+        unit3 ??= unit;
+      }
+    }
+  }
+
+  return (unit2: unit2, unit3: unit3);
+}
+
+bool _legacySingleSecondaryWasUnit3(Map<String, dynamic> sourceMetadata) {
+  final rawUnit2 = sourceMetadata['raw_unit_2']?.toString().trim() ?? '';
+  final rawUnit3 = sourceMetadata['raw_unit_3']?.toString().trim() ?? '';
+  return rawUnit2.isEmpty && rawUnit3.isNotEmpty;
+}
+
+CatalogUnit catalogEditorUpdatedUnit({
+  required CatalogUnit? existing,
+  required String fallbackId,
+  required String rawValue,
+}) {
+  final unchanged = existing?.rawValue == rawValue;
+  return CatalogUnit(
+    id: existing?.id ?? fallbackId,
+    displayValue: unchanged ? existing!.displayValue : rawValue,
+    rawValue: rawValue,
+    normalizedValue: unchanged ? existing!.normalizedValue : null,
+  );
+}
+
 class ProductCatalogManagementScreen extends StatefulWidget {
   final ProductCatalogService? service;
 
@@ -60,6 +123,7 @@ class _ProductCatalogManagementScreenState
           ? data['name'].toString().trim()
           : 'المحاسب',
       role: data['role'].toString(),
+      active: data['isActive'] != false,
     );
   }
 
@@ -417,11 +481,12 @@ class _ProductCatalogManagementScreenState
     final primaryController = TextEditingController(
       text: product?.unitById(product.primaryUnitId)?.rawValue ?? '',
     );
+    final secondaryUnitSlots = catalogEditorSecondaryUnitSlots(product);
     final unit2Controller = TextEditingController(
-      text: _unitAt(product, 1)?.rawValue ?? '',
+      text: secondaryUnitSlots.unit2?.rawValue ?? '',
     );
     final unit3Controller = TextEditingController(
-      text: _unitAt(product, 2)?.rawValue ?? '',
+      text: secondaryUnitSlots.unit3?.rawValue ?? '',
     );
     String? groupId = activeGroups.any((group) => group.id == product?.groupId)
         ? product!.groupId
@@ -530,20 +595,20 @@ class _ProductCatalogManagementScreenState
                   return;
                 }
                 final units = <CatalogUnit>[
-                  _updatedUnit(
+                  catalogEditorUpdatedUnit(
                     existing: product?.unitById(product.primaryUnitId),
                     fallbackId: 'primary',
                     rawValue: primary,
                   ),
                   if (unit2Controller.text.trim().isNotEmpty)
-                    _updatedUnit(
-                      existing: _unitAt(product, 1),
+                    catalogEditorUpdatedUnit(
+                      existing: secondaryUnitSlots.unit2,
                       fallbackId: 'unit_2',
                       rawValue: unit2Controller.text.trim(),
                     ),
                   if (unit3Controller.text.trim().isNotEmpty)
-                    _updatedUnit(
-                      existing: _unitAt(product, 2),
+                    catalogEditorUpdatedUnit(
+                      existing: secondaryUnitSlots.unit3,
                       fallbackId: 'unit_3',
                       rawValue: unit3Controller.text.trim(),
                     ),
@@ -575,31 +640,6 @@ class _ProductCatalogManagementScreenState
     unit2Controller.dispose();
     unit3Controller.dispose();
     return draft;
-  }
-
-  CatalogUnit _updatedUnit({
-    required CatalogUnit? existing,
-    required String fallbackId,
-    required String rawValue,
-  }) {
-    final unchanged = existing?.rawValue == rawValue;
-    return CatalogUnit(
-      id: existing?.id ?? fallbackId,
-      displayValue: rawValue,
-      rawValue: rawValue,
-      normalizedValue: unchanged ? existing?.normalizedValue : null,
-    );
-  }
-
-  CatalogUnit? _unitAt(ProductCatalogModel? product, int index) {
-    if (product == null) return null;
-    final secondary = product.units
-        .where((unit) => unit.id != product.primaryUnitId)
-        .toList();
-    final secondaryIndex = index - 1;
-    return secondaryIndex >= 0 && secondaryIndex < secondary.length
-        ? secondary[secondaryIndex]
-        : null;
   }
 
   Future<void> _archiveProduct(ProductCatalogModel product) async {
@@ -785,6 +825,10 @@ class _ProductCatalogManagementScreenState
         'العلامة التجارية المحددة غير موجودة.',
       'A normalized duplicate group already exists.' =>
         'توجد مجموعة مطابقة بعد توحيد طريقة الكتابة.',
+      'The uncategorized system-group identity is reserved.' =>
+        'مجموعة «غير مصنف» مجموعة نظامية ولا يمكن إنشاؤها يدويًا.',
+      'The reserved uncategorized group ID is occupied by a conflicting document.' =>
+        'تعذر تهيئة مجموعة «غير مصنف» بسبب تعارض في المعرّف المحجوز.',
       'A normalized duplicate product already exists.' =>
         'يوجد منتج مطابق في العلامة نفسها بالاسم أو الرمز.',
       'The selected product group was not found.' =>
@@ -807,6 +851,7 @@ class _ProductCatalogManagementScreenState
     return switch (action) {
       'created' => 'إنشاء المنتج',
       'updated' => 'تعديل المنتج',
+      'recategorized' => 'تغيير مجموعة المنتج',
       'archived' => 'أرشفة المنتج',
       'reactivated' => 'إعادة تنشيط المنتج',
       _ => action,
