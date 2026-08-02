@@ -45,6 +45,46 @@ function loadFirebaseCredential() {
   };
 }
 
+function stringValue(value) {
+  if (value === undefined || value === null) return "";
+  return String(value);
+}
+
+function notificationDataPayload(reference, notification, title, body) {
+  const module = stringValue(
+      notification.module ?? notification.entity_collection ?? "transactions",
+  );
+  const entityCollection = stringValue(
+      notification.entity_collection ?? module,
+  );
+  const transactionId = stringValue(notification.transaction_id);
+  const entityId = stringValue(notification.entity_id ?? transactionId);
+  const referenceNumber = stringValue(
+      notification.reference_number ?? notification.transaction_number,
+  );
+  const branchIds = Array.isArray(notification.branch_ids) ?
+    notification.branch_ids.map(stringValue).filter(Boolean).join(",") :
+    "";
+
+  return {
+    notification_id: reference.id,
+    title,
+    message: body,
+    module,
+    entity_id: entityId,
+    entity_collection: entityCollection,
+    reference_number: referenceNumber,
+    notification_type: stringValue(notification.notification_type),
+    branch_id: stringValue(notification.branch_id),
+    branch_ids: branchIds,
+    transaction_id: transactionId,
+    transaction_number: stringValue(notification.transaction_number),
+    consumable_request_id: stringValue(notification.consumable_request_id),
+    cash_expense_request_id: stringValue(notification.cash_expense_request_id),
+    inter_branch_invoice_id: stringValue(notification.inter_branch_invoice_id),
+  };
+}
+
 try {
   admin.initializeApp({
     credential: admin.credential.cert(loadFirebaseCredential()),
@@ -109,18 +149,15 @@ async function processNotification(reference) {
       return;
     }
 
+    const title = String(notification.title ?? "إشعار جديد");
+    const body = String(notification.message ?? "");
     const result = await admin.messaging().sendEachForMulticast({
       tokens,
       notification: {
-        title: String(notification.title ?? "إشعار جديد"),
-        body: String(notification.message ?? ""),
+        title,
+        body,
       },
-      data: {
-        notification_id: reference.id,
-        transaction_id: String(notification.transaction_id ?? ""),
-        branch_id: String(notification.branch_id ?? ""),
-        transaction_number: String(notification.transaction_number ?? ""),
-      },
+      data: notificationDataPayload(reference, notification, title, body),
       android: {
         priority: "high",
         ttl: 24 * 60 * 60 * 1000,

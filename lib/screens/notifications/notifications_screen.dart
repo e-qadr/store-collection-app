@@ -2,6 +2,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
+import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/screens/cash_expenses/cash_expense_details_screen.dart';
+import 'package:store_collection_app/screens/consumables/consumable_request_details_screen.dart';
+import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoice_details_screen.dart';
 import 'package:store_collection_app/screens/transactions/transaction_details_screen.dart';
 import 'package:store_collection_app/services/device_notification_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
@@ -178,27 +182,8 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                             ),
                             onTap: () async {
                               await _notificationService.markAsRead(doc.id);
-                              final transactionId =
-                                  data['transaction_id'] as String?;
-                              if (transactionId == null) return;
-                              final transaction = await FirebaseFirestore
-                                  .instance
-                                  .collection('transactions')
-                                  .doc(transactionId)
-                                  .get();
-                              if (context.mounted &&
-                                  transaction.data() != null) {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        TransactionDetailsScreen(
-                                          transactionId: transaction.id,
-                                          transactionData: transaction.data()!,
-                                        ),
-                                  ),
-                                );
-                              }
+                              if (!mounted) return;
+                              await _openNotificationTarget(data);
                             },
                           ),
                         );
@@ -212,6 +197,166 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _openNotificationTarget(Map<String, dynamic> data) async {
+    final module = _string(data, 'module');
+    final collection = _string(data, 'entity_collection');
+
+    if (module.isEmpty ||
+        module == NotificationService.transactionsModule ||
+        collection == 'transactions') {
+      await _openTransaction(data);
+      return;
+    }
+
+    if (module == NotificationService.consumableRequestsModule ||
+        collection == NotificationService.consumableRequestsModule) {
+      await _openConsumableRequest(data);
+      return;
+    }
+
+    if (module == NotificationService.cashExpenseRequestsModule ||
+        collection == NotificationService.cashExpenseRequestsModule) {
+      await _openCashExpenseRequest(data);
+      return;
+    }
+
+    if (module == NotificationService.interBranchInvoicesModule ||
+        collection == NotificationService.interBranchInvoicesModule) {
+      await _openInterBranchInvoice(data);
+    }
+  }
+
+  Future<void> _openTransaction(Map<String, dynamic> data) async {
+    final transactionId = _targetId(data, 'transaction_id');
+    if (transactionId.isEmpty) return;
+    final transaction = await FirebaseFirestore.instance
+        .collection('transactions')
+        .doc(transactionId)
+        .get();
+    final transactionData = transaction.data();
+    if (!mounted || transactionData == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TransactionDetailsScreen(
+          transactionId: transaction.id,
+          transactionData: transactionData,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openConsumableRequest(Map<String, dynamic> data) async {
+    final requestId = _targetId(data, 'consumable_request_id');
+    if (requestId.isEmpty) return;
+    final targetContext = await _loadTargetContext(data);
+    if (!mounted || targetContext == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ConsumableRequestDetailsScreen(
+          requestId: requestId,
+          role: targetContext.role,
+          branchId: targetContext.branchId,
+          branchName: targetContext.branchName,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCashExpenseRequest(Map<String, dynamic> data) async {
+    final requestId = _targetId(data, 'cash_expense_request_id');
+    if (requestId.isEmpty) return;
+    final targetContext = await _loadTargetContext(data);
+    if (!mounted || targetContext == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CashExpenseDetailsScreen(
+          requestId: requestId,
+          role: targetContext.role,
+          branchId: targetContext.branchId,
+          branchName: targetContext.branchName,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openInterBranchInvoice(Map<String, dynamic> data) async {
+    final invoiceId = _targetId(data, 'inter_branch_invoice_id');
+    if (invoiceId.isEmpty) return;
+    final targetContext = await _loadTargetContext(data);
+    if (!mounted || targetContext == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => InterBranchInvoiceDetailsScreen(
+          invoiceId: invoiceId,
+          role: targetContext.role,
+          branchId: targetContext.branchId,
+          branchName: targetContext.branchName,
+        ),
+      ),
+    );
+  }
+
+  Future<_NotificationTargetContext?> _loadTargetContext(
+    Map<String, dynamic> notificationData,
+  ) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .get();
+    final userData = userDoc.data();
+    if (userData == null) return null;
+
+    final role = _roleFromString(userData['role']?.toString());
+    if (role == null || role == UserRole.admin) return null;
+
+    final userBranchId = userData['branchId']?.toString() ?? '';
+    final notificationBranchId = _string(notificationData, 'branch_id');
+    final branchId = role == UserRole.manager
+        ? userBranchId
+        : notificationBranchId.isNotEmpty
+        ? notificationBranchId
+        : userBranchId;
+    final branchName = await _branchName(branchId);
+
+    return _NotificationTargetContext(
+      role: role,
+      branchId: branchId.isEmpty ? null : branchId,
+      branchName: branchName,
+    );
+  }
+
+  Future<String> _branchName(String branchId) async {
+    if (branchId.isEmpty) return 'اختيار النظام';
+    final branchDoc = await FirebaseFirestore.instance
+        .collection('branches')
+        .doc(branchId)
+        .get();
+    return branchDoc.data()?['name']?.toString() ?? 'الفرع غير معروف';
+  }
+
+  UserRole? _roleFromString(String? value) {
+    for (final role in UserRole.values) {
+      if (role.name == value) return role;
+    }
+    return null;
+  }
+
+  String _targetId(Map<String, dynamic> data, String legacyKey) {
+    final entityId = _string(data, 'entity_id');
+    return entityId.isNotEmpty ? entityId : _string(data, legacyKey);
+  }
+
+  String _string(Map<String, dynamic> data, String key) {
+    return data[key]?.toString().trim() ?? '';
   }
 
   Widget _buildPermissionCard() {
@@ -271,4 +416,16 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       ),
     );
   }
+}
+
+class _NotificationTargetContext {
+  final UserRole role;
+  final String? branchId;
+  final String branchName;
+
+  const _NotificationTargetContext({
+    required this.role,
+    required this.branchId,
+    required this.branchName,
+  });
 }

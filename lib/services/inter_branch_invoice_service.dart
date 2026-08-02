@@ -2,9 +2,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
+import 'package:store_collection_app/services/notification_service.dart';
 
 class InterBranchInvoiceService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final NotificationService _notificationService = NotificationService();
 
   static const requiredApprovalParties = <String>{
     'supplyingManager',
@@ -14,6 +16,14 @@ class InterBranchInvoiceService {
 
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(InterBranchInvoiceFields.collection);
+
+  Future<void> _notifySafely(Future<void> Function() notification) async {
+    try {
+      await notification();
+    } catch (_) {
+      // لا يجب أن يمنع فشل الإشعار تنفيذ العملية الأساسية.
+    }
+  }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchInvoices({
     required UserRole role,
@@ -95,6 +105,16 @@ class InterBranchInvoiceService {
         ),
       ],
     });
+    final savedInvoice = await doc.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchRequestCreated(
+          invoiceId: doc.id,
+          invoiceData: savedData,
+        ),
+      );
+    }
   }
 
   Future<void> submitSenderDecision({
@@ -227,6 +247,17 @@ class InterBranchInvoiceService {
         ]),
       });
     });
+    final savedInvoice = await docRef.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchSupplierDecision(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+          approved: approved,
+        ),
+      );
+    }
   }
 
   Future<void> confirmReceipt({
@@ -302,6 +333,16 @@ class InterBranchInvoiceService {
         ]),
       });
     });
+    final savedInvoice = await docRef.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchReceiptConfirmed(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+        ),
+      );
+    }
   }
 
   Future<void> addPrice({
@@ -374,6 +415,16 @@ class InterBranchInvoiceService {
         ]),
       });
     });
+    final savedInvoice = await docRef.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchPricesEntered(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+        ),
+      );
+    }
   }
 
   Future<void> addItemPrices({
@@ -434,6 +485,16 @@ class InterBranchInvoiceService {
         ]),
       });
     });
+    final savedInvoice = await docRef.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchPricesEntered(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+        ),
+      );
+    }
   }
 
   Future<void> confirmAccounting({
@@ -488,6 +549,16 @@ class InterBranchInvoiceService {
         ]),
       });
     });
+    final savedInvoice = await docRef.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchAccountingPosted(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+        ),
+      );
+    }
   }
 
   Future<void> requestCancellation({
@@ -543,6 +614,17 @@ class InterBranchInvoiceService {
         ]),
       });
     });
+    final savedInvoice = await docRef.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchSharedRequest(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+          isCancellation: true,
+        ),
+      );
+    }
   }
 
   Future<void> approveCancellation({
@@ -569,6 +651,18 @@ class InterBranchInvoiceService {
       rejectedMessage: 'تم رفض طلب الإلغاء',
       completedMessage: 'اكتملت الموافقات وتم إلغاء الفاتورة',
     );
+    final savedInvoice = await _collection.doc(invoiceId).get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchSharedDecision(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+          isCancellation: true,
+          approved: approved,
+        ),
+      );
+    }
   }
 
   Future<void> requestEdit({
@@ -621,6 +715,17 @@ class InterBranchInvoiceService {
         ]),
       });
     });
+    final savedInvoice = await docRef.get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchSharedRequest(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+          isCancellation: false,
+        ),
+      );
+    }
   }
 
   Future<void> approveEdit({
@@ -647,6 +752,18 @@ class InterBranchInvoiceService {
       rejectedMessage: 'تم رفض طلب التعديل',
       completedMessage: 'اكتملت الموافقات على طلب التعديل',
     );
+    final savedInvoice = await _collection.doc(invoiceId).get();
+    final savedData = savedInvoice.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyInterBranchSharedDecision(
+          invoiceId: invoiceId,
+          invoiceData: savedData,
+          isCancellation: false,
+          approved: approved,
+        ),
+      );
+    }
   }
 
   Future<void> _approveSharedRequest({

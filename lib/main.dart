@@ -13,6 +13,9 @@ import 'package:store_collection_app/widgets/device_notification_initializer.dar
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb) {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  }
   runApp(const MyApp());
 }
 
@@ -50,7 +53,6 @@ class _AppBootstrapState extends State<_AppBootstrap> {
   Future<void> _initializeServices() async {
     await Firebase.initializeApp().timeout(const Duration(seconds: 20));
     if (!kIsWeb) {
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
       unawaited(LocalNotificationService.initialize());
     }
   }

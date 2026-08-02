@@ -7,6 +7,7 @@ enum CashExpenseStatus {
   rejectedByGeneralManager,
   pendingInvoiceAttachment,
   pendingAccountingApproval,
+  editPendingApprovals,
   approvedByAccountant,
 }
 
@@ -23,6 +24,8 @@ extension CashExpenseStatusX on CashExpenseStatus {
         return 'بانتظار إرفاق الفاتورة';
       case CashExpenseStatus.pendingAccountingApproval:
         return 'بانتظار اعتماد المحاسب';
+      case CashExpenseStatus.editPendingApprovals:
+        return 'طلب تعديل بانتظار الموافقات';
       case CashExpenseStatus.approvedByAccountant:
         return 'معتمد نهائياً';
     }
@@ -38,6 +41,8 @@ extension CashExpenseStatusX on CashExpenseStatus {
         return AppTheme.managerColor;
       case CashExpenseStatus.pendingAccountingApproval:
         return AppTheme.accountantColor;
+      case CashExpenseStatus.editPendingApprovals:
+        return AppTheme.warningColor;
       case CashExpenseStatus.approvedByAccountant:
         return AppTheme.successColor;
     }
@@ -59,6 +64,7 @@ class CashExpenseFields {
   CashExpenseFields._();
 
   static const collection = 'cash_expense_requests';
+  static const counterCollection = 'cash_expense_request_counters';
   static const requestNumber = 'request_number';
   static const branchId = 'branch_id';
   static const branchName = 'branch_name';
@@ -83,6 +89,9 @@ class CashExpenseFields {
   static const invoiceApprovedAt = 'invoice_approved_at';
   static const approvedBy = 'approved_by';
   static const approvedAt = 'approved_at';
+  static const previousStatus = 'previous_status';
+  static const editRequest = 'edit_request';
+  static const editApprovals = 'edit_approvals';
   static const lastUpdated = 'last_updated';
   static const history = 'history';
 }
@@ -155,6 +164,27 @@ class CashExpenseRead {
       invoiceAttachment['name']?.toString() ?? 'لم ترفق فاتورة';
 
   String get invoiceUrl => invoiceAttachment['url']?.toString() ?? '';
+
+  String get invoiceContentType =>
+      invoiceAttachment['content_type']?.toString() ?? '';
+
+  CashExpenseStatus? get previousStatus {
+    final value = data[CashExpenseFields.previousStatus]?.toString();
+    if (value == null || value.isEmpty) return null;
+    return cashExpenseStatusFromString(value);
+  }
+
+  Map<String, dynamic> get editRequest {
+    final value = data[CashExpenseFields.editRequest];
+    if (value is! Map) return const {};
+    return Map<String, dynamic>.from(value);
+  }
+
+  Map<String, dynamic> get editApprovals {
+    final value = data[CashExpenseFields.editApprovals];
+    if (value is! Map) return const {};
+    return Map<String, dynamic>.from(value);
+  }
 
   List<Map<String, dynamic>> get history {
     final value = data[CashExpenseFields.history];

@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter - Hostinger Upload",
+      "request": "launch",
+      "type": "dart",
+      "toolArgs": [
+        "--dart-define",
+        "INVOICE_UPLOAD_URL=https://skyblue-mongoose-418684.hostingersite.com/api/upload_invoice.php",
+        "--dart-define",
+        "INVOICE_UPLOAD_TOKEN=uP9xK7mQ2vR6sT4nY8bL3wZ5aH1cD0eF9gJ2kM7pX4qN8rS6"
+      ]
+    }
+  ]
+}

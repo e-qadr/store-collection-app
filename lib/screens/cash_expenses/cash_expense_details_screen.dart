@@ -6,7 +6,9 @@ import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/cash_expense_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/services/cash_expense_service.dart';
+import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CashExpenseDetailsScreen extends StatefulWidget {
   final String requestId;
@@ -89,6 +91,10 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
               children: [
                 _expenseDocument(request),
                 if (actions != null) ...[const SizedBox(height: 12), actions],
+                if (request.editRequest.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _editRequestPanel(request),
+                ],
                 const SizedBox(height: 12),
                 _statusTimeline(request),
                 const SizedBox(height: 12),
@@ -288,51 +294,162 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
 
   Widget _invoiceAttachment(CashExpenseRead request) {
     final hasInvoice = request.invoiceUrl.isNotEmpty;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: hasInvoice
-            ? AppTheme.successColor.withValues(alpha: 0.06)
-            : AppTheme.surfaceColor,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: hasInvoice ? () => _openAttachment(request) : null,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: hasInvoice
-              ? AppTheme.successColor.withValues(alpha: 0.16)
-              : AppTheme.dividerColor,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            hasInvoice ? Icons.attach_file_rounded : Icons.upload_file_rounded,
-            color: hasInvoice ? AppTheme.successColor : AppTheme.textHint,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'فاتورة المصروف',
-                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  hasInvoice ? request.invoiceFileName : 'لم يتم إرفاق فاتورة',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: hasInvoice
-                        ? AppTheme.successColor
-                        : AppTheme.textSecondary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: hasInvoice
+                ? AppTheme.successColor.withValues(alpha: 0.06)
+                : AppTheme.surfaceColor,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: hasInvoice
+                  ? AppTheme.successColor.withValues(alpha: 0.16)
+                  : AppTheme.dividerColor,
             ),
           ),
-        ],
+          child: Row(
+            children: [
+              Icon(
+                hasInvoice
+                    ? Icons.attach_file_rounded
+                    : Icons.upload_file_rounded,
+                color: hasInvoice ? AppTheme.successColor : AppTheme.textHint,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'فاتورة المصروف',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      hasInvoice ? request.invoiceFileName : 'بدون ملف مرفق',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: hasInvoice
+                            ? AppTheme.successColor
+                            : AppTheme.textSecondary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (hasInvoice) ...[
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.open_in_new_rounded,
+                  color: AppTheme.successColor,
+                  size: 18,
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
+  }
+
+  Future<void> _openAttachment(CashExpenseRead request) async {
+    if (request.invoiceUrl.isEmpty) return;
+    if (_isImageAttachment(request)) {
+      await showDialog(
+        context: context,
+        builder: (dialogContext) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: Dialog(
+            insetPadding: const EdgeInsets.all(18),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.image_rounded),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            request.invoiceFileName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'إغلاق',
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Flexible(
+                    child: InteractiveViewer(
+                      minScale: 0.7,
+                      maxScale: 4,
+                      child: Image.network(
+                        request.invoiceUrl,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, _, _) => const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text('تعذر عرض الصورة'),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                    child: Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: TextButton.icon(
+                        onPressed: () => _openExternalUrl(request.invoiceUrl),
+                        icon: const Icon(Icons.open_in_new_rounded),
+                        label: const Text('فتح خارجياً'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    await _openExternalUrl(request.invoiceUrl);
+  }
+
+  bool _isImageAttachment(CashExpenseRead request) {
+    final contentType = request.invoiceContentType.toLowerCase();
+    final fileName = request.invoiceFileName.toLowerCase();
+    return contentType.startsWith('image/') ||
+        fileName.endsWith('.png') ||
+        fileName.endsWith('.jpg') ||
+        fileName.endsWith('.jpeg');
+  }
+
+  Future<void> _openExternalUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) {
+      _showSnack('رابط الملف غير صالح');
+      return;
+    }
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened) _showSnack('تعذر فتح الملف');
   }
 
   Widget _infoBox(String label, String value, IconData icon) {
@@ -428,8 +545,57 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
   Widget? _actions(CashExpenseRead request) {
     final buttons = <Widget>[];
 
+    buttons.add(
+      _actionButton(
+        'طباعة',
+        Icons.print_rounded,
+        _roleColor,
+        () => _printRequest(request),
+      ),
+    );
+
+    if (_canRequestEdit(request)) {
+      buttons.add(
+        _actionButton(
+          'طلب تعديل',
+          Icons.edit_note_rounded,
+          AppTheme.warningColor,
+          () => _showRequestEdit(request),
+        ),
+      );
+    }
+
+    if (_canManagerApplyApprovedEdit(request)) {
+      buttons.add(
+        _actionButton(
+          'تعديل البيانات',
+          Icons.edit_rounded,
+          AppTheme.managerColor,
+          () => _showManagerEditAfterApproval(request),
+        ),
+      );
+    }
+
+    if (_canDecideEdit(request)) {
+      buttons.addAll([
+        _actionButton(
+          'موافقة التعديل',
+          Icons.check_rounded,
+          AppTheme.successColor,
+          () => _showEditApproval(request, approved: true),
+        ),
+        _actionButton(
+          'رفض التعديل',
+          Icons.close_rounded,
+          AppTheme.errorColor,
+          () => _showEditApproval(request, approved: false),
+        ),
+      ]);
+    }
+
     if (widget.role == UserRole.collector &&
-        request.status == CashExpenseStatus.pendingGeneralManagerReview) {
+        request.status == CashExpenseStatus.pendingGeneralManagerReview &&
+        !_allEditApprovalsApproved(request)) {
       buttons.addAll([
         _actionButton(
           'اعتماد / تعديل',
@@ -448,14 +614,20 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
 
     if (widget.role == UserRole.manager &&
         request.status == CashExpenseStatus.pendingInvoiceAttachment) {
-      buttons.add(
+      buttons.addAll([
         _actionButton(
-          'إرفاق الفاتورة',
+          'إرفاق واعتماد',
           Icons.upload_file_rounded,
           AppTheme.managerColor,
           () => _showInvoiceUpload(request),
         ),
-      );
+        _actionButton(
+          'بدون ملف',
+          Icons.file_present_rounded,
+          AppTheme.textSecondary,
+          () => _showApproveWithoutInvoice(request),
+        ),
+      ]);
     }
 
     if (widget.role == UserRole.accountant &&
@@ -494,6 +666,64 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _printRequest(CashExpenseRead request) async {
+    try {
+      await PdfService.printCashExpenseRequest(
+        data: request.data,
+        branchName: request.branchName,
+      );
+    } catch (e) {
+      _showSnack(
+        'تعذر طباعة السند: ${e.toString().replaceFirst('Exception: ', '')}',
+      );
+    }
+  }
+
+  bool _canRequestEdit(CashExpenseRead request) {
+    if (request.status.isFinal ||
+        request.status == CashExpenseStatus.editPendingApprovals ||
+        _allEditApprovalsApproved(request) ||
+        _canManagerApplyApprovedEdit(request)) {
+      return false;
+    }
+    return _editPartyForRole(widget.role) != null;
+  }
+
+  bool _canManagerApplyApprovedEdit(CashExpenseRead request) {
+    return widget.role == UserRole.manager &&
+        request.status == CashExpenseStatus.pendingGeneralManagerReview &&
+        _allEditApprovalsApproved(request);
+  }
+
+  bool _allEditApprovalsApproved(CashExpenseRead request) {
+    const parties = ['manager', 'general_manager', 'accountant'];
+    return request.editRequest.isNotEmpty &&
+        parties.every((party) {
+          final entry = request.editApprovals[party];
+          return entry is Map && entry['approved'] == true;
+        });
+  }
+
+  bool _canDecideEdit(CashExpenseRead request) {
+    if (request.status != CashExpenseStatus.editPendingApprovals) return false;
+    final party = _editPartyForRole(widget.role);
+    if (party == null) return false;
+    return !request.editApprovals.containsKey(party);
+  }
+
+  String? _editPartyForRole(UserRole role) {
+    switch (role) {
+      case UserRole.manager:
+        return 'manager';
+      case UserRole.collector:
+        return 'general_manager';
+      case UserRole.accountant:
+        return 'accountant';
+      case UserRole.admin:
+        return null;
+    }
   }
 
   Future<void> _showGeneralManagerDecision(
@@ -606,6 +836,104 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
     );
   }
 
+  Future<void> _showApproveWithoutInvoice(CashExpenseRead request) async {
+    final notes = TextEditingController(text: request.invoiceNotes);
+    await _dialog(
+      title: 'اعتماد بدون ملف مرفق',
+      children: [
+        const Text(
+          'سيتم إرسال سند الصرف للمحاسب بحالة بدون ملف مرفق.',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+        TextField(
+          controller: notes,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'ملاحظات اختيارية'),
+        ),
+      ],
+      onSubmit: () async {
+        await _service.approveWithoutInvoice(
+          requestId: request.id,
+          branchId: widget.branchId,
+          notes: notes.text,
+        );
+      },
+    );
+  }
+
+  Future<void> _showManagerEditAfterApproval(CashExpenseRead request) async {
+    final title = TextEditingController(text: request.title);
+    final description = TextEditingController(text: request.description);
+    final amount = TextEditingController(
+      text: _formatNumber(request.requestedAmount),
+    );
+    final notes = TextEditingController(text: request.managerNotes);
+    PlatformFile? pickedFile;
+
+    await _dialog(
+      title: 'تعديل بيانات سند الصرف',
+      children: [
+        TextField(
+          controller: title,
+          decoration: const InputDecoration(labelText: 'عنوان المصروف'),
+        ),
+        TextField(
+          controller: description,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'تفاصيل المصروف'),
+        ),
+        TextField(
+          controller: amount,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+          ],
+          decoration: const InputDecoration(labelText: 'المبلغ المطلوب'),
+        ),
+        StatefulBuilder(
+          builder: (context, setLocalState) {
+            return OutlinedButton.icon(
+              onPressed: () async {
+                final result = await FilePicker.pickFiles(
+                  type: FileType.custom,
+                  allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+                  withData: true,
+                );
+                if (result == null || result.files.isEmpty) return;
+                setLocalState(() => pickedFile = result.files.single);
+              },
+              icon: const Icon(Icons.attach_file_rounded),
+              label: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  pickedFile?.name ?? 'إرفاق ملف بديل اختياري',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            );
+          },
+        ),
+        TextField(
+          controller: notes,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'ملاحظات مدير الفرع'),
+        ),
+      ],
+      onSubmit: () async {
+        await _service.updateManagerRequestAfterEditApproval(
+          requestId: request.id,
+          title: title.text,
+          description: description.text,
+          amount: _parseNumber(amount.text),
+          branchId: widget.branchId,
+          notes: notes.text,
+          invoiceFileBytes: pickedFile?.bytes,
+          invoiceFileName: pickedFile?.name,
+        );
+      },
+    );
+  }
+
   Future<void> _showAccounting(CashExpenseRead request) async {
     final reference = TextEditingController(text: request.accountingReference);
     final notes = TextEditingController(text: request.accountantNotes);
@@ -629,6 +957,54 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
           requestId: request.id,
           accountingReference: reference.text,
           branchId: widget.branchId,
+          notes: notes.text,
+        );
+      },
+    );
+  }
+
+  Future<void> _showRequestEdit(CashExpenseRead request) async {
+    final reason = TextEditingController();
+    await _dialog(
+      title: 'طلب تعديل سند الصرف',
+      children: [
+        TextField(
+          controller: reason,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'سبب طلب التعديل'),
+        ),
+      ],
+      onSubmit: () async {
+        await _service.requestEdit(
+          requestId: request.id,
+          branchId: widget.branchId,
+          reason: reason.text,
+        );
+      },
+    );
+  }
+
+  Future<void> _showEditApproval(
+    CashExpenseRead request, {
+    required bool approved,
+  }) async {
+    final notes = TextEditingController();
+    await _dialog(
+      title: approved ? 'الموافقة على طلب التعديل' : 'رفض طلب التعديل',
+      children: [
+        TextField(
+          controller: notes,
+          maxLines: 3,
+          decoration: InputDecoration(
+            labelText: approved ? 'ملاحظات اختيارية' : 'سبب الرفض',
+          ),
+        ),
+      ],
+      onSubmit: () async {
+        await _service.submitEditApproval(
+          requestId: request.id,
+          branchId: widget.branchId,
+          approved: approved,
           notes: notes.text,
         );
       },
@@ -697,7 +1073,100 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
     );
   }
 
+  Widget _editRequestPanel(CashExpenseRead request) {
+    final editRequest = request.editRequest;
+    final approvals = request.editApprovals;
+    final reason = editRequest['reason']?.toString() ?? '-';
+    final requester = editRequest['requested_by_name']?.toString() ?? '-';
+    final requestedAt = _timestampToDate(editRequest['requested_at']);
+    return _panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.edit_note_rounded, color: AppTheme.warningColor),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'طلب تعديل السند',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ),
+              _statusChip(request.status),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            reason,
+            style: const TextStyle(color: AppTheme.textPrimary, height: 1.4),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '$requester${requestedAt == null ? '' : ' - ${_formatDate(requestedAt)}'}',
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _approvalPill('مدير الفرع', approvals['manager']),
+              _approvalPill('المدير العام', approvals['general_manager']),
+              _approvalPill('المحاسب', approvals['accountant']),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _approvalPill(String label, dynamic entry) {
+    final approval = entry is Map ? Map<String, dynamic>.from(entry) : null;
+    final approved = approval?['approved'] == true;
+    final rejected = approval?['approved'] == false;
+    final color = approved
+        ? AppTheme.successColor
+        : rejected
+        ? AppTheme.errorColor
+        : AppTheme.textSecondary;
+    final text = approved
+        ? 'موافق'
+        : rejected
+        ? 'مرفوض'
+        : 'بانتظار';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            approved
+                ? Icons.check_circle_rounded
+                : rejected
+                ? Icons.cancel_rounded
+                : Icons.schedule_rounded,
+            color: color,
+            size: 16,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$label: $text',
+            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _statusTimeline(CashExpenseRead request) {
+    final editPending =
+        request.status == CashExpenseStatus.editPendingApprovals;
     final steps = [
       const _TimelineStep(
         title: 'طلب مدير الفرع',
@@ -705,6 +1174,13 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
         icon: Icons.assignment_rounded,
         color: AppTheme.managerColor,
       ),
+      if (editPending)
+        const _TimelineStep(
+          title: 'موافقات التعديل',
+          subtitle: 'بانتظار موافقة الأدوار على إعادة فتح السند',
+          icon: Icons.edit_note_rounded,
+          color: AppTheme.warningColor,
+        ),
       const _TimelineStep(
         title: 'مراجعة المدير العام',
         subtitle: 'قبول أو رفض أو تعديل السند',
@@ -724,13 +1200,16 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
         color: AppTheme.accountantColor,
       ),
     ];
-    final current = switch (request.status) {
-      CashExpenseStatus.pendingGeneralManagerReview => 0,
-      CashExpenseStatus.rejectedByGeneralManager => 1,
-      CashExpenseStatus.pendingInvoiceAttachment => 2,
-      CashExpenseStatus.pendingAccountingApproval => 3,
-      CashExpenseStatus.approvedByAccountant => 3,
-    };
+    final current = editPending
+        ? 1
+        : switch (request.status) {
+            CashExpenseStatus.pendingGeneralManagerReview => 0,
+            CashExpenseStatus.rejectedByGeneralManager => 1,
+            CashExpenseStatus.pendingInvoiceAttachment => 2,
+            CashExpenseStatus.pendingAccountingApproval => 3,
+            CashExpenseStatus.approvedByAccountant => 3,
+            CashExpenseStatus.editPendingApprovals => 1,
+          };
 
     return _panel(
       child: Column(
@@ -1075,6 +1554,12 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
   String _formatDate(DateTime? value) {
     if (value == null) return '-';
     return _dateFormat.format(value);
+  }
+
+  DateTime? _timestampToDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return null;
   }
 
   String _formatNumber(double value) => _numberFormat.format(value);

@@ -2,12 +2,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/consumable_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/services/notification_service.dart';
 
 class ConsumableRequestService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final NotificationService _notificationService = NotificationService();
 
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(ConsumableRequestFields.collection);
+
+  Future<void> _notifySafely(Future<void> Function() notification) async {
+    try {
+      await notification();
+    } catch (_) {
+      // لا يجب أن يمنع فشل الإشعار تنفيذ العملية الأساسية.
+    }
+  }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRequests({
     required UserRole role,
@@ -68,6 +78,16 @@ class ConsumableRequestService {
         ),
       ],
     });
+    final savedRequest = await doc.get();
+    final savedData = savedRequest.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyConsumableRequestCreated(
+          requestId: doc.id,
+          requestData: savedData,
+        ),
+      );
+    }
   }
 
   Future<void> submitCollectorReview({
@@ -126,6 +146,16 @@ class ConsumableRequestService {
         ]),
       });
     });
+    final savedRequest = await docRef.get();
+    final savedData = savedRequest.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyConsumableCollectorReviewed(
+          requestId: requestId,
+          requestData: savedData,
+        ),
+      );
+    }
   }
 
   Future<void> approveAccounting({
@@ -177,6 +207,16 @@ class ConsumableRequestService {
         ]),
       });
     });
+    final savedRequest = await docRef.get();
+    final savedData = savedRequest.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyConsumableAccountingApproved(
+          requestId: requestId,
+          requestData: savedData,
+        ),
+      );
+    }
   }
 
   Future<Map<String, String>> _getCurrentActor() async {

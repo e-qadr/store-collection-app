@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 // ضع قيمة قوية وطويلة هنا، ثم استخدم نفس القيمة في INVOICE_UPLOAD_TOKEN داخل التطبيق.
-const UPLOAD_TOKEN = 'CHANGE_ME_TO_A_LONG_RANDOM_TOKEN';
+const UPLOAD_TOKEN = 'uP9xK7mQ2vR6sT4nY8bL3wZ5aH1cD0eF9gJ2kM7pX4qN8rS6';
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 $allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'];

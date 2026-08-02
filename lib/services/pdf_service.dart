@@ -31,6 +31,25 @@ class PdfService {
   static String _status(dynamic value) =>
       AppTheme.statusLabel(value?.toString() ?? '');
 
+  static String _cashExpenseStatus(dynamic value) {
+    switch (value?.toString()) {
+      case 'pendingGeneralManagerReview':
+        return 'بانتظار المدير العام';
+      case 'rejectedByGeneralManager':
+        return 'مرفوض من المدير العام';
+      case 'pendingInvoiceAttachment':
+        return 'بانتظار إرفاق الفاتورة';
+      case 'pendingAccountingApproval':
+        return 'بانتظار اعتماد المحاسب';
+      case 'editPendingApprovals':
+        return 'طلب تعديل بانتظار الموافقات';
+      case 'approvedByAccountant':
+        return 'معتمد نهائياً';
+      default:
+        return 'غير معروف';
+    }
+  }
+
   static String _amountMatchStatus(dynamic value) {
     if (value == true) return 'matched';
     if (value == false) return 'unmatched';
@@ -345,6 +364,83 @@ class PdfService {
     return pdf.save();
   }
 
+  static Future<Uint8List> buildCashExpenseRequest({
+    required Map<String, dynamic> data,
+    required String branchName,
+  }) async {
+    final pdf = pw.Document();
+    final theme = await _theme();
+    final requestNumber = data['request_number']?.toString() ?? '-';
+    final currency = data['currency']?.toString() ?? 'YER';
+    final attachment = data['invoice_attachment'];
+    final invoice = attachment is Map ? attachment : const {};
+    final invoiceName = invoice['name']?.toString() ?? '';
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        theme: theme,
+        textDirection: pw.TextDirection.rtl,
+        margin: const pw.EdgeInsets.all(32),
+        footer: _footer,
+        build: (_) => [
+          _documentHeader(
+            title: 'سند صرف نقدي',
+            subtitle: 'رقم السند: $requestNumber',
+            branchName: branchName,
+          ),
+          pw.SizedBox(height: 18),
+          _sectionTitle('بيانات السند'),
+          _detailsGrid([
+            ['رقم السند', requestNumber],
+            ['الفرع', branchName],
+            ['تاريخ الطلب', _date(data['created_at'], withTime: true)],
+            ['عنوان المصروف', data['title']?.toString() ?? '-'],
+            ['حالة السند', _cashExpenseStatus(data['status'])],
+            [
+              'المرجع المحاسبي',
+              (data['accounting_reference']?.toString() ?? '').isEmpty
+                  ? '-'
+                  : data['accounting_reference'].toString(),
+            ],
+          ]),
+          pw.SizedBox(height: 14),
+          _cashExpenseAmountSummary(
+            requestedAmount: _amount(data['requested_amount']),
+            approvedAmount: _amount(data['approved_amount']),
+            currency: currency,
+          ),
+          pw.SizedBox(height: 14),
+          _sectionTitle('تفاصيل المصروف'),
+          _noteBox('وصف المصروف', data['description']?.toString()),
+          pw.SizedBox(height: 8),
+          _sectionTitle('المرفق'),
+          _detailsGrid([
+            [
+              'حالة الملف',
+              (invoice['url']?.toString() ?? '').isEmpty
+                  ? 'بدون ملف مرفق'
+                  : 'ملف مرفق',
+            ],
+            ['اسم الملف', invoiceName.isEmpty ? '-' : invoiceName],
+          ]),
+          pw.SizedBox(height: 14),
+          _sectionTitle('الملاحظات'),
+          _noteBox('ملاحظات مدير الفرع', data['manager_notes']?.toString()),
+          _noteBox(
+            'ملاحظات المدير العام',
+            data['general_manager_notes']?.toString(),
+          ),
+          _noteBox('ملاحظات الفاتورة', data['invoice_notes']?.toString()),
+          _noteBox('ملاحظات المحاسب', data['accountant_notes']?.toString()),
+          pw.SizedBox(height: 28),
+          _signatures(),
+        ],
+      ),
+    );
+    return pdf.save();
+  }
+
   static Future<void> printInterBranchInvoice({
     required Map<String, dynamic> data,
     bool showPrices = true,
@@ -371,6 +467,38 @@ class PdfService {
     return FileSaver.instance.saveFile(
       name:
           'فاتورة_فروع_${_safeName(data['invoice_number']?.toString() ?? 'جديدة')}',
+      bytes: bytes,
+      fileExtension: 'pdf',
+      mimeType: MimeType.pdf,
+    );
+  }
+
+  static Future<void> printCashExpenseRequest({
+    required Map<String, dynamic> data,
+    required String branchName,
+  }) async {
+    final bytes = await buildCashExpenseRequest(
+      data: data,
+      branchName: branchName,
+    );
+    await Printing.layoutPdf(
+      onLayout: (_) async => bytes,
+      name:
+          'سند_صرف_${_safeName(data['request_number']?.toString() ?? 'جديد')}.pdf',
+    );
+  }
+
+  static Future<String?> saveCashExpenseRequest({
+    required Map<String, dynamic> data,
+    required String branchName,
+  }) async {
+    final bytes = await buildCashExpenseRequest(
+      data: data,
+      branchName: branchName,
+    );
+    return FileSaver.instance.saveFile(
+      name:
+          'سند_صرف_${_safeName(data['request_number']?.toString() ?? 'جديد')}',
       bytes: bytes,
       fileExtension: 'pdf',
       mimeType: MimeType.pdf,
@@ -571,6 +699,56 @@ class PdfService {
                 pw.Text('الموجود على الكاشير: $cashierAmount $currency'),
               if (isUnmatched && amountDifference != null)
                 pw.Text('الفرق: $amountDifference $currency'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _cashExpenseAmountSummary({
+    required String requestedAmount,
+    required String approvedAmount,
+    required String currency,
+  }) {
+    final changed = requestedAmount != approvedAmount;
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(14),
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(
+          color: changed ? PdfColors.orange400 : PdfColors.green300,
+        ),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+      ),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text('المبلغ المطلوب'),
+              pw.Text(
+                '$requestedAmount $currency',
+                style: pw.TextStyle(
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.end,
+            children: [
+              pw.Text('المبلغ المعتمد'),
+              pw.Text(
+                '$approvedAmount $currency',
+                style: pw.TextStyle(
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.Text(changed ? 'تم تعديل المبلغ' : 'بدون تعديل'),
             ],
           ),
         ],
