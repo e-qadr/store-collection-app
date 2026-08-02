@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/services/auth_service.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -29,9 +30,10 @@ class _LoginScreenState extends State<LoginScreen> {
     // استخدام الخدمة التي برمجناها سابقاً
     final user = await _authService.loginUser(
       email: _emailController.text.trim(),
-      password: _passwordController.text.trim(),
+      password: _passwordController.text,
     );
 
+    if (!mounted) return;
     setState(() => _isLoading = false);
 
     if (user == null) {
@@ -44,6 +46,91 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
     // ملاحظة: لا نحتاج للانتقال يدوياً، لأن AuthGate سيكتشف حالة تسجيل الدخول ويقوم بالتوجيه
+  }
+
+  Future<void> _forgotPassword() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final controller = TextEditingController(
+      text: _emailController.text.trim(),
+    );
+    var submitting = false;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !submitting,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.mark_email_read_outlined),
+              SizedBox(width: 10),
+              Text('نسيت كلمة المرور؟'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'أدخل بريدك الإلكتروني وسنرسل تعليمات الاستعادة إن كان مرتبطاً بحساب.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                enabled: !submitting,
+                keyboardType: TextInputType.emailAddress,
+                textDirection: TextDirection.ltr,
+                decoration: const InputDecoration(
+                  labelText: 'البريد الإلكتروني',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: submitting
+                  ? null
+                  : () async {
+                      setDialogState(() => submitting = true);
+                      try {
+                        await _authService.sendForgotPasswordEmail(
+                          controller.text,
+                        );
+                        if (!dialogContext.mounted) return;
+                        Navigator.pop(dialogContext);
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'إذا كان البريد مرتبطاً بحساب، فسيتم إرسال رسالة لإعادة تعيين كلمة المرور.',
+                            ),
+                            duration: Duration(seconds: 6),
+                          ),
+                        );
+                      } on AuthApiException catch (error) {
+                        if (!dialogContext.mounted) return;
+                        ScaffoldMessenger.of(
+                          dialogContext,
+                        ).showSnackBar(SnackBar(content: Text(error.message)));
+                        setDialogState(() => submitting = false);
+                      }
+                    },
+              child: submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('إرسال'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
   }
 
   @override
@@ -191,7 +278,14 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 30),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: _isLoading ? null : _forgotPassword,
+                              child: const Text('نسيت كلمة المرور؟'),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
 
                           // Login Button
                           AnimatedSwitcher(

@@ -2,8 +2,11 @@ require("dotenv").config();
 
 const express = require("express");
 const admin = require("firebase-admin");
+const {createPasswordManagementRouter} = require("./password-management");
 
 const app = express();
+app.set("trust proxy", 1);
+app.use(express.json({limit: "16kb"}));
 const port = Number(process.env.PORT || 3000);
 const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS || 5000);
 const androidNotificationChannelId =
@@ -95,6 +98,41 @@ try {
   console.error("Firebase configuration failed", error);
 }
 
+const allowedOrigins = new Set(
+    String(process.env.ALLOWED_ORIGINS || "")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+);
+app.use((request, response, next) => {
+  const origin = request.get("origin");
+  if (origin && allowedOrigins.has(origin)) {
+    response.set("Access-Control-Allow-Origin", origin);
+    response.set("Vary", "Origin");
+    response.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    response.set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+  }
+  if (request.method === "OPTIONS") {
+    response.sendStatus(origin && !allowedOrigins.has(origin) ? 403 : 204);
+    return;
+  }
+  if (origin && !allowedOrigins.has(origin)) {
+    response.status(403).json({error: {code: "origin-forbidden"}});
+    return;
+  }
+  next();
+});
+
+if (firestore) {
+  app.use("/v1", createPasswordManagementRouter({
+    admin,
+    firestore,
+    firebaseApiKey: process.env.FIREBASE_WEB_API_KEY,
+    firebaseEmailLocale: process.env.FIREBASE_EMAIL_LOCALE || "ar",
+    passwordResetContinueUrl: process.env.PASSWORD_RESET_CONTINUE_URL,
+  }));
+}
+
 app.get("/", (_request, response) => {
   response.json({
     service: "store-collection-push-server",
@@ -110,6 +148,7 @@ app.get("/health", (_request, response) => {
     workerRunning,
     pollIntervalMs,
     androidNotificationChannelId,
+    passwordEmailReady: Boolean(process.env.FIREBASE_WEB_API_KEY),
     lastWorkerRunAt: lastWorkerRunAt ?? null,
     lastWorkerError: lastWorkerError ?? null,
     timestamp: new Date().toISOString(),

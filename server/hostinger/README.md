@@ -4,17 +4,21 @@
 
 ## الخطوات
 
-1. افتح `upload_invoice.php`.
-2. غيّر قيمة `UPLOAD_TOKEN` إلى نص طويل وسري، مثل:
+1. انسخ `upload_invoice.config.example.php` إلى `upload_invoice.config.php`.
+2. ضع التوكن الطويل والسري في ملف الإعداد المحلي، مثل:
 
    ```php
-   const UPLOAD_TOKEN = 'ضع_رمز_طويل_وسري_هنا';
+   return ['upload_token' => 'ضع_رمزًا_طويلًا_وعشوائيًا_هنا'];
    ```
 
-3. ارفع الملف إلى الاستضافة، مثلاً:
+   ملف `upload_invoice.config.php` مستثنى من Git. ويمكن بدلًا منه ضبط متغير البيئة
+   `INVOICE_UPLOAD_TOKEN` على الخادم.
+
+3. ارفع `upload_invoice.php` وملف الإعداد المحلي إلى الاستضافة، مثل:
 
    ```text
    public_html/api/upload_invoice.php
+   public_html/api/upload_invoice.config.php
    ```
 
 4. تأكد أن مجلد `api` قابل للكتابة، أو أن PHP يستطيع إنشاء مجلد:
@@ -44,4 +48,5 @@
 - الملفات المسموحة حالياً: `pdf`, `jpg`, `jpeg`, `png`.
 - الحد الأقصى الافتراضي: `10 MB`.
 - التطبيق سيحفظ رابط الملف الراجع من الاستضافة داخل Firestore.
-- لا تضع التوكن الحقيقي داخل مستودع عام.
+- لا تضع التوكن الحقيقي داخل مستودع عام أو أرشيف عام.
+- لا ترفع `upload_invoice.config.php` إلى Git.

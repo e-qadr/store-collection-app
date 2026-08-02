@@ -43,3 +43,22 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local secrets and environment configuration
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+.vscode/*.local.json
+server/hostinger/upload_invoice.config.php
+
+# Server dependencies and deployment archives
+node_modules/
+*.zip
+
+# Firebase Admin service-account credentials (client google-services.json is not a secret key)
+**/*service-account*.json
+**/*service_account*.json
+**/serviceAccountKey*.json
+**/firebase-adminsdk*.json
+**/google-application-credentials*.json

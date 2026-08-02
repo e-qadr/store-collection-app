@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/screens/admin/branch_management_screen.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
 
@@ -16,7 +16,8 @@ class UserManagementScreen extends StatefulWidget {
 class _UserManagementScreenState extends State<UserManagementScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
+  final AuthApiService _authApiService = AuthApiService();
+  final Set<String> _resettingUsers = <String>{};
 
   bool _isLoading = false;
   String _selectedRole = 'collector';
@@ -26,9 +27,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   // 1. الإضافة (Create)
   Future<void> _createNewUser() async {
-    if (_emailController.text.isEmpty ||
-        _passwordController.text.isEmpty ||
-        _nameController.text.isEmpty) {
+    if (_emailController.text.isEmpty || _nameController.text.isEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('الرجاء تعبئة جميع الحقول')));
@@ -45,59 +44,27 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     setState(() => _isLoading = true);
 
     try {
-      FirebaseApp tempApp = await Firebase.initializeApp(
-        name: 'TemporaryRegisterApp',
-        options: Firebase.app().options,
+      final delivery = await _authApiService.createUser(
+        name: _nameController.text.trim(),
+        email: _emailController.text.trim(),
+        role: _selectedRole,
+        branchId: _selectedRole == 'manager' ? _selectedBranchId : null,
       );
 
-      UserCredential userCredential =
-          await FirebaseAuth.instanceFor(
-            app: tempApp,
-          ).createUserWithEmailAndPassword(
-            email: _emailController.text.trim(),
-            password: _passwordController.text.trim(),
-          );
-
-      if (userCredential.user != null) {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userCredential.user!.uid)
-            .set({
-              'uid': userCredential.user!.uid,
-              'name': _nameController.text.trim(),
-              'email': _emailController.text.trim(),
-              'role': _selectedRole,
-              'branchId': _selectedRole == 'manager' ? _selectedBranchId : null,
-              'createdAt': FieldValue.serverTimestamp(),
-              'isActive': true,
-            });
-      }
-
-      await tempApp.delete();
-
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إنشاء الحساب بنجاح!'),
-            backgroundColor: Colors.green,
-          ),
-        );
         _nameController.clear();
         _emailController.clear();
-        _passwordController.clear();
         setState(() {
           _selectedBranchId = null;
         });
-      }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message ?? 'خطأ أثناء الإنشاء'),
-            backgroundColor: Colors.red,
-          ),
+        await _showCredentialDelivery(
+          delivery,
+          emailMessage:
+              'تم إنشاء الحساب وإرسال رابط آمن لإعداد كلمة المرور إلى البريد الإلكتروني.',
         );
       }
+    } on AuthApiException catch (error) {
+      if (mounted) _showError(error.message);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -105,38 +72,175 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   // 2. تحديث الدور
   Future<void> _updateUserRole(String uid, String newRole) async {
-    Map<String, dynamic> updates = {'role': newRole};
-
-    if (newRole != 'manager') {
-      updates['branchId'] = FieldValue.delete();
-    }
-
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .update(updates);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم تحديث الصلاحية بنجاح'),
-          backgroundColor: Colors.green,
-        ),
+    try {
+      await _authApiService.updateUser(
+        uid,
+        role: newRole,
+        clearBranch: newRole != 'manager',
       );
+      if (mounted) _showSuccess('تم تحديث الصلاحية بنجاح');
+    } on AuthApiException catch (error) {
+      if (mounted) _showError(error.message);
     }
   }
 
   // 3. الإيقاف والتفعيل
   Future<void> _toggleUserStatus(String uid, bool currentStatus) async {
-    await FirebaseFirestore.instance.collection('users').doc(uid).update({
-      'isActive': !currentStatus,
-    });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(!currentStatus ? 'تم تفعيل الحساب' : 'تم إيقاف الحساب'),
-          backgroundColor: !currentStatus ? Colors.green : Colors.orange,
+    try {
+      await _authApiService.updateUser(uid, isActive: !currentStatus);
+      if (mounted) {
+        _showSuccess(!currentStatus ? 'تم تفعيل الحساب' : 'تم إيقاف الحساب');
+      }
+    } on AuthApiException catch (error) {
+      if (mounted) _showError(error.message);
+    }
+  }
+
+  Future<void> _resetPassword(String uid, String name) async {
+    if (_resettingUsers.contains(uid)) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('إعادة تعيين كلمة المرور'),
+        content: Text(
+          'هل تريد إعادة تعيين كلمة مرور $name؟ سيتم إلغاء الجلسات الحالية وإلزام المستخدم بإنشاء كلمة مرور جديدة.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('متابعة'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _resettingUsers.add(uid));
+    try {
+      final delivery = await _authApiService.adminResetPassword(uid);
+      if (!mounted) return;
+      await _showCredentialDelivery(
+        delivery,
+        emailMessage:
+            'تم إلغاء الجلسات وإرسال رابط آمن لإعادة تعيين كلمة المرور.',
+      );
+    } on AuthApiException catch (error) {
+      if (mounted) _showError(error.message);
+    } finally {
+      if (mounted) setState(() => _resettingUsers.remove(uid));
+    }
+  }
+
+  Future<void> _showCredentialDelivery(
+    CredentialDelivery delivery, {
+    required String emailMessage,
+  }) async {
+    if (delivery.emailSent) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          icon: const Icon(
+            Icons.mark_email_read_outlined,
+            color: AppTheme.successColor,
+            size: 42,
+          ),
+          title: const Text('تمت العملية بنجاح'),
+          content: Text(emailMessage, textAlign: TextAlign.center),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('حسناً'),
+            ),
+          ],
         ),
       );
+      return;
+    }
+    final password = delivery.temporaryPassword;
+    if (password == null) {
+      _showError('تم إنشاء الحساب، لكن تعذر تسليم بيانات الدخول.');
+      return;
+    }
+    var copied = false;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          icon: const Icon(
+            Icons.key_rounded,
+            color: AppTheme.warningColor,
+            size: 42,
+          ),
+          title: const Text('كلمة مرور مؤقتة — تظهر مرة واحدة'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'تعذر إرسال البريد، لذا أنشأ الخادم كلمة مرور مؤقتة. انسخها الآن؛ لن يمكن عرضها بعد إغلاق النافذة.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              SelectableText(
+                password,
+                textDirection: TextDirection.ltr,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                delivery.expiresAt == null
+                    ? 'تنتهي صلاحيتها خلال 24 ساعة.'
+                    : 'تنتهي صلاحيتها خلال 24 ساعة ويجب تغييرها عند أول دخول.',
+                style: const TextStyle(color: AppTheme.textSecondary),
+              ),
+            ],
+          ),
+          actions: [
+            OutlinedButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: password));
+                setDialogState(() => copied = true);
+              },
+              icon: Icon(copied ? Icons.check_rounded : Icons.copy_rounded),
+              label: Text(copied ? 'تم النسخ' : 'نسخ'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إغلاق نهائي'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: AppTheme.successColor),
+    );
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: AppTheme.errorColor),
+    );
+  }
+
+  int _createdAtMillis(QueryDocumentSnapshot document) {
+    final data = document.data() as Map<String, dynamic>;
+    try {
+      return (data['createdAt']?.toDate() as DateTime?)
+              ?.millisecondsSinceEpoch ??
+          0;
+    } catch (_) {
+      return 0;
     }
   }
 
@@ -238,25 +342,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     ),
                   ),
                   onPressed: () async {
-                    if (newBranchId == null) {
-                      await FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(uid)
-                          .update({'branchId': FieldValue.delete()});
-                    } else {
-                      await FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(uid)
-                          .update({'branchId': newBranchId});
-                    }
-                    if (screenContext.mounted) {
-                      Navigator.pop(screenContext);
-                      ScaffoldMessenger.of(screenContext).showSnackBar(
-                        const SnackBar(
-                          content: Text('تم تحديث الفرع بنجاح'),
-                          backgroundColor: Colors.green,
-                        ),
+                    try {
+                      await _authApiService.updateUser(
+                        uid,
+                        branchId: newBranchId,
+                        clearBranch: newBranchId == null,
                       );
+                      if (screenContext.mounted) {
+                        Navigator.pop(context);
+                        _showSuccess('تم تحديث الفرع بنجاح');
+                      }
+                    } on AuthApiException catch (error) {
+                      if (screenContext.mounted) _showError(error.message);
                     }
                   },
                   icon: const Icon(Icons.save_rounded, size: 18),
@@ -268,6 +365,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         );
       },
     );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    super.dispose();
   }
 
   @override
@@ -352,20 +456,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               ),
                             ),
                             prefixIcon: Icon(Icons.email_rounded),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _passwordController,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                            labelText: 'كلمة المرور',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(12),
-                              ),
-                            ),
-                            prefixIcon: Icon(Icons.lock_rounded),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -534,7 +624,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
               child: StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance
                     .collection('users')
-                    .orderBy('createdAt', descending: true)
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
@@ -567,7 +656,24 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     );
                   }
 
-                  final users = snapshot.data!.docs;
+                  final users =
+                      snapshot.data!.docs.where((document) {
+                        final data = document.data() as Map<String, dynamic>;
+                        return data['role'] != 'admin';
+                      }).toList()..sort(
+                        (first, second) => _createdAtMillis(
+                          second,
+                        ).compareTo(_createdAtMillis(first)),
+                      );
+
+                  if (users.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        'لا يوجد مستخدمون قابلون للإدارة',
+                        style: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                    );
+                  }
 
                   return RefreshIndicator(
                     onRefresh: () => refreshFirestoreQueries([
@@ -758,6 +864,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       onSelected: (value) {
                                         if (value == 'toggle') {
                                           _toggleUserStatus(doc.id, isActive);
+                                        } else if (value == 'reset_password') {
+                                          _resetPassword(
+                                            doc.id,
+                                            data['name'] ?? 'المستخدم',
+                                          );
                                         } else if (value == 'edit_branch') {
                                           _showAssignBranchDialog(
                                             doc.id,
@@ -811,6 +922,20 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                             ),
                                           ),
                                         const PopupMenuDivider(),
+                                        const PopupMenuItem(
+                                          value: 'reset_password',
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.password_rounded,
+                                                size: 18,
+                                                color: AppTheme.warningColor,
+                                              ),
+                                              SizedBox(width: 8),
+                                              Text('إعادة تعيين كلمة المرور'),
+                                            ],
+                                          ),
+                                        ),
                                         if (role == 'manager')
                                           const PopupMenuItem(
                                             value: 'edit_branch',

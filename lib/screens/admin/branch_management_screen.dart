@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class BranchManagementScreen extends StatefulWidget {
@@ -13,6 +14,7 @@ class BranchManagementScreen extends StatefulWidget {
 class _BranchManagementScreenState extends State<BranchManagementScreen> {
   final TextEditingController _branchNameController = TextEditingController();
   final TextEditingController _branchCodeController = TextEditingController();
+  final AuthApiService _authApiService = AuthApiService();
   String? _selectedBrandId;
   String? _selectedBrandName;
 
@@ -290,43 +292,29 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                     ),
                   ),
                   onPressed: () async {
-                    WriteBatch batch = FirebaseFirestore.instance.batch();
-                    DocumentReference branchRef = FirebaseFirestore.instance
-                        .collection('branches')
-                        .doc(branchId);
-
-                    if (selectedManagerId == null) {
-                      batch.update(branchRef, {'branch_manager_id': ''});
-                      if (currentManagerId.isNotEmpty) {
-                        DocumentReference oldManagerRef = FirebaseFirestore
-                            .instance
-                            .collection('users')
-                            .doc(currentManagerId);
-                        batch.update(oldManagerRef, {
-                          'branchId': FieldValue.delete(),
-                        });
-                      }
-                    } else {
-                      batch.update(branchRef, {
-                        'branch_manager_id': selectedManagerId,
-                      });
-                      DocumentReference newManagerRef = FirebaseFirestore
-                          .instance
-                          .collection('users')
-                          .doc(selectedManagerId);
-                      batch.update(newManagerRef, {'branchId': branchId});
-                    }
-
-                    await batch.commit();
-
-                    if (screenContext.mounted) {
-                      Navigator.pop(screenContext);
-                      ScaffoldMessenger.of(screenContext).showSnackBar(
-                        const SnackBar(
-                          content: Text('تم تحديث إدارة الفرع'),
-                          backgroundColor: Colors.green,
-                        ),
+                    try {
+                      await _authApiService.assignBranchManager(
+                        branchId: branchId,
+                        managerUid: selectedManagerId,
                       );
+                      if (screenContext.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(screenContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('تم تحديث إدارة الفرع'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    } on AuthApiException catch (error) {
+                      if (screenContext.mounted) {
+                        ScaffoldMessenger.of(screenContext).showSnackBar(
+                          SnackBar(
+                            content: Text(error.message),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
                     }
                   },
                   icon: const Icon(Icons.save_rounded, size: 18),

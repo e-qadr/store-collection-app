@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/screens/account/account_settings_screen.dart';
 import 'package:store_collection_app/screens/cash_expenses/cash_expenses_dashboard.dart';
 import 'package:store_collection_app/screens/dashboards/accountant_branches_screen.dart';
 import 'package:store_collection_app/screens/dashboards/accountant_dashboard.dart';
@@ -41,6 +42,16 @@ class SystemSelectionScreen extends StatelessWidget {
               backgroundColor: color,
               actions: [
                 const NotificationBell(),
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: 'إعدادات الحساب',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AccountSettingsScreen(),
+                    ),
+                  ),
+                ),
                 IconButton(
                   icon: const Icon(Icons.logout_rounded),
                   tooltip: 'تسجيل الخروج',

@@ -1,12 +1,16 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 // تأكد من مسار الاستيراد الصحيح لنموذج المستخدم
 import 'package:store_collection_app/models/user_model.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final AuthApiService _authApiService;
+
+  AuthService({AuthApiService? authApiService})
+    : _authApiService = authApiService ?? AuthApiService();
 
   // دالة تسجيل الدخول
   Future<UserModel?> loginUser({
@@ -33,22 +37,13 @@ class AuthService {
           // 3. تحويل البيانات القادمة إلى UserModel الذي برمجناه سابقاً
           return UserModel.fromJson(doc.data() as Map<String, dynamic>);
         } else {
-          debugPrint("لا توجد بيانات لهذا المستخدم في قاعدة البيانات");
+          await _auth.signOut();
           return null;
         }
       }
-    } on FirebaseAuthException catch (e) {
-      // التعامل مع أخطاء تسجيل الدخول (مثل كلمة مرور خاطئة)
-      if (e.code == 'user-not-found') {
-        debugPrint('لم يتم العثور على حساب بهذا البريد الإلكتروني.');
-      } else if (e.code == 'wrong-password') {
-        debugPrint('كلمة المرور غير صحيحة.');
-      } else {
-        debugPrint('حدث خطأ: ${e.message}');
-      }
+    } on FirebaseAuthException {
       return null;
     } catch (e) {
-      debugPrint('حدث خطأ غير متوقع: $e');
       return null;
     }
     return null;
@@ -61,4 +56,31 @@ class AuthService {
 
   // الاستماع لحالة المستخدم (هل هو مسجل دخول أم لا)
   Stream<User?> get authStateChanges => _auth.authStateChanges();
+
+  Future<void> sendForgotPasswordEmail(String email) =>
+      _authApiService.sendForgotPasswordEmail(email.trim().toLowerCase());
+
+  Future<void> reauthenticate(String currentPassword) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+    if (user == null || email == null) {
+      throw const AuthApiException(
+        'unauthenticated',
+        'انتهت جلسة الدخول. سجل الدخول مجدداً.',
+      );
+    }
+    await user.reauthenticateWithCredential(
+      EmailAuthProvider.credential(email: email, password: currentPassword),
+    );
+  }
+
+  Future<void> changePassword(String newPassword) =>
+      _authApiService.changePassword(newPassword);
+
+  Future<void> claimTemporaryCredential() async {
+    final customToken = await _authApiService.claimTemporaryCredential();
+    await _auth.signInWithCustomToken(customToken);
+  }
+
+  Future<void> completeEmailSetup() => _authApiService.completeEmailSetup();
 }

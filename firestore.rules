@@ -1,0 +1,87 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function operationalUser() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        profile().get('isActive', true) == true &&
+        profile().get('mustChangePassword', false) == false;
+    }
+
+    function adminUser() {
+      return operationalUser() && profile().get('role', '') == 'admin';
+    }
+
+    match /users/{uid} {
+      allow read: if operationalUser() || (signedIn() && request.auth.uid == uid);
+      allow create, delete: if false;
+      allow update: if signedIn() && request.auth.uid == uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'notification_tokens',
+          'notifications_enabled',
+          'notification_platform',
+          'notification_token_updated_at'
+        ]);
+    }
+
+    match /password_audit_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /brands/{document=**} {
+      allow read: if operationalUser();
+      allow write: if adminUser();
+    }
+
+    match /branches/{document=**} {
+      allow read: if operationalUser();
+      allow write: if adminUser();
+    }
+
+    match /branch_codes/{document=**} {
+      allow read: if operationalUser();
+      allow write: if adminUser();
+    }
+
+    match /transactions/{document=**} {
+      allow read, write: if operationalUser();
+    }
+
+    match /branch_transaction_counters/{document=**} {
+      allow read, write: if operationalUser();
+    }
+
+    match /notifications/{document=**} {
+      allow read, write: if operationalUser();
+    }
+
+    match /consumable_requests/{document=**} {
+      allow read, write: if operationalUser();
+    }
+
+    match /cash_expense_requests/{document=**} {
+      allow read, write: if operationalUser();
+    }
+
+    match /cash_expense_request_counters/{document=**} {
+      allow read, write: if operationalUser();
+    }
+
+    match /inter_branch_invoices/{document=**} {
+      allow read, write: if operationalUser();
+    }
+
+    match /inter_branch_invoice_counters/{document=**} {
+      allow read, write: if operationalUser();
+    }
+  }
+}

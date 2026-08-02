@@ -6,6 +6,7 @@ import 'package:store_collection_app/models/user_model.dart';
 import 'package:store_collection_app/models/enums.dart';
 
 import 'package:store_collection_app/screens/auth/login_screen.dart';
+import 'package:store_collection_app/screens/auth/mandatory_password_change_screen.dart';
 import 'package:store_collection_app/screens/dashboards/admin_dashboard.dart';
 import 'package:store_collection_app/screens/systems/system_selection_screen.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
@@ -25,11 +26,11 @@ class AuthGate extends StatelessWidget {
         }
 
         if (snapshot.hasData && snapshot.data != null) {
-          return FutureBuilder<DocumentSnapshot>(
-            future: FirebaseFirestore.instance
+          return StreamBuilder<DocumentSnapshot>(
+            stream: FirebaseFirestore.instance
                 .collection('users')
                 .doc(snapshot.data!.uid)
-                .get(),
+                .snapshots(),
             builder: (context, roleSnapshot) {
               if (roleSnapshot.connectionState == ConnectionState.waiting) {
                 return const Scaffold(
@@ -41,6 +42,18 @@ class AuthGate extends StatelessWidget {
                 UserModel user = UserModel.fromJson(
                   roleSnapshot.data!.data() as Map<String, dynamic>,
                 );
+
+                if (!user.isActive) {
+                  return const _UnavailableAccountScreen();
+                }
+
+                if (user.mustChangePassword) {
+                  return MandatoryPasswordChangeScreen(
+                    credentialExpired: user.temporaryCredentialExpired,
+                    claimRequired: user.passwordState == 'temporary',
+                    emailSetupPending: user.passwordState == 'email_setup_sent',
+                  );
+                }
 
                 switch (user.role) {
                   case UserRole.admin:
@@ -124,6 +137,46 @@ class AuthGate extends StatelessWidget {
 
         return const LoginScreen();
       },
+    );
+  }
+}
+
+class _UnavailableAccountScreen extends StatelessWidget {
+  const _UnavailableAccountScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.block_rounded, size: 58, color: Colors.red),
+                const SizedBox(height: 16),
+                const Text(
+                  'هذا الحساب موقوف حالياً',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'تواصل مع مسؤول النظام إذا كنت تعتقد أن هذا غير صحيح.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: () => confirmAndSignOut(context),
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('تسجيل الخروج'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

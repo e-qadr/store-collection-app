@@ -7,10 +7,20 @@
       "type": "dart",
       "toolArgs": [
         "--dart-define",
+        "AUTH_API_BASE_URL=https://lemonchiffon-penguin-698240.hostingersite.com",
+        "--dart-define",
         "INVOICE_UPLOAD_URL=https://skyblue-mongoose-418684.hostingersite.com/api/upload_invoice.php",
         "--dart-define",
-        "INVOICE_UPLOAD_TOKEN=uP9xK7mQ2vR6sT4nY8bL3wZ5aH1cD0eF9gJ2kM7pX4qN8rS6"
+        "INVOICE_UPLOAD_TOKEN=${input:invoiceUploadToken}"
       ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "invoiceUploadToken",
+      "type": "promptString",
+      "description": "Invoice upload token",
+      "password": true
     }
   ]
 }

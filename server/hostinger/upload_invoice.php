@@ -1,8 +1,6 @@
 <?php
 declare(strict_types=1);
 
-// ضع قيمة قوية وطويلة هنا، ثم استخدم نفس القيمة في INVOICE_UPLOAD_TOKEN داخل التطبيق.
-const UPLOAD_TOKEN = 'uP9xK7mQ2vR6sT4nY8bL3wZ5aH1cD0eF9gJ2kM7pX4qN8rS6';
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 $allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'];
@@ -35,6 +33,20 @@ function header_value(string $name): string
     return $_SERVER[$serverKey] ?? '';
 }
 
+$environmentToken = getenv('INVOICE_UPLOAD_TOKEN');
+$uploadToken = is_string($environmentToken) ? $environmentToken : '';
+$localConfigPath = __DIR__ . '/upload_invoice.config.php';
+if ($uploadToken === '' && is_file($localConfigPath)) {
+    $localConfig = require $localConfigPath;
+    if (is_array($localConfig) && isset($localConfig['upload_token'])) {
+        $uploadToken = (string) $localConfig['upload_token'];
+    }
+}
+
+if ($uploadToken === '') {
+    respond(503, ['ok' => false, 'error' => 'Upload service is not configured']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     respond(405, ['ok' => false, 'error' => 'Method not allowed']);
 }
@@ -45,7 +57,7 @@ if ($token === '' && str_starts_with($authorization, 'Bearer ')) {
     $token = substr($authorization, 7);
 }
 
-if (!hash_equals(UPLOAD_TOKEN, (string) $token)) {
+if (!hash_equals($uploadToken, (string) $token)) {
     respond(401, ['ok' => false, 'error' => 'Unauthorized upload request']);
 }
 
