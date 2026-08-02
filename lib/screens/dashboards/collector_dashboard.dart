@@ -51,9 +51,9 @@ class CollectorDashboard extends StatelessWidget {
                       _buildCollectorStats(collectorId),
                       const SizedBox(height: 12),
                       ActionCard(
-                        title: 'فواتير الطلبات بين الفروع',
+                        title: 'فواتير التحويل بين الفروع',
                         subtitle:
-                            'عرض كل الفواتير وإدخال أسعار المنتجات وطلب التعديلات',
+                            'قائمة عامة بالفواتير التي تنتظر تسعير المدير العام',
                         icon: Icons.swap_horiz_rounded,
                         color: AppTheme.collectorColor,
                         onTap: () {
@@ -63,8 +63,7 @@ class CollectorDashboard extends StatelessWidget {
                               builder: (context) =>
                                   InterBranchInvoicesDashboard(
                                     role: UserRole.collector,
-                                    branchName: branchName,
-                                    branchId: branchId,
+                                    branchName: 'جميع الفروع',
                                   ),
                             ),
                           );

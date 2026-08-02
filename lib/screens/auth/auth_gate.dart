@@ -47,6 +47,10 @@ class AuthGate extends StatelessWidget {
                   return const _UnavailableAccountScreen();
                 }
 
+                if (!user.hasKnownRole) {
+                  return const _UnknownRoleScreen();
+                }
+
                 if (user.mustChangePassword) {
                   return MandatoryPasswordChangeScreen(
                     credentialExpired: user.temporaryCredentialExpired,
@@ -164,6 +168,50 @@ class _UnavailableAccountScreen extends StatelessWidget {
                 const SizedBox(height: 8),
                 const Text(
                   'تواصل مع مسؤول النظام إذا كنت تعتقد أن هذا غير صحيح.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: () => confirmAndSignOut(context),
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('تسجيل الخروج'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _UnknownRoleScreen extends StatelessWidget {
+  const _UnknownRoleScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.security_rounded,
+                  size: 58,
+                  color: Colors.orange,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'تعذر التحقق من صلاحية هذا الحساب',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'دور المستخدم غير معروف. تواصل مع مسؤول النظام لتصحيح بيانات الحساب.',
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 20),

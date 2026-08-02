@@ -5,6 +5,8 @@ class UserModel {
   final String name;
   final String email;
   final UserRole role;
+  final bool hasKnownRole;
+  final String? unrecognizedRole;
   final String? branchId;
   final bool isActive;
   final bool mustChangePassword;
@@ -16,6 +18,8 @@ class UserModel {
     required this.name,
     required this.email,
     required this.role,
+    this.hasKnownRole = true,
+    this.unrecognizedRole,
     this.branchId,
     this.isActive = true,
     this.mustChangePassword = false,
@@ -25,14 +29,19 @@ class UserModel {
 
   // تحويل البيانات القادمة من فايربيس إلى كائن دارت
   factory UserModel.fromJson(Map<String, dynamic> json) {
+    final storedRole = json['role'] is String ? json['role'] as String : null;
+    final hasKnownRole = UserRole.values.any((role) => role.name == storedRole);
+
     return UserModel(
       uid: json['uid'] as String? ?? '',
       name: json['name'] as String? ?? '',
       email: json['email'] as String? ?? '',
       role: UserRole.values.firstWhere(
-        (e) => e.name == json['role'],
+        (e) => e.name == storedRole,
         orElse: () => UserRole.collector,
       ),
+      hasKnownRole: hasKnownRole,
+      unrecognizedRole: hasKnownRole ? null : storedRole,
       branchId: json['branchId'] as String?,
       isActive: json['isActive'] as bool? ?? true,
       mustChangePassword: json['mustChangePassword'] as bool? ?? false,
@@ -49,7 +58,7 @@ class UserModel {
       'uid': uid,
       'name': name,
       'email': email,
-      'role': role.name,
+      'role': hasKnownRole ? role.name : (unrecognizedRole ?? role.name),
       'branchId': branchId,
       'isActive': isActive,
       'mustChangePassword': mustChangePassword,

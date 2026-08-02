@@ -5,8 +5,21 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
+import 'package:store_collection_app/models/inter_branch_invoice_price_model.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
+
+class SecureInterBranchInvoicePdfInput {
+  final Map<String, dynamic> data;
+  final bool showPrices;
+
+  const SecureInterBranchInvoicePdfInput({
+    required this.data,
+    required this.showPrices,
+  });
+}
 
 class PdfService {
   static Future<pw.ThemeData> _theme() async {
@@ -257,11 +270,12 @@ class PdfService {
 
   static Future<Uint8List> buildInterBranchInvoice({
     required Map<String, dynamic> data,
-    bool showPrices = true,
+    bool showPrices = false,
   }) async {
     final pdf = pw.Document();
     final theme = await _theme();
     final invoiceNumber = data['invoice_number']?.toString() ?? '-';
+    final priceCurrency = data['_protected_price_currency']?.toString() ?? '';
     final rawItems = data['items'];
     final items = rawItems is List && rawItems.isNotEmpty
         ? rawItems.whereType<Map>().toList()
@@ -313,7 +327,10 @@ class PdfService {
               'الكمية المعتمدة',
               'الكمية المستلمة',
               'الوحدة',
-              if (showPrices) ...['السعر', 'الإجمالي'],
+              if (showPrices) ...[
+                priceCurrency.isEmpty ? 'السعر' : 'السعر ($priceCurrency)',
+                'الإجمالي',
+              ],
             ],
             data: items.map((item) {
               final row = [
@@ -362,6 +379,81 @@ class PdfService {
       ),
     );
     return pdf.save();
+  }
+
+  /// Builds an inter-branch PDF without trusting public price fields.
+  ///
+  /// Workflow-v2 prices are included only for an authorized audience and only
+  /// after the restricted snapshot is structurally matched to the public
+  /// invoice. Product names and units always come from the public snapshot.
+  static Future<Uint8List> buildSecureInterBranchInvoice({
+    required String invoiceId,
+    required Map<String, dynamic> publicData,
+    required UserRole audienceRole,
+    InterBranchInvoicePriceSnapshot? priceSnapshot,
+  }) {
+    final input = prepareSecureInterBranchInvoicePdfInput(
+      invoiceId: invoiceId,
+      publicData: publicData,
+      audienceRole: audienceRole,
+      priceSnapshot: priceSnapshot,
+    );
+    return buildInterBranchInvoice(
+      data: input.data,
+      showPrices: input.showPrices,
+    );
+  }
+
+  static SecureInterBranchInvoicePdfInput
+  prepareSecureInterBranchInvoicePdfInput({
+    required String invoiceId,
+    required Map<String, dynamic> publicData,
+    required UserRole audienceRole,
+    InterBranchInvoicePriceSnapshot? priceSnapshot,
+  }) {
+    final invoice = InterBranchInvoiceRead(id: invoiceId, data: publicData);
+    final mayReadPrices =
+        audienceRole == UserRole.collector ||
+        audienceRole == UserRole.accountant ||
+        audienceRole == UserRole.admin;
+    if (!invoice.isVersion2) {
+      return SecureInterBranchInvoicePdfInput(
+        data: publicData,
+        showPrices: mayReadPrices,
+      );
+    }
+
+    final verifiedPrices =
+        mayReadPrices &&
+            priceSnapshot != null &&
+            priceSnapshot.matchesPublicInvoice(invoice)
+        ? priceSnapshot
+        : null;
+    final safeData = Map<String, dynamic>.from(publicData)
+      ..remove('unit_price')
+      ..remove('total_price')
+      ..['_protected_price_currency'] = verifiedPrices?.currency ?? ''
+      ..['invoice_created_at'] =
+          publicData['invoice_created_at'] ?? publicData['created_at']
+      ..['items'] = invoice.items
+          .map((item) {
+            final protectedItem = verifiedPrices?.itemById(item.itemId);
+            return <String, dynamic>{
+              'name': item.name,
+              'unit': item.unit,
+              'requested_quantity': item.suppliedQuantity,
+              'approved_quantity': item.suppliedQuantity,
+              if (item.hasReceivedQuantity)
+                'received_quantity': item.receivedQuantity,
+              if (protectedItem != null) 'unit_price': protectedItem.unitPrice,
+              if (protectedItem != null) 'total_price': protectedItem.lineTotal,
+            };
+          })
+          .toList(growable: false);
+    return SecureInterBranchInvoicePdfInput(
+      data: safeData,
+      showPrices: verifiedPrices != null,
+    );
   }
 
   static Future<Uint8List> buildCashExpenseRequest({
@@ -441,9 +533,28 @@ class PdfService {
     return pdf.save();
   }
 
+  static Future<void> printSecureInterBranchInvoice({
+    required String invoiceId,
+    required Map<String, dynamic> publicData,
+    required UserRole audienceRole,
+    InterBranchInvoicePriceSnapshot? priceSnapshot,
+  }) async {
+    final bytes = await buildSecureInterBranchInvoice(
+      invoiceId: invoiceId,
+      publicData: publicData,
+      audienceRole: audienceRole,
+      priceSnapshot: priceSnapshot,
+    );
+    await Printing.layoutPdf(
+      onLayout: (_) async => bytes,
+      name:
+          'فاتورة_فروع_${_safeName(publicData['invoice_number']?.toString() ?? 'جديدة')}.pdf',
+    );
+  }
+
   static Future<void> printInterBranchInvoice({
     required Map<String, dynamic> data,
-    bool showPrices = true,
+    bool showPrices = false,
   }) async {
     final bytes = await buildInterBranchInvoice(
       data: data,
@@ -458,7 +569,7 @@ class PdfService {
 
   static Future<String?> saveInterBranchInvoice({
     required Map<String, dynamic> data,
-    bool showPrices = true,
+    bool showPrices = false,
   }) async {
     final bytes = await buildInterBranchInvoice(
       data: data,

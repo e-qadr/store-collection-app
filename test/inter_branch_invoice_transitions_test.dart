@@ -51,5 +51,48 @@ void main() {
         isFalse,
       );
     });
+
+    test('workflow v2 permits only the four-step direct state machine', () {
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingReceiverReview,
+          InterBranchInvoiceStatus.pendingPriceEntry,
+          workflowVersion: 2,
+        ),
+        isTrue,
+      );
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingPriceEntry,
+          InterBranchInvoiceStatus.pendingAccountingEntry,
+          workflowVersion: 2,
+        ),
+        isTrue,
+      );
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingAccountingEntry,
+          InterBranchInvoiceStatus.postedToAccounting,
+          workflowVersion: 2,
+        ),
+        isTrue,
+      );
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.requestPending,
+          InterBranchInvoiceStatus.pendingReceiverReview,
+          workflowVersion: 2,
+        ),
+        isFalse,
+      );
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingReceiverReview,
+          InterBranchInvoiceStatus.pendingAccountingEntry,
+          workflowVersion: 2,
+        ),
+        isFalse,
+      );
+    });
   });
 }

@@ -269,9 +269,9 @@ class AccountantDashboard extends StatelessWidget {
                       _buildAccountantStats(),
                       const SizedBox(height: 12),
                       ActionCard(
-                        title: 'فواتير الطلبات بين الفروع',
+                        title: 'فواتير التحويل بين الفروع',
                         subtitle:
-                            'عرض كل الفواتير وترحيلها محاسبياً واعتماد طلبات التعديل أو الإلغاء',
+                            'قائمة عامة بالفواتير التي تنتظر الترحيل المحاسبي',
                         icon: Icons.account_balance_wallet_rounded,
                         color: AppTheme.accountantColor,
                         onTap: () {
@@ -281,8 +281,7 @@ class AccountantDashboard extends StatelessWidget {
                               builder: (context) =>
                                   InterBranchInvoicesDashboard(
                                     role: UserRole.accountant,
-                                    branchName: branchName,
-                                    branchId: branchId,
+                                    branchName: 'جميع الفروع',
                                   ),
                             ),
                           );

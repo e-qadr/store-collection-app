@@ -734,6 +734,531 @@ service cloud.firestore {
         latest.version == data.version;
     }
 
+    function knownInterBranchUser() {
+      return operationalUser() &&
+        (role() == 'manager' || role() == 'collector' ||
+          role() == 'accountant' || role() == 'admin');
+    }
+
+    function interBranchSupervisor() {
+      return knownInterBranchUser() &&
+        (role() == 'collector' || role() == 'accountant' || role() == 'admin');
+    }
+
+    function actorBranchId() {
+      return profile().get('branchId', '');
+    }
+
+    function workflowVersion(data) {
+      return data.get('workflow_version', 1);
+    }
+
+    function normalizedLegacyInvoiceStatus(value) {
+      return value == 'pendingSenderReview' ? 'requestPending' :
+        value == 'approvedBySender' ? 'pendingReceiverReview' :
+        value == 'rejectedBySender' ? 'requestRejectedBySupplier' :
+        value == 'receivedByReceivingManager' ? 'pendingPriceEntry' :
+        value == 'receivedByReceivingBranch' ? 'pendingPriceEntry' :
+        value == 'pricesEnteredByCollector' ? 'pendingAccountingEntry' :
+        value == 'pricedByGeneralManager' ? 'pendingAccountingEntry' :
+        value == 'approvedByAccountant' ? 'postedToAccounting' :
+        value;
+    }
+
+    function v2Status(value) {
+      return value == 'pendingReceiverReview' ||
+        value == 'pendingPriceEntry' ||
+        value == 'pendingAccountingEntry' ||
+        value == 'postedToAccounting';
+    }
+
+    function managerParticipates(data) {
+      let branchId = actorBranchId();
+      return role() == 'manager' &&
+        branchId is string && branchId.size() > 0 &&
+        data.branch_ids is list && data.branch_ids.hasAny([branchId]);
+    }
+
+    function mayReadInterBranchInvoice(invoiceId, data) {
+      return knownInterBranchUser() &&
+        ((workflowVersion(data) == 1 &&
+            (interBranchSupervisor() || managerParticipates(data))) ||
+          (workflowVersion(data) == 2 &&
+            validV2PublicInvoice(invoiceId, data) &&
+            (interBranchSupervisor() || managerParticipates(data))));
+    }
+
+    function validV2PublicItem(item) {
+      return item is map && item.keys().hasOnly([
+        'item_id',
+        'product_id',
+        'product_version',
+        'product_brand_id',
+        'product_name',
+        'group_id',
+        'group_name',
+        'product_legacy_code',
+        'group_legacy_code',
+        'unit_id',
+        'unit_value',
+        'unit_raw_value',
+        'supplied_quantity',
+        'line_notes',
+        'received_quantity',
+        'damaged_quantity',
+        'missing_quantity',
+        'discrepancy_notes'
+      ]);
+    }
+
+    function validV2PublicItems(items) {
+      let itemCount = items.size();
+      // Thirteen is the highest strict closed-schema expansion that remains
+      // below Firestore's 1,000-expression evaluation limit.
+      return items is list && itemCount > 0 && itemCount <= 13 &&
+        (itemCount < 1 || validV2PublicItem(items[0])) &&
+        (itemCount < 2 || validV2PublicItem(items[1])) &&
+        (itemCount < 3 || validV2PublicItem(items[2])) &&
+        (itemCount < 4 || validV2PublicItem(items[3])) &&
+        (itemCount < 5 || validV2PublicItem(items[4])) &&
+        (itemCount < 6 || validV2PublicItem(items[5])) &&
+        (itemCount < 7 || validV2PublicItem(items[6])) &&
+        (itemCount < 8 || validV2PublicItem(items[7])) &&
+        (itemCount < 9 || validV2PublicItem(items[8])) &&
+        (itemCount < 10 || validV2PublicItem(items[9])) &&
+        (itemCount < 11 || validV2PublicItem(items[10])) &&
+        (itemCount < 12 || validV2PublicItem(items[11])) &&
+        (itemCount < 13 || validV2PublicItem(items[12]));
+    }
+
+    function validV2PublicHistoryEvent(event) {
+      return event is map &&
+        event.keys().hasOnly([
+          'action',
+          'message',
+          'actor_id',
+          'actor_name',
+          'actor_role',
+          'timestamp'
+        ]);
+    }
+
+    function validV2PublicHistory(events) {
+      let eventCount = events.size();
+      return events is list && eventCount > 0 && eventCount <= 4 &&
+        (eventCount < 1 || validV2PublicHistoryEvent(events[0])) &&
+        (eventCount < 2 || validV2PublicHistoryEvent(events[1])) &&
+        (eventCount < 3 || validV2PublicHistoryEvent(events[2])) &&
+        (eventCount < 4 || validV2PublicHistoryEvent(events[3]));
+    }
+
+    function validV2PublicInvoice(invoiceId, data) {
+      return data is map &&
+        data.keys().hasOnly([
+          'id',
+          'schema_version',
+          'workflow_version',
+          'creation_mode',
+          'status',
+          'revision',
+          'invoice_number',
+          'branch_code',
+          'sending_branch_id',
+          'sending_branch_name',
+          'sending_brand_id',
+          'receiving_branch_id',
+          'receiving_branch_name',
+          'receiving_brand_id',
+          'branch_ids',
+          'items',
+          'item_digest',
+          'invoice_notes',
+          'receiver_notes',
+          'receipt_confirmed_by',
+          'receipt_confirmed_by_name',
+          'receipt_confirmed_at',
+          'accounting_reference',
+          'posted_by',
+          'posted_by_name',
+          'posted_at',
+          'created_by',
+          'created_by_name',
+          'created_by_role',
+          'created_at',
+          'last_updated',
+          'history'
+        ]) &&
+        data.id == invoiceId &&
+        data.schema_version == 2 &&
+        data.workflow_version == 2 &&
+        data.creation_mode == 'direct_supplier_invoice' &&
+        v2Status(data.status) &&
+        data.sending_branch_id != data.receiving_branch_id &&
+        data.branch_ids is list && data.branch_ids.size() == 2 &&
+        data.branch_ids[0] == data.sending_branch_id &&
+        data.branch_ids[1] == data.receiving_branch_id &&
+        validV2PublicItems(data.items) &&
+        validV2PublicHistory(data.history);
+    }
+
+    function legacyInvoiceIdentityUnchanged() {
+      return request.resource.data.get('id', '') == resource.data.get('id', '') &&
+        request.resource.data.get('sending_branch_id', '') ==
+          resource.data.get('sending_branch_id', '') &&
+        request.resource.data.get('receiving_branch_id', '') ==
+          resource.data.get('receiving_branch_id', '') &&
+        request.resource.data.get('branch_ids', []) ==
+          resource.data.get('branch_ids', []) &&
+        request.resource.data.get('created_by', '') ==
+          resource.data.get('created_by', '') &&
+        request.resource.data.get('created_at', null) ==
+          resource.data.get('created_at', null) &&
+        request.resource.data.get('workflow_version', 1) == 1;
+    }
+
+    function legacyManagerFor(fieldName) {
+      return role() == 'manager' &&
+        actorBranchId() == resource.data.get(fieldName, '');
+    }
+
+    function legacyParticipantManager() {
+      return role() == 'manager' &&
+        resource.data.get('branch_ids', []).hasAny([actorBranchId()]);
+    }
+
+    function legacySharedStatus(status) {
+      return status == 'cancellationPendingApprovals' ||
+        status == 'editPendingApprovals';
+    }
+
+    function legacyCoreStatus(status) {
+      return status == 'approvedBySupplier' ||
+        status == 'invoiceCreated' ||
+        status == 'pendingReceiverReview' ||
+        status == 'receivedByReceivingManager' ||
+        status == 'pendingPriceEntry' ||
+        status == 'pricesEnteredByCollector' ||
+        status == 'pendingAccountingEntry' ||
+        status == 'postedToAccounting' ||
+        status == 'editApproved' ||
+        status == 'editRejected';
+    }
+
+    function legacyInvoiceTransitionAllowed() {
+      let current = normalizedLegacyInvoiceStatus(
+        resource.data.get('status', 'requestPending')
+      );
+      let next = normalizedLegacyInvoiceStatus(
+        request.resource.data.get('status', '')
+      );
+      let managerParty = legacyParticipantManager();
+      return (current == 'requestPending' &&
+          legacyManagerFor('sending_branch_id') &&
+          (next == 'requestRejectedBySupplier' ||
+            next == 'pendingReceiverReview')) ||
+        (current == 'pendingReceiverReview' &&
+          legacyManagerFor('receiving_branch_id') &&
+          next == 'pendingPriceEntry') ||
+        (current == 'pendingPriceEntry' && role() == 'collector' &&
+          next == 'pendingAccountingEntry') ||
+        (current == 'pendingAccountingEntry' && role() == 'collector' &&
+          next == 'pendingAccountingEntry') ||
+        (current == 'pendingAccountingEntry' && role() == 'accountant' &&
+          next == 'postedToAccounting') ||
+        (legacyCoreStatus(current) &&
+          next == 'editPendingApprovals' &&
+          (managerParty || role() == 'collector' || role() == 'accountant')) ||
+        (legacyCoreStatus(current) &&
+          next == 'cancellationPendingApprovals' &&
+          (managerParty || role() == 'accountant')) ||
+        (legacySharedStatus(current) &&
+          (managerParty || role() == 'accountant') &&
+          (next == current || next == 'cancelled' ||
+            next == 'editApproved' || next == 'editRejected' ||
+            next == normalizedLegacyInvoiceStatus(
+              resource.data.get('previous_status', '')
+            )));
+    }
+
+    function legacyHistoryAppendOnly() {
+      let beforeHistory = resource.data.get('history', []);
+      let afterHistory = request.resource.data.get('history', []);
+      return beforeHistory is list && afterHistory is list &&
+        afterHistory.size() == beforeHistory.size() + 1 &&
+        afterHistory.hasAll(beforeHistory);
+    }
+
+    function legacyInvoiceChangedKeysAllowed() {
+      let current = normalizedLegacyInvoiceStatus(
+        resource.data.get('status', 'requestPending')
+      );
+      let next = normalizedLegacyInvoiceStatus(
+        request.resource.data.get('status', '')
+      );
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return (current == 'requestPending' &&
+          next == 'requestRejectedBySupplier' &&
+          changed.hasOnly([
+            'status',
+            'rejection_reason',
+            'sender_notes',
+            'last_updated',
+            'history'
+          ])) ||
+        (current == 'requestPending' &&
+          next == 'pendingReceiverReview' &&
+          changed.hasOnly([
+            'status',
+            'invoice_number',
+            'invoice_created_at',
+            'approved_by',
+            'approved_at',
+            'approved_quantity',
+            'items',
+            'sender_notes',
+            'last_updated',
+            'history'
+          ])) ||
+        (current == 'pendingReceiverReview' &&
+          next == 'pendingPriceEntry' &&
+          changed.hasOnly([
+            'status',
+            'received_quantity',
+            'items',
+            'receiver_notes',
+            'last_updated',
+            'history'
+          ])) ||
+        (current == 'pendingPriceEntry' &&
+          next == 'pendingAccountingEntry' &&
+          changed.hasOnly([
+            'status',
+            'unit_price',
+            'total_price',
+            'items',
+            'collector_notes',
+            'last_updated',
+            'history'
+          ])) ||
+        (current == 'pendingAccountingEntry' && role() == 'collector' &&
+          next == 'pendingAccountingEntry' &&
+          changed.hasOnly([
+            'status',
+            'unit_price',
+            'total_price',
+            'items',
+            'collector_notes',
+            'last_updated',
+            'history'
+          ])) ||
+        (current == 'pendingAccountingEntry' && role() == 'accountant' &&
+          next == 'postedToAccounting' &&
+          changed.hasOnly([
+            'status',
+            'accounting_reference',
+            'accountant_notes',
+            'posted_at',
+            'last_updated',
+            'history'
+          ])) ||
+        (legacyCoreStatus(current) &&
+          next == 'editPendingApprovals' &&
+          changed.hasOnly([
+            'previous_status',
+            'status',
+            'edit_request',
+            'edit_approvals',
+            'last_updated',
+            'history'
+          ])) ||
+        (legacyCoreStatus(current) &&
+          next == 'cancellationPendingApprovals' &&
+          changed.hasOnly([
+            'previous_status',
+            'status',
+            'cancellation_request',
+            'cancellation_approvals',
+            'last_updated',
+            'history'
+          ])) ||
+        (current == 'cancellationPendingApprovals' &&
+          changed.hasOnly([
+            'status',
+            'cancellation_approvals',
+            'last_updated',
+            'history'
+          ])) ||
+        (current == 'editPendingApprovals' &&
+          changed.hasOnly([
+            'status',
+            'edit_approvals',
+            'last_updated',
+            'history'
+          ]));
+    }
+
+    function legacyInvoiceUpdateAllowed() {
+      return knownInterBranchUser() &&
+        workflowVersion(resource.data) == 1 &&
+        legacyInvoiceIdentityUnchanged() &&
+        legacyInvoiceTransitionAllowed() &&
+        legacyInvoiceChangedKeysAllowed() &&
+        request.resource.data.get('last_updated', null) == request.time &&
+        legacyHistoryAppendOnly();
+    }
+
+    function validV2PublicEvent(eventId, data) {
+      return data is map &&
+        data.keys().hasOnly([
+          'id',
+          'invoice_id',
+          'workflow_version',
+          'branch_ids',
+          'revision',
+          'action',
+          'message',
+          'actor_id',
+          'actor_name',
+          'actor_role',
+          'created_at'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'invoice_id',
+          'workflow_version',
+          'branch_ids',
+          'revision',
+          'action',
+          'message',
+          'actor_id',
+          'actor_name',
+          'actor_role',
+          'created_at'
+        ]) &&
+        data.id == eventId &&
+        data.workflow_version == 2 &&
+        data.invoice_id is string && data.invoice_id.size() > 0 &&
+        data.branch_ids is list && data.branch_ids.size() == 2 &&
+        data.revision is int && data.revision > 0 &&
+        data.action is string &&
+        data.message is string &&
+        data.actor_id is string &&
+        data.actor_name is string &&
+        data.actor_role is string &&
+        data.created_at is timestamp;
+    }
+
+    function mayReadV2PublicEvent(eventId, data) {
+      return knownInterBranchUser() &&
+        validV2PublicEvent(eventId, data) &&
+        (interBranchSupervisor() ||
+          (role() == 'manager' &&
+            data.branch_ids.hasAny([actorBranchId()])));
+    }
+
+    function validNotificationReadUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'is_read',
+          'read_at'
+        ]) &&
+        request.resource.data.is_read == true &&
+        request.resource.data.read_at == request.time;
+    }
+
+    function validNotificationDeliveryUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'device_received_at',
+          'device_received_state',
+          'device_platform'
+        ]) &&
+        request.resource.data.device_received_at == request.time &&
+        request.resource.data.device_received_state in [
+          'background',
+          'foreground',
+          'opened',
+          'opened_from_terminated'
+        ] &&
+        request.resource.data.device_platform in [
+          'android',
+          'ios',
+          'macos',
+          'web'
+        ];
+    }
+
+    function validNotificationRecipientUpdate() {
+      return request.auth.uid == resource.data.get('recipient_id', '') &&
+        (validNotificationReadUpdate() ||
+          validNotificationDeliveryUpdate());
+    }
+
+    function legacyNotificationType(type) {
+      return type == 'inter_branch_request_created' ||
+        type == 'inter_branch_supplier_approved' ||
+        type == 'inter_branch_supplier_rejected' ||
+        type == 'inter_branch_receipt_confirmed' ||
+        type == 'inter_branch_prices_entered' ||
+        type == 'inter_branch_accounting_posted' ||
+        type == 'inter_branch_cancellation_requested' ||
+        type == 'inter_branch_edit_requested' ||
+        type == 'inter_branch_cancellation_rejected' ||
+        type == 'inter_branch_edit_rejected' ||
+        type == 'inter_branch_cancellation_approved' ||
+        type == 'inter_branch_edit_approved';
+    }
+
+    function validLegacyClientNotificationCreate(data) {
+      return operationalUser() &&
+        !data.get('notification_type', '').matches('^inter_branch_v2_.*') &&
+        (data.get('module', '') != 'inter_branch_invoices' ||
+          legacyNotificationType(data.get('notification_type', '')));
+    }
+
+    function legacyCounterOwner(branchId) {
+      return knownInterBranchUser() &&
+        role() == 'manager' &&
+        actorBranchId() == branchId;
+    }
+
+    function validLegacyCounterCreate(branchId, data) {
+      return data.keys().hasOnly([
+          'branch_id',
+          'branch_code',
+          'next_number',
+          'last_invoice_number',
+          'last_updated'
+        ]) &&
+        data.keys().hasAll([
+          'branch_id',
+          'branch_code',
+          'next_number',
+          'last_invoice_number',
+          'last_updated'
+        ]) &&
+        data.branch_id == branchId &&
+        data.branch_code is string &&
+        data.branch_code.matches('^[A-Z]{2}$') &&
+        data.next_number is int && data.next_number >= 1 &&
+        data.last_invoice_number is string &&
+        data.last_updated == request.time;
+    }
+
+    function validLegacyCounterUpdate(branchId) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'next_number',
+          'last_invoice_number',
+          'last_updated'
+        ]) &&
+        request.resource.data.get('branch_id', '') == branchId &&
+        request.resource.data.get('branch_code', '') ==
+          resource.data.get('branch_code', '') &&
+        request.resource.data.next_number ==
+          resource.data.get('next_number', 0) + 1 &&
+        request.resource.data.last_invoice_number is string &&
+        request.resource.data.last_updated == request.time;
+    }
+
+
     match /users/{uid} {
       allow read: if operationalUser() || (signedIn() && request.auth.uid == uid);
       allow create, delete: if false;
@@ -944,35 +1469,14 @@ service cloud.firestore {
     // Every latest-price write must atomically append its immutable history row.
     match /product_price_latest/{latestId} {
       allow get, list: if protectedPriceUser();
-      allow create: if protectedPriceWriter() &&
-        validPriceLatest(latestId, request.resource.data) &&
-        request.resource.data.version == 1 &&
-        latestMatchesHistory(latestId, request.resource.data);
-      allow update: if protectedPriceWriter() &&
-        validPriceLatest(latestId, request.resource.data) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'history_event_id',
-          'unit_value',
-          'price',
-          'source_invoice_id',
-          'changed_by',
-          'changed_by_name',
-          'changed_by_role',
-          'changed_at',
-          'version'
-        ]) &&
-        request.resource.data.history_event_id != resource.data.history_event_id &&
-        request.resource.data.version == resource.data.version + 1 &&
-        latestMatchesHistory(latestId, request.resource.data);
-      allow delete: if false;
+      // Phase 2 price writes are performed only by authenticated Admin SDK
+      // commands. Admin SDK bypasses rules, so every client write is denied.
+      allow create, update, delete: if false;
     }
 
     match /product_price_history/{historyId} {
       allow get, list: if protectedPriceUser();
-      allow create: if protectedPriceWriter() &&
-        validPriceHistory(historyId, request.resource.data) &&
-        historyMatchesLatest(historyId, request.resource.data);
-      allow update, delete: if false;
+      allow create, update, delete: if false;
     }
 
     // Existing application collections retain their current permissions in
@@ -985,8 +1489,18 @@ service cloud.firestore {
       allow read, write: if operationalUser();
     }
 
-    match /notifications/{document=**} {
-      allow read, write: if operationalUser();
+    match /notifications/{notificationId} {
+      allow get, list: if operationalUser() &&
+        resource.data.get('recipient_id', '') == request.auth.uid;
+      // Existing non-v2 notification producers remain compatible. New v2
+      // inter-branch notification types are not in the legacy allow-list and
+      // therefore can only be created by the Admin SDK backend.
+      allow create: if validLegacyClientNotificationCreate(
+        request.resource.data
+      );
+      allow update: if operationalUser() &&
+        validNotificationRecipientUpdate();
+      allow delete: if false;
     }
 
     match /consumable_requests/{document=**} {
@@ -1001,12 +1515,49 @@ service cloud.firestore {
       allow read, write: if operationalUser();
     }
 
-    match /inter_branch_invoices/{document=**} {
-      allow read, write: if operationalUser();
+    match /inter_branch_invoices/{invoiceId} {
+      allow get: if mayReadInterBranchInvoice(invoiceId, resource.data);
+      // List authorization can depend only on queryable branch participation;
+      // it does not re-expand the nested item schema. The trusted backend is the
+      // sole v2 writer and enforces the closed, price-free schema before writing.
+      allow list: if knownInterBranchUser() &&
+        (interBranchSupervisor() ||
+          (role() == 'manager' &&
+            resource.data.branch_ids.hasAny([actorBranchId()])));
+      // New invoices, all v2 transitions, and deletes are backend-only.
+      allow create, delete: if false;
+      // A narrowly scoped compatibility path remains for already-stored v1
+      // documents. It cannot add workflow_version 2 or rewrite identity.
+      allow update: if legacyInvoiceUpdateAllowed();
     }
 
-    match /inter_branch_invoice_counters/{document=**} {
-      allow read, write: if operationalUser();
+    match /inter_branch_invoice_events/{eventId} {
+      allow get, list: if mayReadV2PublicEvent(eventId, resource.data);
+      allow create, update, delete: if false;
+    }
+
+    match /inter_branch_invoice_prices/{invoiceId} {
+      allow get, list: if protectedPriceUser();
+      allow create, update, delete: if false;
+    }
+
+    match /inter_branch_invoice_price_history/{historyId} {
+      allow get, list: if protectedPriceUser();
+      allow create, update, delete: if false;
+    }
+
+    match /inter_branch_invoice_commands/{commandId} {
+      allow read, write: if false;
+    }
+
+    match /inter_branch_invoice_counters/{branchId} {
+      allow get: if legacyCounterOwner(branchId) || interBranchSupervisor();
+      allow list: if false;
+      allow create: if legacyCounterOwner(branchId) &&
+        validLegacyCounterCreate(branchId, request.resource.data);
+      allow update: if legacyCounterOwner(branchId) &&
+        validLegacyCounterUpdate(branchId);
+      allow delete: if false;
     }
   }
 }

@@ -1,12 +1,20 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
+import 'package:store_collection_app/models/product_catalog_model.dart';
+import 'package:store_collection_app/services/inter_branch_invoice_api_service.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_service.dart';
+import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
 class NewInterBranchInvoiceScreen extends StatefulWidget {
+  /// The authenticated manager's supplying branch. The backend independently
+  /// resolves and verifies it; this value is only display/query context.
   final String branchId;
   final String branchName;
 
@@ -23,79 +31,221 @@ class NewInterBranchInvoiceScreen extends StatefulWidget {
 
 class _NewInterBranchInvoiceScreenState
     extends State<NewInterBranchInvoiceScreen> {
-  final _formKey = GlobalKey<FormState>();
   final _service = InterBranchInvoiceService();
-  final _itemController = TextEditingController();
+  final _catalogService = ProductCatalogService();
+  final _searchController = TextEditingController();
   final _quantityController = TextEditingController();
-  final _unitController = TextEditingController();
+  final _lineNotesController = TextEditingController();
+  final _invoiceNotesController = TextEditingController();
   final List<InterBranchInvoiceItem> _items = [];
-  late final Future<QuerySnapshot<Map<String, dynamic>>> _branchesFuture;
 
-  String? _sendingBranchId;
-  bool _isSaving = false;
+  late final Future<_CreationContext> _contextFuture;
+  late String _idempotencyKey;
+  Timer? _searchDebounce;
+  List<ProductCatalogModel> _products = const [];
+  List<_ReceivingBranch> _branches = const [];
+  DocumentSnapshot<Map<String, dynamic>>? _productCursor;
+  DocumentSnapshot<Map<String, dynamic>>? _branchCursor;
+  bool _hasMoreProducts = false;
+  bool _hasMoreBranches = false;
+  bool _loadingProducts = false;
+  bool _loadingBranches = false;
+  bool _saving = false;
+  String _brandId = '';
+  String? _receivingBranchId;
+  String? _selectedProductId;
+  String? _selectedUnitId;
 
   @override
   void initState() {
     super.initState();
-    _branchesFuture = FirebaseFirestore.instance.collection('branches').get();
+    _idempotencyKey = InterBranchInvoiceApiService.generateIdempotencyKey();
+    _contextFuture = _loadContext();
   }
 
   @override
   void dispose() {
-    _itemController.dispose();
+    _searchDebounce?.cancel();
+    _searchController.dispose();
     _quantityController.dispose();
-    _unitController.dispose();
+    _lineNotesController.dispose();
+    _invoiceNotesController.dispose();
     super.dispose();
   }
 
-  Future<void> _save() async {
-    if (_items.isEmpty && _hasDraftItem()) {
-      _addItem();
+  Future<_CreationContext> _loadContext() async {
+    final firestore = FirebaseFirestore.instance;
+    final supplier = await firestore
+        .collection('branches')
+        .doc(widget.branchId)
+        .get();
+    final supplierData = supplier.data();
+    if (supplierData == null ||
+        supplierData['active'] == false ||
+        supplierData['is_active'] == false) {
+      throw StateError('الفرع المورد غير موجود أو غير نشط.');
     }
-    if (_items.isEmpty || _sendingBranchId == null) {
-      if (_sendingBranchId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('اختر الفرع المرسل أولاً')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('أضف منتجاً واحداً على الأقل')),
-        );
+    final brandId = supplierData['brand_id']?.toString().trim() ?? '';
+    if (brandId.isEmpty) {
+      throw StateError('الفرع المورد غير مرتبط بعلامة تجارية.');
+    }
+    _brandId = brandId;
+    await _loadBranches(reset: true);
+    await _loadProducts(reset: true);
+    return const _CreationContext();
+  }
+
+  Future<void> _loadBranches({required bool reset}) async {
+    if (_loadingBranches || !mounted) return;
+    setState(() => _loadingBranches = true);
+    try {
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+          .collection('branches')
+          .orderBy('name')
+          .limit(30);
+      if (!reset && _branchCursor != null) {
+        query = query.startAfterDocument(_branchCursor!);
       }
+      final page = await query.get();
+      final loaded = page.docs
+          .where(
+            (doc) =>
+                doc.id != widget.branchId &&
+                doc.data()['active'] != false &&
+                doc.data()['is_active'] != false,
+          )
+          .map(
+            (doc) => _ReceivingBranch(
+              id: doc.id,
+              name: doc.data()['name']?.toString() ?? 'فرع غير مسمى',
+            ),
+          )
+          .toList(growable: false);
+      if (!mounted) return;
+      setState(() {
+        _branches = reset ? loaded : [..._branches, ...loaded];
+        _branchCursor = page.docs.isEmpty ? null : page.docs.last;
+        _hasMoreBranches = page.docs.length == 30;
+      });
+    } finally {
+      if (mounted) setState(() => _loadingBranches = false);
+    }
+  }
+
+  Future<void> _loadProducts({required bool reset}) async {
+    if (_loadingProducts || _brandId.isEmpty || !mounted) return;
+    setState(() => _loadingProducts = true);
+    try {
+      final page = await _catalogService.fetchActiveProductsPage(
+        brandId: _brandId,
+        search: _searchController.text,
+        after: reset ? null : _productCursor,
+        pageSize: 30,
+      );
+      if (!mounted) return;
+      setState(() {
+        _products = reset ? page.products : [..._products, ...page.products];
+        _productCursor = page.cursor;
+        _hasMoreProducts = page.hasMore;
+        if (reset &&
+            !_products.any((product) => product.id == _selectedProductId)) {
+          _selectedProductId = null;
+          _selectedUnitId = null;
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _loadingProducts = false);
+    }
+  }
+
+  void _onSearchChanged(String _) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(
+      const Duration(milliseconds: 350),
+      () => _loadProducts(reset: true),
+    );
+  }
+
+  ProductCatalogModel? get _selectedProduct {
+    for (final product in _products) {
+      if (product.id == _selectedProductId) return product;
+    }
+    return null;
+  }
+
+  Future<void> _addItem() async {
+    if (_items.length >= InterBranchInvoiceApiService.maxItems) {
+      _showSnack(
+        'الحد الأقصى ${InterBranchInvoiceApiService.maxItems} سطراً للفاتورة.',
+      );
       return;
     }
+    final product = _selectedProduct;
+    final unit = product?.unitById(_selectedUnitId ?? '');
+    final quantity = _parseNumber(_quantityController.text);
+    if (product == null || unit == null || quantity <= 0) {
+      _showSnack('اختر المنتج والوحدة وأدخل كمية صحيحة.');
+      return;
+    }
+    if (_items.any(
+      (item) => item.productId == product.id && item.unitId == unit.id,
+    )) {
+      _showSnack('تمت إضافة هذا المنتج والوحدة مسبقاً.');
+      return;
+    }
+    setState(() {
+      _items.add(
+        InterBranchInvoiceItem(
+          productId: product.id,
+          productVersion: product.version,
+          groupId: product.groupId,
+          legacyCode: product.legacyCode,
+          name: product.name,
+          unitId: unit.id,
+          unit: unit.displayValue,
+          rawUnit: unit.rawValue,
+          requestedQuantity: quantity,
+          hasReceivedQuantity: false,
+          lineNotes: _lineNotesController.text.trim(),
+        ),
+      );
+      _quantityController.clear();
+      _lineNotesController.clear();
+      _selectedProductId = null;
+      _selectedUnitId = null;
+    });
+  }
 
-    setState(() => _isSaving = true);
+  Future<void> _save() async {
+    if (_receivingBranchId == null || _items.isEmpty) {
+      _showSnack('اختر الفرع المستلم وأضف منتجاً واحداً على الأقل.');
+      return;
+    }
+    setState(() => _saving = true);
     try {
-      final branches = (await _branchesFuture).docs;
-      final sendingBranch = branches.firstWhere(
-        (branch) => branch.id == _sendingBranchId,
-      );
-      final data = sendingBranch.data();
-
-      await _service.createRequest(
-        itemName: _items.first.name,
-        requestedQuantity: _items.first.requestedQuantity,
-        unit: _items.first.unit,
+      final result = await _service.createDirectInvoice(
+        receivingBranchId: _receivingBranchId!,
         items: _items,
-        receivingBranchId: widget.branchId,
-        receivingBranchName: widget.branchName,
-        sendingBranchId: sendingBranch.id,
-        sendingBranchName: data['name']?.toString() ?? 'فرع غير مسمى',
+        idempotencyKey: _idempotencyKey,
+        invoiceNotes: _invoiceNotesController.text,
       );
-
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إنشاء طلب الفاتورة بنجاح')),
+      _showSnack(
+        result.invoiceNumber.isEmpty
+            ? 'تم إنشاء الفاتورة المباشرة بنجاح.'
+            : 'تم إنشاء الفاتورة رقم ${result.invoiceNumber}.',
       );
-      Navigator.pop(context);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('تعذر حفظ الطلب: $e')));
+      Navigator.pop(context, result.invoiceId);
+    } on InterBranchInvoiceApiException catch (error) {
+      if (mounted) {
+        _showSnack(error.message);
+      }
+    } catch (_) {
+      if (mounted) {
+        _showSnack('تعذر إنشاء الفاتورة. تحقق من البيانات وحاول مجدداً.');
+      }
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -106,134 +256,66 @@ class _NewInterBranchInvoiceScreenState
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: const Text('طلب فاتورة بين الفروع'),
+          title: const Text('إنشاء فاتورة تحويل مباشرة'),
           backgroundColor: AppTheme.managerColor,
         ),
-        body: FutureBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          future: _branchesFuture,
+        body: FutureBuilder<_CreationContext>(
+          future: _contextFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-            if (snapshot.hasError) {
-              return const Center(child: Text('تعذر تحميل الفروع'));
-            }
-
-            final branches =
-                (snapshot.data?.docs ?? [])
-                    .where((branch) => branch.id != widget.branchId)
-                    .toList()
-                  ..sort((a, b) {
-                    final aName = a.data()['name']?.toString() ?? '';
-                    final bName = b.data()['name']?.toString() ?? '';
-                    return aName.compareTo(bName);
-                  });
-
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
-              child: Form(
-                key: _formKey,
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: AppTheme.cardShadow(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildBranchSummary(),
-                      const SizedBox(height: 18),
-                      DropdownButtonFormField<String>(
-                        initialValue: _sendingBranchId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'الفرع المرسل',
-                          prefixIcon: Icon(Icons.storefront_rounded),
-                        ),
-                        items: branches
-                            .map(
-                              (branch) => DropdownMenuItem(
-                                value: branch.id,
-                                child: Text(
-                                  branch.data()['name']?.toString() ??
-                                      'فرع غير مسمى',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        validator: (value) =>
-                            value == null ? 'اختر الفرع المرسل' : null,
-                        onChanged: branches.isEmpty
-                            ? null
-                            : (value) => setState(() {
-                                _sendingBranchId = value;
-                              }),
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller: _itemController,
-                        decoration: const InputDecoration(
-                          labelText: 'اسم الصنف',
-                          prefixIcon: Icon(Icons.inventory_2_rounded),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _quantityController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: const InputDecoration(
-                                labelText: 'العدد / الكمية',
-                                prefixIcon: Icon(Icons.numbers_rounded),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextFormField(
-                              controller: _unitController,
-                              decoration: const InputDecoration(
-                                labelText: 'الوحدة',
-                                prefixIcon: Icon(Icons.straighten_rounded),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.add_circle_outline_rounded),
-                        label: const Text('إضافة المنتج للفاتورة'),
-                        onPressed: _isSaving ? null : _addItem,
-                      ),
-                      const SizedBox(height: 16),
-                      _buildDraftInvoiceTable(),
-                      const SizedBox(height: 22),
-                      ElevatedButton.icon(
-                        onPressed: _isSaving ? null : _save,
-                        icon: _isSaving
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.save_rounded),
-                        label: const Text('حفظ الطلب'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.managerColor,
-                        ),
-                      ),
-                    ],
+            if (snapshot.hasError || !snapshot.hasData) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'تعذر تجهيز شاشة الفاتورة. حاول مجدداً.',
+                    textAlign: TextAlign.center,
                   ),
                 ),
-              ),
+              );
+            }
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 36),
+              children: [
+                _branchCard(),
+                const SizedBox(height: 12),
+                _catalogCard(),
+                const SizedBox(height: 12),
+                _itemsCard(),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _invoiceNotesController,
+                  inputFormatters: const [
+                    _Utf8LengthLimitingTextInputFormatter(1000),
+                  ],
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات الفاتورة (بدون أسعار)',
+                    prefixIcon: Icon(Icons.notes_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded),
+                  label: const Text('إنشاء وإرسال للمراجعة'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.managerColor,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ],
             );
           },
         ),
@@ -241,118 +323,177 @@ class _NewInterBranchInvoiceScreenState
     );
   }
 
-  Widget _buildBranchSummary() {
+  Widget _branchCard() {
     return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.managerColor.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.call_received_rounded, color: AppTheme.managerColor),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'الفرع المستلم: ${widget.branchName}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDraftInvoiceTable() {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFE0E0E0)),
-        borderRadius: BorderRadius.circular(12),
-      ),
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.cardShadow(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: AppTheme.managerColor.withValues(alpha: 0.08),
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(12),
-              ),
+          Text(
+            'الفرع المورد: ${widget.branchName}',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _receivingBranchId,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'الفرع المستلم',
+              prefixIcon: Icon(Icons.call_received_rounded),
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.receipt_long_rounded, color: AppTheme.managerColor),
-                SizedBox(width: 8),
-                Text(
-                  'مسودة الفاتورة',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
+            items: _branches
+                .map(
+                  (branch) => DropdownMenuItem(
+                    value: branch.id,
+                    child: Text(branch.name, overflow: TextOverflow.ellipsis),
                   ),
-                ),
-              ],
+                )
+                .toList(),
+            onChanged: _saving
+                ? null
+                : (value) => setState(() => _receivingBranchId = value),
+          ),
+          if (_hasMoreBranches)
+            TextButton.icon(
+              onPressed: _loadingBranches
+                  ? null
+                  : () => _loadBranches(reset: false),
+              icon: const Icon(Icons.expand_more_rounded),
+              label: const Text('تحميل فروع أخرى'),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _catalogCard() {
+    final product = _selectedProduct;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.cardShadow(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'منتجات علامة الفرع المورد',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _searchController,
+            onChanged: _onSearchChanged,
+            decoration: const InputDecoration(
+              labelText: 'بحث في دليل المنتجات',
+              prefixIcon: Icon(Icons.search_rounded),
+            ),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            key: ValueKey(
+              'product-${_selectedProductId ?? 'none'}-${_products.length}',
+            ),
+            initialValue: _selectedProductId,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'المنتج'),
+            items: _products
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: item.id,
+                    child: Text(item.name, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) => setState(() {
+              _selectedProductId = value;
+              _selectedUnitId = null;
+            }),
+          ),
+          if (_hasMoreProducts)
+            TextButton.icon(
+              onPressed: _loadingProducts
+                  ? null
+                  : () => _loadProducts(reset: false),
+              icon: const Icon(Icons.expand_more_rounded),
+              label: const Text('تحميل منتجات أخرى'),
+            ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            key: ValueKey('unit-${product?.id ?? 'none'}'),
+            initialValue: _selectedUnitId,
+            decoration: const InputDecoration(labelText: 'الوحدة'),
+            items: (product?.units ?? const <CatalogUnit>[])
+                .map(
+                  (unit) => DropdownMenuItem(
+                    value: unit.id,
+                    child: Text(unit.displayValue),
+                  ),
+                )
+                .toList(),
+            onChanged: product == null
+                ? null
+                : (value) => setState(() => _selectedUnitId = value),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _quantityController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+            ],
+            decoration: const InputDecoration(labelText: 'الكمية الموردة'),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _lineNotesController,
+            inputFormatters: const [_Utf8LengthLimitingTextInputFormatter(100)],
+            decoration: const InputDecoration(labelText: 'ملاحظة السطر'),
+          ),
+          OutlinedButton.icon(
+            onPressed: _saving ? null : _addItem,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('إضافة المنتج'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _itemsCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.cardShadow(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'سطور الفاتورة (${_items.length}/${InterBranchInvoiceApiService.maxItems})',
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           if (_items.isEmpty)
             const Padding(
-              padding: EdgeInsets.all(18),
+              padding: EdgeInsets.symmetric(vertical: 20),
               child: Text(
                 'لم تتم إضافة منتجات بعد',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppTheme.textSecondary),
               ),
             )
           else
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columnSpacing: 22,
-                headingRowColor: WidgetStatePropertyAll(
-                  AppTheme.managerColor.withValues(alpha: 0.08),
+            ..._items.asMap().entries.map(
+              (entry) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(entry.value.name),
+                subtitle: Text(
+                  '${_formatNumber(entry.value.suppliedQuantity)} ${entry.value.unit}',
                 ),
-                columns: const [
-                  DataColumn(label: Text('#')),
-                  DataColumn(label: Text('الصنف')),
-                  DataColumn(label: Text('العدد')),
-                  DataColumn(label: Text('الوحدة')),
-                  DataColumn(label: Text('إجراء')),
-                ],
-                rows: _items.asMap().entries.map((entry) {
-                  final index = entry.key;
-                  final item = entry.value;
-                  return DataRow(
-                    cells: [
-                      DataCell(Text('${index + 1}')),
-                      DataCell(
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 180),
-                          child: Text(
-                            item.name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      DataCell(Text(_formatNumber(item.requestedQuantity))),
-                      DataCell(Text(item.unit)),
-                      DataCell(
-                        IconButton(
-                          tooltip: 'حذف المنتج',
-                          icon: const Icon(Icons.delete_outline_rounded),
-                          color: AppTheme.errorColor,
-                          onPressed: _isSaving
-                              ? null
-                              : () => setState(() {
-                                  _items.removeAt(index);
-                                }),
-                        ),
-                      ),
-                    ],
-                  );
-                }).toList(),
+                trailing: IconButton(
+                  tooltip: 'إزالة',
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  color: AppTheme.errorColor,
+                  onPressed: _saving
+                      ? null
+                      : () => setState(() => _items.removeAt(entry.key)),
+                ),
               ),
             ),
         ],
@@ -360,39 +501,52 @@ class _NewInterBranchInvoiceScreenState
     );
   }
 
-  bool _hasDraftItem() {
-    return _itemController.text.trim().isNotEmpty ||
-        _quantityController.text.trim().isNotEmpty ||
-        _unitController.text.trim().isNotEmpty;
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _addItem() {
-    final name = _itemController.text.trim();
-    final unit = _unitController.text.trim();
-    final quantity = _parseNumber(_quantityController.text);
-    if (name.isEmpty || unit.isEmpty || quantity <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('أدخل اسم المنتج والكمية والوحدة')),
-      );
-      return;
-    }
-    setState(() {
-      _items.add(
-        InterBranchInvoiceItem(
-          name: name,
-          unit: unit,
-          requestedQuantity: quantity,
-        ),
-      );
-      _itemController.clear();
-      _quantityController.clear();
-      _unitController.clear();
-    });
-  }
-
+  double _parseNumber(String value) =>
+      double.tryParse(value.trim().replaceAll(',', '.')) ?? 0;
   String _formatNumber(double value) => NumberFormat('#,##0.##').format(value);
+}
 
-  double _parseNumber(String value) {
-    return double.tryParse(value.trim().replaceAll(',', '.')) ?? 0;
+class _CreationContext {
+  const _CreationContext();
+}
+
+class _ReceivingBranch {
+  final String id;
+  final String name;
+
+  const _ReceivingBranch({required this.id, required this.name});
+}
+
+class _Utf8LengthLimitingTextInputFormatter extends TextInputFormatter {
+  final int maxBytes;
+
+  const _Utf8LengthLimitingTextInputFormatter(this.maxBytes);
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (utf8.encode(newValue.text).length <= maxBytes) return newValue;
+    final buffer = StringBuffer();
+    var byteCount = 0;
+    for (final character in newValue.text.characters) {
+      final characterBytes = utf8.encode(character).length;
+      if (byteCount + characterBytes > maxBytes) break;
+      buffer.write(character);
+      byteCount += characterBytes;
+    }
+    final text = buffer.toString();
+    final offset = newValue.selection.end.clamp(0, text.length);
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: offset),
+    );
   }
 }

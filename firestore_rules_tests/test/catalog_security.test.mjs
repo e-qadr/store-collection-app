@@ -439,6 +439,12 @@ async function createPricePair(database, {
   return batch.commit();
 }
 
+async function seedPricePairWithoutRules(options = {}) {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await createPricePair(context.firestore(), options);
+  });
+}
+
 test('branch users can read only catalog documents for their branch brand', async () => {
   const manager = databaseFor('manager-a');
   const employee = databaseFor('employee-a');
@@ -1480,8 +1486,7 @@ test('accounting profiles are private and every upsert requires a fresh audit', 
 });
 
 test('branch, inactive, and unknown users cannot directly read or write prices', async () => {
-  const collector = databaseFor('collector-user');
-  await assertSucceeds(createPricePair(collector));
+  await seedPricePairWithoutRules();
 
   for (const actor of [
     { uid: 'manager-a', name: 'Manager', role: 'manager' },
@@ -1510,7 +1515,7 @@ test('branch, inactive, and unknown users cannot directly read or write prices',
   }
 });
 
-test('collector alone writes price memory while accountant and admin are read-only', async () => {
+test('protected roles read price memory but every client write is backend-only', async () => {
   const collector = databaseFor('collector-user');
   const accountant = databaseFor('accountant-user');
   const admin = databaseFor('admin-user');
@@ -1519,7 +1524,7 @@ test('collector alone writes price memory while accountant and admin are read-on
     doc(collector, 'product_price_latest', 'orphan-latest'),
     latestPrice({ id: 'orphan-latest', historyId: 'missing-history' }),
   ));
-  await assertSucceeds(createPricePair(collector));
+  await seedPricePairWithoutRules();
 
   for (const database of [collector, accountant, admin]) {
     await assertSucceeds(getDoc(doc(database, 'product_price_latest', 'latest-a')));
@@ -1527,6 +1532,12 @@ test('collector alone writes price memory while accountant and admin are read-on
   }
 
   for (const actor of [
+    {
+      database: collector,
+      uid: 'collector-user',
+      name: 'General manager',
+      role: 'collector',
+    },
     {
       database: accountant,
       uid: 'accountant-user',
@@ -1615,7 +1626,7 @@ test('price memory must reference an exact catalog product-unit snapshot', async
 
 test('price history is append-only and latest records cannot be deleted', async () => {
   const collector = databaseFor('collector-user');
-  await assertSucceeds(createPricePair(collector));
+  await seedPricePairWithoutRules();
 
   await assertFails(updateDoc(
     doc(collector, 'product_price_history', 'history-a'),
@@ -1625,9 +1636,9 @@ test('price history is append-only and latest records cannot be deleted', async 
   await assertFails(deleteDoc(doc(collector, 'product_price_latest', 'latest-a')));
 });
 
-test('latest price updates require a new matching immutable history record', async () => {
+test('latest price updates are denied to clients even with matching history', async () => {
   const collector = databaseFor('collector-user');
-  await assertSucceeds(createPricePair(collector));
+  await seedPricePairWithoutRules();
 
   await assertFails(updateDoc(
     doc(collector, 'product_price_latest', 'latest-a'),
@@ -1673,11 +1684,11 @@ test('latest price updates require a new matching immutable history record', asy
     previousPrice: 125,
     version: 2,
   }));
-  await assertSucceeds(batch.commit());
+  await assertFails(batch.commit());
 
   const snapshot = await assertSucceeds(getDoc(
     doc(collector, 'product_price_latest', 'latest-a'),
   ));
-  assert.equal(snapshot.data().price, 150);
-  assert.equal(snapshot.data().version, 2);
+  assert.equal(snapshot.data().price, 125);
+  assert.equal(snapshot.data().version, 1);
 });

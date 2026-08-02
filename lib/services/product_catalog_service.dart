@@ -2,6 +2,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/utils/catalog_normalization.dart';
 
+class ProductCatalogPage {
+  final List<ProductCatalogModel> products;
+  final DocumentSnapshot<Map<String, dynamic>>? cursor;
+  final bool hasMore;
+
+  const ProductCatalogPage({
+    required this.products,
+    required this.cursor,
+    required this.hasMore,
+  });
+}
+
 class ProductCatalogService {
   final FirebaseFirestore _firestore;
 
@@ -70,6 +82,44 @@ class ProductCatalogService {
               .map((doc) => ProductCatalogModel.fromMap(doc.id, doc.data()))
               .toList(growable: false),
         );
+  }
+
+  Future<ProductCatalogPage> fetchActiveProductsPage({
+    required String brandId,
+    String? groupId,
+    String search = '',
+    DocumentSnapshot<Map<String, dynamic>>? after,
+    int pageSize = 30,
+  }) async {
+    final cleanBrandId = _required(brandId, 'Brand ID');
+    Query<Map<String, dynamic>> query = _products
+        .where(ProductCatalogFields.brandId, isEqualTo: cleanBrandId)
+        .where(ProductCatalogFields.active, isEqualTo: true);
+    final cleanGroupId = groupId?.trim() ?? '';
+    if (cleanGroupId.isNotEmpty) {
+      query = query.where(
+        ProductCatalogFields.groupId,
+        isEqualTo: cleanGroupId,
+      );
+    }
+    query = query.orderBy(ProductCatalogFields.normalizedName);
+    final normalizedSearch = normalizeCatalogText(search);
+    if (after != null) {
+      query = query.startAfterDocument(after);
+    } else if (normalizedSearch.isNotEmpty) {
+      query = query.startAt([normalizedSearch]);
+    }
+    if (normalizedSearch.isNotEmpty) {
+      query = query.endAt(['$normalizedSearch\uf8ff']);
+    }
+    final snapshot = await query.limit(pageSize).get();
+    return ProductCatalogPage(
+      products: snapshot.docs
+          .map((doc) => ProductCatalogModel.fromMap(doc.id, doc.data()))
+          .toList(growable: false),
+      cursor: snapshot.docs.isEmpty ? null : snapshot.docs.last,
+      hasMore: snapshot.docs.length == pageSize,
+    );
   }
 
   Stream<List<ProductAuditEvent>> watchProductAudit({

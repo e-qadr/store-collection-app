@@ -114,17 +114,15 @@ class SystemSelectionScreen extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (role != UserRole.admin) ...[
-                      const SizedBox(height: 12),
-                      ActionCard(
-                        title: 'فواتير الطلبات بين الفروع',
-                        subtitle:
-                            'طلبات الأصناف بين الفروع ثم التسعير والاعتماد المحاسبي',
-                        icon: Icons.swap_horiz_rounded,
-                        color: const Color(0xFF0277BD),
-                        onTap: () => _openInterBranchInvoicesSystem(context),
-                      ),
-                    ],
+                    const SizedBox(height: 12),
+                    ActionCard(
+                      title: 'فواتير التحويل بين الفروع',
+                      subtitle:
+                          'إنشاء مباشر من الفرع المورد، ثم الاستلام والتسعير والترحيل',
+                      icon: Icons.swap_horiz_rounded,
+                      color: const Color(0xFF0277BD),
+                      onTap: () => _openInterBranchInvoicesSystem(context),
+                    ),
                     const SizedBox(height: 12),
                     ActionCard(
                       title: 'طلب استهلاك منتج للعرض',
@@ -190,17 +188,26 @@ class SystemSelectionScreen extends StatelessWidget {
   }
 
   void _openInterBranchInvoicesSystem(BuildContext context) {
-    if (role == UserRole.admin) return;
+    if (role == UserRole.collector ||
+        role == UserRole.accountant ||
+        role == UserRole.admin) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => InterBranchInvoicesDashboard(
+            role: role,
+            branchName: 'جميع الفروع',
+          ),
+        ),
+      );
+      return;
+    }
 
     final id = branchId ?? '';
     if (id.isEmpty) {
       final selectionScreen = switch (role) {
-        UserRole.collector => const CollectorBranchesScreen(
-          openInterBranchInvoices: true,
-        ),
-        UserRole.accountant => const AccountantBranchesScreen(
-          openInterBranchInvoices: true,
-        ),
+        UserRole.collector => null,
+        UserRole.accountant => null,
         UserRole.manager => null,
         UserRole.admin => null,
       };

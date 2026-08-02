@@ -1,11 +1,19 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
+import 'package:store_collection_app/models/inter_branch_invoice_price_model.dart';
+import 'package:store_collection_app/models/product_price_model.dart';
+import 'package:store_collection_app/services/inter_branch_invoice_api_service.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_service.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
+import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/inter_branch_invoice_policies.dart';
 
 class InterBranchInvoiceDetailsScreen extends StatefulWidget {
   final String invoiceId;
@@ -29,11 +37,12 @@ class InterBranchInvoiceDetailsScreen extends StatefulWidget {
 class _InterBranchInvoiceDetailsScreenState
     extends State<InterBranchInvoiceDetailsScreen> {
   final _service = InterBranchInvoiceService();
+  final _priceService = ProductPriceService();
   final _numberFormat = NumberFormat('#,##0.##');
   final _dateFormat = DateFormat('yyyy/MM/dd HH:mm');
 
   bool get _showsPrices =>
-      widget.role == UserRole.collector || widget.role == UserRole.accountant;
+      InterBranchInvoicePolicy.mayReadProtectedPrices(widget.role);
 
   Color get _roleColor {
     switch (widget.role) {
@@ -76,12 +85,17 @@ class _InterBranchInvoiceDetailsScreenState
                   icon: const Icon(Icons.picture_as_pdf_rounded),
                   onPressed: () async {
                     try {
-                      await PdfService.printInterBranchInvoice(
-                        data: data,
-                        showPrices: _showsPrices,
+                      final protectedPrices = await _loadProtectedPriceSnapshot(
+                        invoice,
                       );
-                    } catch (e) {
-                      _showSnack('تعذر إنشاء PDF: $e');
+                      await PdfService.printSecureInterBranchInvoice(
+                        invoiceId: invoice.id,
+                        publicData: data,
+                        audienceRole: widget.role,
+                        priceSnapshot: protectedPrices,
+                      );
+                    } catch (_) {
+                      _showSnack('تعذر إنشاء PDF. حاول مجدداً.');
                     }
                   },
                 );
@@ -120,17 +134,28 @@ class _InterBranchInvoiceDetailsScreenState
                 ),
               );
             }
-            final actions = _actions(invoice);
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-              children: [
-                _invoiceDocument(invoice),
-                if (actions != null) ...[const SizedBox(height: 12), actions],
-                const SizedBox(height: 12),
-                _statusTimeline(invoice),
-                const SizedBox(height: 12),
-                _history(invoice),
-              ],
+            return FutureBuilder<InterBranchInvoicePriceSnapshot?>(
+              future: _loadProtectedPriceSnapshot(invoice),
+              builder: (context, priceSnapshot) {
+                final actions = _actions(invoice);
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                  children: [
+                    _invoiceDocument(
+                      invoice,
+                      priceSnapshot: priceSnapshot.data,
+                    ),
+                    if (actions != null) ...[
+                      const SizedBox(height: 12),
+                      actions,
+                    ],
+                    const SizedBox(height: 12),
+                    _statusTimeline(invoice),
+                    const SizedBox(height: 12),
+                    _history(invoice),
+                  ],
+                );
+              },
             );
           },
         ),
@@ -139,22 +164,38 @@ class _InterBranchInvoiceDetailsScreenState
   }
 
   bool _canViewInvoice(InterBranchInvoiceRead invoice) {
-    final currentBranchId = widget.branchId ?? '';
-    switch (widget.role) {
-      case UserRole.manager:
-        return currentBranchId.isNotEmpty &&
-            (invoice.sendingBranchId == currentBranchId ||
-                invoice.receivingBranchId == currentBranchId);
-      case UserRole.collector:
-      case UserRole.accountant:
-        return currentBranchId.isNotEmpty &&
-            invoice.sendingBranchId == currentBranchId;
-      case UserRole.admin:
-        return false;
+    return InterBranchInvoicePolicy.canView(
+      role: widget.role,
+      branchId: widget.branchId,
+      invoice: invoice,
+    );
+  }
+
+  Future<InterBranchInvoicePriceSnapshot?> _loadProtectedPriceSnapshot(
+    InterBranchInvoiceRead invoice,
+  ) async {
+    if (!invoice.isVersion2 ||
+        !InterBranchInvoicePolicy.mayReadProtectedPrices(widget.role)) {
+      return null;
+    }
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(InterBranchInvoiceFields.priceCollection)
+          .doc(invoice.id)
+          .get();
+      final data = snapshot.data();
+      if (data == null) return null;
+      final result = InterBranchInvoicePriceSnapshot.fromMap(snapshot.id, data);
+      return result.matchesPublicInvoice(invoice) ? result : null;
+    } catch (_) {
+      return null;
     }
   }
 
-  Widget _invoiceDocument(InterBranchInvoiceRead invoice) {
+  Widget _invoiceDocument(
+    InterBranchInvoiceRead invoice, {
+    InterBranchInvoicePriceSnapshot? priceSnapshot,
+  }) {
     final date = invoice.invoiceCreatedAt ?? invoice.requestDate;
     final invoiceTitle = invoice.invoiceNumber == '-'
         ? 'طلب بانتظار إنشاء الفاتورة'
@@ -166,9 +207,16 @@ class _InterBranchInvoiceDetailsScreenState
         children: [
           _invoiceHeader(invoice, invoiceTitle, date),
           const SizedBox(height: 16),
-          _invoiceProductsTable(invoice),
+          _invoiceProductsTable(invoice, priceSnapshot: priceSnapshot),
           const SizedBox(height: 14),
-          _invoiceSummary(invoice),
+          _invoiceSummary(invoice, priceSnapshot: priceSnapshot),
+          if (invoice.invoiceNotes.trim().isNotEmpty ||
+              invoice.receiverNotes.trim().isNotEmpty ||
+              (priceSnapshot?.pricingNotes.trim().isNotEmpty ?? false) ||
+              (priceSnapshot?.accountingNotes.trim().isNotEmpty ?? false)) ...[
+            const SizedBox(height: 14),
+            _invoiceNotesPanel(invoice, priceSnapshot: priceSnapshot),
+          ],
         ],
       ),
     );
@@ -377,7 +425,10 @@ class _InterBranchInvoiceDetailsScreenState
     );
   }
 
-  Widget _invoiceProductsTable(InterBranchInvoiceRead invoice) {
+  Widget _invoiceProductsTable(
+    InterBranchInvoiceRead invoice, {
+    InterBranchInvoicePriceSnapshot? priceSnapshot,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -410,7 +461,7 @@ class _InterBranchInvoiceDetailsScreenState
               child: DataTable(
                 headingRowHeight: 38,
                 dataRowMinHeight: 44,
-                dataRowMaxHeight: 58,
+                dataRowMaxHeight: invoice.isVersion2 ? 100 : 58,
                 horizontalMargin: 12,
                 columnSpacing: 20,
                 headingRowColor: WidgetStatePropertyAll(
@@ -420,48 +471,103 @@ class _InterBranchInvoiceDetailsScreenState
                   const DataColumn(label: Text('#')),
                   const DataColumn(label: Text('المنتج')),
                   const DataColumn(label: Text('الوحدة')),
-                  const DataColumn(label: Text('المطلوب')),
-                  const DataColumn(label: Text('المعتمد')),
+                  DataColumn(
+                    label: Text(invoice.isVersion2 ? 'المورد' : 'المطلوب'),
+                  ),
+                  if (!invoice.isVersion2)
+                    const DataColumn(label: Text('المعتمد')),
                   const DataColumn(label: Text('المستلم')),
+                  if (invoice.isVersion2) ...[
+                    const DataColumn(label: Text('تالف')),
+                    const DataColumn(label: Text('ناقص')),
+                  ],
                   if (_showsPrices) ...[
-                    const DataColumn(label: Text('سعر الوحدة')),
+                    DataColumn(
+                      label: Text(
+                        priceSnapshot?.currency.isNotEmpty ?? false
+                            ? 'سعر الوحدة (${priceSnapshot!.currency})'
+                            : 'سعر الوحدة',
+                      ),
+                    ),
                     const DataColumn(label: Text('الإجمالي')),
                   ],
                 ],
                 rows: invoice.items.asMap().entries.map((entry) {
                   final item = entry.value;
+                  final protectedItem = priceSnapshot?.itemById(item.itemId);
+                  final unitPrice = invoice.isVersion2
+                      ? protectedItem?.unitPrice
+                      : item.unitPrice;
+                  final lineTotal = invoice.isVersion2
+                      ? protectedItem?.lineTotal
+                      : item.totalPrice;
                   return DataRow(
                     cells: [
                       DataCell(Text('${entry.key + 1}')),
                       DataCell(
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 190),
-                          child: Text(
-                            item.name.isEmpty ? '-' : item.name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppTheme.textPrimary,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.name.isEmpty ? '-' : item.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.textPrimary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              if (item.lineNotes.trim().isNotEmpty)
+                                Text(
+                                  'ملاحظة التوريد: ${item.lineNotes}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              if (item.discrepancyNotes.trim().isNotEmpty)
+                                Text(
+                                  'ملاحظة الفرق: ${item.discrepancyNotes}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: AppTheme.warningColor,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       ),
                       DataCell(Text(item.unit.isEmpty ? '-' : item.unit)),
                       DataCell(Text(_formatNumber(item.requestedQuantity))),
-                      DataCell(Text(_formatNumber(item.approvedQuantity))),
-                      DataCell(Text(_formatNumber(item.receivedQuantity))),
+                      if (!invoice.isVersion2)
+                        DataCell(Text(_formatNumber(item.approvedQuantity))),
+                      DataCell(
+                        Text(
+                          item.actualReceivedQuantity == null
+                              ? '-'
+                              : _formatNumber(item.receivedQuantity),
+                        ),
+                      ),
+                      if (invoice.isVersion2) ...[
+                        DataCell(Text(_formatNumber(item.damagedQuantity))),
+                        DataCell(Text(_formatNumber(item.missingQuantity))),
+                      ],
                       if (_showsPrices) ...[
                         DataCell(
                           Text(
-                            item.unitPrice == null
-                                ? '-'
-                                : _formatNumber(item.unitPrice!),
+                            unitPrice == null ? '-' : _formatNumber(unitPrice),
                           ),
                         ),
                         DataCell(
                           Text(
-                            _formatNumber(item.totalPrice),
+                            lineTotal == null ? '-' : _formatNumber(lineTotal),
                             style: const TextStyle(
                               color: AppTheme.successColor,
                               fontWeight: FontWeight.bold,
@@ -480,7 +586,10 @@ class _InterBranchInvoiceDetailsScreenState
     );
   }
 
-  Widget _invoiceSummary(InterBranchInvoiceRead invoice) {
+  Widget _invoiceSummary(
+    InterBranchInvoiceRead invoice, {
+    InterBranchInvoicePriceSnapshot? priceSnapshot,
+  }) {
     final totalRequested = invoice.items.fold<double>(
       0,
       (total, item) => total + item.requestedQuantity,
@@ -489,10 +598,7 @@ class _InterBranchInvoiceDetailsScreenState
       0,
       (total, item) => total + item.approvedQuantity,
     );
-    final totalReceived = invoice.items.fold<double>(
-      0,
-      (total, item) => total + item.receivedQuantity,
-    );
+    final totalReceived = invoice.receivedQuantity;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -524,35 +630,86 @@ class _InterBranchInvoiceDetailsScreenState
                 _roleColor,
               ),
               _summaryTile(
-                'إجمالي المطلوب',
+                invoice.isVersion2 ? 'إجمالي المورد' : 'إجمالي المطلوب',
                 _formatNumber(totalRequested),
                 Icons.playlist_add_check_rounded,
                 AppTheme.textSecondary,
               ),
-              _summaryTile(
-                'إجمالي المعتمد',
-                _formatNumber(totalApproved),
-                Icons.verified_rounded,
-                AppTheme.managerColor,
-              ),
+              if (!invoice.isVersion2)
+                _summaryTile(
+                  'إجمالي المعتمد',
+                  _formatNumber(totalApproved),
+                  Icons.verified_rounded,
+                  AppTheme.managerColor,
+                ),
               _summaryTile(
                 'إجمالي المستلم',
-                _formatNumber(totalReceived),
+                totalReceived == null
+                    ? 'لم يؤكد بعد'
+                    : _formatNumber(totalReceived),
                 Icons.inventory_2_rounded,
                 AppTheme.collectorColor,
               ),
               if (_showsPrices)
                 _summaryTile(
-                  'إجمالي سعر الفاتورة',
-                  invoice.totalPrice == null
+                  priceSnapshot?.currency.isNotEmpty ?? false
+                      ? 'إجمالي سعر الفاتورة (${priceSnapshot!.currency})'
+                      : 'إجمالي سعر الفاتورة',
+                  (invoice.isVersion2
+                              ? priceSnapshot?.total
+                              : invoice.totalPrice) ==
+                          null
                       ? 'لم تدخل الأسعار بعد'
-                      : _formatNumber(invoice.totalPrice!),
+                      : _formatNumber(
+                          invoice.isVersion2
+                              ? priceSnapshot!.total
+                              : invoice.totalPrice!,
+                        ),
                   Icons.payments_rounded,
                   AppTheme.successColor,
                   wide: true,
                 ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _invoiceNotesPanel(
+    InterBranchInvoiceRead invoice, {
+    InterBranchInvoicePriceSnapshot? priceSnapshot,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'ملاحظات الفاتورة',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          if (invoice.invoiceNotes.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('التوريد: ${invoice.invoiceNotes}'),
+          ],
+          if (invoice.receiverNotes.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('الاستلام: ${invoice.receiverNotes}'),
+          ],
+          if (priceSnapshot?.pricingNotes.trim().isNotEmpty ?? false) ...[
+            const SizedBox(height: 8),
+            Text('التسعير: ${priceSnapshot!.pricingNotes}'),
+          ],
+          if (priceSnapshot?.accountingNotes.trim().isNotEmpty ?? false) ...[
+            const SizedBox(height: 8),
+            Text('الترحيل: ${priceSnapshot!.accountingNotes}'),
+          ],
         ],
       ),
     );
@@ -615,7 +772,7 @@ class _InterBranchInvoiceDetailsScreenState
   }
 
   Widget _statusTimeline(InterBranchInvoiceRead invoice) {
-    final steps = _timelineSteps();
+    final steps = _timelineSteps(invoice);
     final currentIndex = _timelineIndex(invoice);
     final isException = _isExceptionStatus(invoice.status);
 
@@ -803,7 +960,35 @@ class _InterBranchInvoiceDetailsScreenState
     );
   }
 
-  List<_InvoiceTimelineStep> _timelineSteps() {
+  List<_InvoiceTimelineStep> _timelineSteps(InterBranchInvoiceRead invoice) {
+    if (invoice.isVersion2) {
+      return const [
+        _InvoiceTimelineStep(
+          title: 'إنشاء الفاتورة المباشرة',
+          subtitle: 'أنشأ الفرع المورد الفاتورة وأرسلها للمستلم',
+          icon: Icons.receipt_long_rounded,
+          color: AppTheme.managerColor,
+        ),
+        _InvoiceTimelineStep(
+          title: 'تأكيد الاستلام',
+          subtitle: 'تسجيل الكميات المستلمة والفروقات',
+          icon: Icons.inventory_rounded,
+          color: AppTheme.collectorColor,
+        ),
+        _InvoiceTimelineStep(
+          title: 'تأكيد الأسعار',
+          subtitle: 'اعتماد الأسعار المحمية من المدير العام',
+          icon: Icons.price_change_rounded,
+          color: AppTheme.accountantColor,
+        ),
+        _InvoiceTimelineStep(
+          title: 'الترحيل المحاسبي',
+          subtitle: 'إغلاق الفاتورة في النظام المحاسبي',
+          icon: Icons.account_balance_wallet_rounded,
+          color: AppTheme.successColor,
+        ),
+      ];
+    }
     return [
       _InvoiceTimelineStep(
         title: 'طلب الفاتورة',
@@ -845,13 +1030,34 @@ class _InterBranchInvoiceDetailsScreenState
           ?.toString();
       if (rawPrevious != null && rawPrevious.isNotEmpty) {
         final previous = interBranchInvoiceStatusFromString(rawPrevious);
-        if (previous != status) return _timelineIndexForStatus(previous);
+        if (previous != status) {
+          return _timelineIndexForStatus(previous, invoice.workflowVersion);
+        }
       }
     }
-    return _timelineIndexForStatus(status);
+    return _timelineIndexForStatus(status, invoice.workflowVersion);
   }
 
-  int _timelineIndexForStatus(InterBranchInvoiceStatus status) {
+  int _timelineIndexForStatus(
+    InterBranchInvoiceStatus status,
+    int workflowVersion,
+  ) {
+    if (workflowVersion >= 2) {
+      switch (status) {
+        case InterBranchInvoiceStatus.pendingReceiverReview:
+          return 0;
+        case InterBranchInvoiceStatus.pendingPriceEntry:
+        case InterBranchInvoiceStatus.receivedByReceivingManager:
+          return 1;
+        case InterBranchInvoiceStatus.pendingAccountingEntry:
+        case InterBranchInvoiceStatus.pricesEnteredByCollector:
+          return 2;
+        case InterBranchInvoiceStatus.postedToAccounting:
+          return 3;
+        default:
+          return 0;
+      }
+    }
     switch (status) {
       case InterBranchInvoiceStatus.requestPending:
         return 0;
@@ -875,6 +1081,7 @@ class _InterBranchInvoiceDetailsScreenState
       case InterBranchInvoiceStatus.editPendingApprovals:
       case InterBranchInvoiceStatus.editApproved:
       case InterBranchInvoiceStatus.editRejected:
+      case InterBranchInvoiceStatus.unknown:
         return 2;
     }
   }
@@ -888,6 +1095,7 @@ class _InterBranchInvoiceDetailsScreenState
       case InterBranchInvoiceStatus.editRequested:
       case InterBranchInvoiceStatus.editPendingApprovals:
       case InterBranchInvoiceStatus.editRejected:
+      case InterBranchInvoiceStatus.unknown:
         return true;
       case InterBranchInvoiceStatus.requestPending:
       case InterBranchInvoiceStatus.approvedBySupplier:
@@ -904,14 +1112,14 @@ class _InterBranchInvoiceDetailsScreenState
   }
 
   Widget? _actions(InterBranchInvoiceRead invoice) {
-    final currentBranchId = widget.branchId ?? '';
-    final isSupplying = invoice.sendingBranchId == currentBranchId;
-    final isReceiving = invoice.receivingBranchId == currentBranchId;
+    final allowed = InterBranchInvoicePolicy.actionsFor(
+      role: widget.role,
+      branchId: widget.branchId,
+      invoice: invoice,
+    );
     final buttons = <Widget>[];
 
-    if (widget.role == UserRole.manager &&
-        isSupplying &&
-        invoice.status == InterBranchInvoiceStatus.requestPending) {
+    if (allowed.contains(InterBranchInvoiceAction.legacySupplierApprove)) {
       buttons.addAll([
         _actionButton(
           'تكوين الفاتورة',
@@ -928,9 +1136,7 @@ class _InterBranchInvoiceDetailsScreenState
       ]);
     }
 
-    if (widget.role == UserRole.manager &&
-        isReceiving &&
-        invoice.status == InterBranchInvoiceStatus.pendingReceiverReview) {
+    if (allowed.contains(InterBranchInvoiceAction.confirmReceipt)) {
       buttons.add(
         _actionButton(
           'تأكيد الاستلام',
@@ -941,10 +1147,7 @@ class _InterBranchInvoiceDetailsScreenState
       );
     }
 
-    if (widget.role == UserRole.collector &&
-        (invoice.status == InterBranchInvoiceStatus.pendingPriceEntry ||
-            invoice.status ==
-                InterBranchInvoiceStatus.pendingAccountingEntry)) {
+    if (allowed.contains(InterBranchInvoiceAction.confirmPrices)) {
       buttons.add(
         _actionButton(
           'إدخال الأسعار',
@@ -955,8 +1158,7 @@ class _InterBranchInvoiceDetailsScreenState
       );
     }
 
-    if (widget.role == UserRole.accountant &&
-        invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry) {
+    if (allowed.contains(InterBranchInvoiceAction.postAccounting)) {
       buttons.add(
         _actionButton(
           'ترحيل محاسبي',
@@ -967,7 +1169,7 @@ class _InterBranchInvoiceDetailsScreenState
       );
     }
 
-    if (_canRequestChange(invoice, isSupplying, isReceiving)) {
+    if (allowed.contains(InterBranchInvoiceAction.requestEdit)) {
       buttons.add(
         _actionButton(
           'طلب تعديل',
@@ -981,7 +1183,7 @@ class _InterBranchInvoiceDetailsScreenState
           ),
         ),
       );
-      if (widget.role != UserRole.collector) {
+      if (allowed.contains(InterBranchInvoiceAction.requestCancellation)) {
         buttons.add(
           _actionButton(
             'طلب إلغاء',
@@ -1000,7 +1202,7 @@ class _InterBranchInvoiceDetailsScreenState
       }
     }
 
-    if (_canApproveShared(invoice, isSupplying, isReceiving)) {
+    if (allowed.contains(InterBranchInvoiceAction.approveSharedRequest)) {
       final isCancel =
           invoice.status ==
           InterBranchInvoiceStatus.cancellationPendingApprovals;
@@ -1154,6 +1356,10 @@ class _InterBranchInvoiceDetailsScreenState
   }
 
   Future<void> _showReceive(InterBranchInvoiceRead invoice) async {
+    if (invoice.isVersion2) {
+      await _showDirectReceive(invoice);
+      return;
+    }
     final controllers = invoice.items
         .map(
           (item) =>
@@ -1206,6 +1412,10 @@ class _InterBranchInvoiceDetailsScreenState
   }
 
   Future<void> _showPrices(InterBranchInvoiceRead invoice) async {
+    if (invoice.isVersion2) {
+      await _showDirectPrices(invoice);
+      return;
+    }
     final controllers = invoice.items
         .map(
           (item) => TextEditingController(
@@ -1261,17 +1471,22 @@ class _InterBranchInvoiceDetailsScreenState
   Future<void> _showAccounting(InterBranchInvoiceRead invoice) async {
     final reference = TextEditingController();
     final notes = TextEditingController();
+    final idempotencyKey = invoice.isVersion2
+        ? InterBranchInvoiceApiService.generateIdempotencyKey()
+        : '';
     await _dialog(
       title: 'ترحيل الفاتورة محاسبياً',
       children: [
         TextField(
           controller: reference,
+          inputFormatters: const [_Utf8LengthLimitingTextInputFormatter(200)],
           decoration: const InputDecoration(
             labelText: 'رقم الفاتورة في النظام المحاسبي',
           ),
         ),
         TextField(
           controller: notes,
+          inputFormatters: const [_Utf8LengthLimitingTextInputFormatter(1000)],
           maxLines: 3,
           decoration: const InputDecoration(labelText: 'ملاحظات'),
         ),
@@ -1280,13 +1495,302 @@ class _InterBranchInvoiceDetailsScreenState
         if (reference.text.trim().isEmpty) {
           throw Exception('رقم الفاتورة في النظام المحاسبي مطلوب');
         }
-        await _service.confirmAccounting(
-          invoiceId: invoice.id,
-          accountingReference: reference.text,
-          branchId: widget.branchId,
-          notes: notes.text,
-        );
+        if (invoice.isVersion2) {
+          await _service.postDirectAccounting(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            accountingReference: reference.text,
+            idempotencyKey: idempotencyKey,
+            accountingNotes: notes.text,
+          );
+        } else {
+          await _service.confirmAccounting(
+            invoiceId: invoice.id,
+            accountingReference: reference.text,
+            branchId: widget.branchId,
+            notes: notes.text,
+          );
+        }
       },
+    );
+  }
+
+  Future<void> _showDirectReceive(InterBranchInvoiceRead invoice) async {
+    final receivedControllers = invoice.items
+        .map(
+          (item) =>
+              TextEditingController(text: _formatNumber(item.suppliedQuantity)),
+        )
+        .toList(growable: false);
+    final damagedControllers = invoice.items
+        .map((_) => TextEditingController(text: '0'))
+        .toList(growable: false);
+    final missingControllers = invoice.items
+        .map((_) => TextEditingController(text: '0'))
+        .toList(growable: false);
+    final discrepancyControllers = invoice.items
+        .map((item) => TextEditingController(text: item.discrepancyNotes))
+        .toList(growable: false);
+    final notes = TextEditingController();
+    final idempotencyKey =
+        InterBranchInvoiceApiService.generateIdempotencyKey();
+    try {
+      await _dialog(
+        title: 'تأكيد الاستلام الفعلي',
+        children: [
+          const Text('يمكن تسجيل صفر للكمية المستلمة مع توضيح النقص أو التلف.'),
+          ...invoice.items.asMap().entries.expand((entry) {
+            final item = entry.value;
+            final index = entry.key;
+            return <Widget>[
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  '${item.name} (${_formatNumber(item.suppliedQuantity)} ${item.unit})',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: _quantityField(
+                      controller: receivedControllers[index],
+                      label: 'المستلم',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _quantityField(
+                      controller: damagedControllers[index],
+                      label: 'التالف',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _quantityField(
+                      controller: missingControllers[index],
+                      label: 'الناقص',
+                    ),
+                  ),
+                ],
+              ),
+              TextField(
+                controller: discrepancyControllers[index],
+                inputFormatters: const [
+                  _Utf8LengthLimitingTextInputFormatter(100),
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'ملاحظة الفرق (اختياري)',
+                ),
+              ),
+              const Divider(),
+            ];
+          }),
+          TextField(
+            controller: notes,
+            inputFormatters: const [
+              _Utf8LengthLimitingTextInputFormatter(1000),
+            ],
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'ملاحظات الاستلام'),
+          ),
+        ],
+        onSubmit: () async {
+          final confirmedItems = <InterBranchInvoiceItem>[];
+          for (var index = 0; index < invoice.items.length; index++) {
+            final item = invoice.items[index];
+            final received = _tryParseNumber(receivedControllers[index].text);
+            final damaged = _tryParseNumber(damagedControllers[index].text);
+            final missing = _tryParseNumber(missingControllers[index].text);
+            if (received == null ||
+                damaged == null ||
+                missing == null ||
+                received < 0 ||
+                damaged < 0 ||
+                missing < 0) {
+              throw Exception('أدخل كميات صحيحة غير سالبة.');
+            }
+            if (damaged > received) {
+              throw Exception('الكمية التالفة لا يمكن أن تتجاوز المستلمة.');
+            }
+            final maximumMissing = (item.suppliedQuantity - received).clamp(
+              0,
+              double.infinity,
+            );
+            if (missing > maximumMissing) {
+              throw Exception('الكمية الناقصة لا تتوافق مع الكمية الموردة.');
+            }
+            confirmedItems.add(
+              item.copyWith(
+                receivedQuantity: received,
+                hasReceivedQuantity: true,
+                damagedQuantity: damaged,
+                missingQuantity: missing,
+                discrepancyNotes: discrepancyControllers[index].text.trim(),
+              ),
+            );
+          }
+          await _service.confirmDirectReceipt(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            items: confirmedItems,
+            idempotencyKey: idempotencyKey,
+            receiverNotes: notes.text,
+          );
+        },
+      );
+    } finally {
+      for (final controller in [
+        ...receivedControllers,
+        ...damagedControllers,
+        ...missingControllers,
+        ...discrepancyControllers,
+        notes,
+      ]) {
+        controller.dispose();
+      }
+    }
+  }
+
+  Future<void> _showDirectPrices(InterBranchInvoiceRead invoice) async {
+    final currency = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('اختر العملة'),
+        children: ProductPriceService.supportedCurrencies
+            .map(
+              (value) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(dialogContext, value),
+                child: Text(value),
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
+    if (currency == null || !mounted) return;
+
+    final suggestions = await Future.wait(
+      invoice.items.map(
+        (item) => _loadPriceSuggestion(
+          brandId: invoice.sendingBrandId,
+          productId: item.productId,
+          unitId: item.unitId,
+          currency: currency,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    final controllers = suggestions
+        .map(
+          (suggestion) => TextEditingController(
+            text: suggestion == null ? '' : _formatNumber(suggestion.price),
+          ),
+        )
+        .toList(growable: false);
+    final notes = TextEditingController();
+    final idempotencyKey =
+        InterBranchInvoiceApiService.generateIdempotencyKey();
+    try {
+      await _dialog(
+        title: 'تأكيد أسعار المنتجات ($currency)',
+        children: [
+          const Text(
+            'الأسعار المحفوظة اقتراحات فقط. لن تصبح نهائية إلا بعد الحفظ.',
+          ),
+          ...invoice.items.asMap().entries.map((entry) {
+            final item = entry.value;
+            final suggestion = suggestions[entry.key];
+            final sourceDate = suggestion?.changedAt == null
+                ? ''
+                : _dateFormat.format(suggestion!.changedAt!);
+            final source = suggestion == null
+                ? 'لا يوجد سعر سابق لهذه الوحدة'
+                : 'اقتراح من فاتورة ${suggestion.sourceInvoiceId}'
+                      '${sourceDate.isEmpty ? '' : ' - $sourceDate'}';
+            return TextField(
+              controller: controllers[entry.key],
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+              ],
+              decoration: InputDecoration(
+                labelText:
+                    '${item.name} - ${item.unit} - ${_formatNumber(item.receivedQuantity)}',
+                helperText: source,
+                helperMaxLines: 2,
+              ),
+            );
+          }),
+          TextField(
+            controller: notes,
+            inputFormatters: const [
+              _Utf8LengthLimitingTextInputFormatter(1000),
+            ],
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'ملاحظات التسعير'),
+          ),
+        ],
+        onSubmit: () async {
+          final inputs = <InterBranchInvoicePriceInput>[];
+          for (var index = 0; index < invoice.items.length; index++) {
+            final value = _tryParseNumber(controllers[index].text);
+            if (value == null || value < 0) {
+              throw Exception('أكد سعراً صحيحاً لكل منتج.');
+            }
+            inputs.add(
+              InterBranchInvoicePriceInput(
+                itemId: invoice.items[index].itemId,
+                unitPrice: value,
+              ),
+            );
+          }
+          await _service.confirmDirectPrices(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            currency: currency,
+            items: inputs,
+            idempotencyKey: idempotencyKey,
+            pricingNotes: notes.text,
+          );
+        },
+      );
+    } finally {
+      for (final controller in [...controllers, notes]) {
+        controller.dispose();
+      }
+    }
+  }
+
+  Future<ProductPriceLatest?> _loadPriceSuggestion({
+    required String brandId,
+    required String productId,
+    required String unitId,
+    required String currency,
+  }) async {
+    if (brandId.isEmpty || productId.isEmpty || unitId.isEmpty) return null;
+    try {
+      return await _priceService.fetchLatest(
+        brandId: brandId,
+        productId: productId,
+        unitId: unitId,
+        currency: currency,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _quantityField({
+    required TextEditingController controller,
+    required String label,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+      decoration: InputDecoration(labelText: label),
     );
   }
 
@@ -1399,41 +1903,6 @@ class _InterBranchInvoiceDetailsScreenState
     );
   }
 
-  bool _canRequestChange(
-    InterBranchInvoiceRead invoice,
-    bool isSupplying,
-    bool isReceiving,
-  ) {
-    if (!invoice.status.hasInvoice ||
-        invoice.status == InterBranchInvoiceStatus.cancelled ||
-        invoice.status ==
-            InterBranchInvoiceStatus.cancellationPendingApprovals ||
-        invoice.status == InterBranchInvoiceStatus.editPendingApprovals) {
-      return false;
-    }
-    if (widget.role == UserRole.collector ||
-        widget.role == UserRole.accountant) {
-      return true;
-    }
-    return widget.role == UserRole.manager && (isSupplying || isReceiving);
-  }
-
-  bool _canApproveShared(
-    InterBranchInvoiceRead invoice,
-    bool isSupplying,
-    bool isReceiving,
-  ) {
-    final waiting =
-        invoice.status ==
-            InterBranchInvoiceStatus.cancellationPendingApprovals ||
-        invoice.status == InterBranchInvoiceStatus.editPendingApprovals;
-    if (!waiting) return false;
-    if (widget.role == UserRole.accountant) {
-      return true;
-    }
-    return widget.role == UserRole.manager && (isSupplying || isReceiving);
-  }
-
   Widget _panel({required Widget child}) {
     return Container(
       padding: const EdgeInsets.all(14),
@@ -1498,6 +1967,11 @@ class _InterBranchInvoiceDetailsScreenState
   double _parseNumber(String value) =>
       double.tryParse(value.trim().replaceAll(',', '.')) ?? 0;
 
+  double? _tryParseNumber(String value) {
+    final result = double.tryParse(value.trim().replaceAll(',', '.'));
+    return result != null && result.isFinite ? result : null;
+  }
+
   void _showSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -1518,4 +1992,32 @@ class _InvoiceTimelineStep {
     required this.icon,
     required this.color,
   });
+}
+
+class _Utf8LengthLimitingTextInputFormatter extends TextInputFormatter {
+  final int maxBytes;
+
+  const _Utf8LengthLimitingTextInputFormatter(this.maxBytes);
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (utf8.encode(newValue.text).length <= maxBytes) return newValue;
+    final buffer = StringBuffer();
+    var byteCount = 0;
+    for (final character in newValue.text.characters) {
+      final characterBytes = utf8.encode(character).length;
+      if (byteCount + characterBytes > maxBytes) break;
+      buffer.write(character);
+      byteCount += characterBytes;
+    }
+    final text = buffer.toString();
+    final offset = newValue.selection.end.clamp(0, text.length);
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: offset),
+    );
+  }
 }

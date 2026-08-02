@@ -1,0 +1,77 @@
+{
+  "public_invoices": {
+    "legacy-reconciled": {
+      "migration_currency": "YER",
+      "data": {
+        "id": "legacy-reconciled",
+        "status": "postedToAccounting",
+        "sending_branch_id": "branch-a",
+        "receiving_branch_id": "branch-b",
+        "branch_ids": ["branch-a", "branch-b"],
+        "unit_price": 12,
+        "total_price": 48,
+        "items": [
+          {
+            "name": "منتج تجريبي أ",
+            "unit": "حبة",
+            "requested_quantity": 2,
+            "approved_quantity": 2,
+            "received_quantity": 2,
+            "unit_price": 10,
+            "total_price": 20
+          },
+          {
+            "name": "منتج تجريبي ب",
+            "unit": "علبة",
+            "requested_quantity": 3,
+            "approved_quantity": 3,
+            "received_quantity": 2,
+            "unit_price": 14,
+            "total_price": 28
+          }
+        ],
+        "history": [
+          {
+            "action": "prices_entered_by_collector",
+            "actor_id": "collector-fixture",
+            "actor_role": "collector",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "message": "تم تأكيد الأسعار",
+            "changes": {
+              "items_count": 2,
+              "total_price": 48
+            }
+          }
+        ],
+        "accounting_reference": "LOCAL-FIXTURE-1"
+      }
+    },
+    "legacy-missing-currency": {
+      "data": {
+        "id": "legacy-missing-currency",
+        "status": "pendingAccountingEntry",
+        "requested_quantity": 1,
+        "received_quantity": 1,
+        "unit_price": 5,
+        "total_price": 5,
+        "item_name": "منتج بلا عملة",
+        "unit": "حبة"
+      }
+    },
+    "legacy-total-conflict": {
+      "migration_currency": "USD",
+      "data": {
+        "id": "legacy-total-conflict",
+        "status": "pendingAccountingEntry",
+        "requested_quantity": 2,
+        "received_quantity": 2,
+        "unit_price": 7,
+        "total_price": 99,
+        "item_name": "منتج بإجمالي غير متطابق",
+        "unit": "علبة"
+      }
+    }
+  },
+  "restricted_snapshots": {},
+  "restricted_history": {}
+}

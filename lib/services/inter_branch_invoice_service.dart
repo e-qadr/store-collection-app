@@ -2,11 +2,33 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
+import 'package:store_collection_app/services/inter_branch_invoice_api_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 
+class InterBranchInvoicePage {
+  final List<InterBranchInvoiceRead> invoices;
+  final DocumentSnapshot<Map<String, dynamic>>? cursor;
+  final bool hasMore;
+
+  const InterBranchInvoicePage({
+    required this.invoices,
+    required this.cursor,
+    required this.hasMore,
+  });
+}
+
 class InterBranchInvoiceService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final NotificationService _notificationService = NotificationService();
+  final FirebaseFirestore _firestore;
+  final NotificationService _notificationService;
+  final InterBranchInvoiceApiService commandApi;
+
+  InterBranchInvoiceService({
+    FirebaseFirestore? firestore,
+    NotificationService? notificationService,
+    InterBranchInvoiceApiService? commandApi,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _notificationService = notificationService ?? NotificationService(),
+       commandApi = commandApi ?? InterBranchInvoiceApiService();
 
   static const requiredApprovalParties = <String>{
     'supplyingManager',
@@ -30,14 +52,15 @@ class InterBranchInvoiceService {
     String? branchId,
   }) {
     if (role == UserRole.admin) {
-      return _collection.limit(0).snapshots();
+      return _collection
+          .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+          .limit(50)
+          .snapshots();
     }
     if (role == UserRole.collector || role == UserRole.accountant) {
-      if (branchId == null || branchId.isEmpty) {
-        return _collection.limit(0).snapshots();
-      }
       return _collection
-          .where(InterBranchInvoiceFields.sendingBranchId, isEqualTo: branchId)
+          .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+          .limit(50)
           .snapshots();
     }
     if (branchId == null || branchId.isEmpty) {
@@ -45,9 +68,183 @@ class InterBranchInvoiceService {
     }
     return _collection
         .where(InterBranchInvoiceFields.branchIds, arrayContains: branchId)
+        .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(50)
         .snapshots();
   }
 
+  Stream<QuerySnapshot<Map<String, dynamic>>> watchPricingQueue({
+    int limit = 50,
+  }) {
+    return _collection
+        .where(
+          InterBranchInvoiceFields.status,
+          whereIn: const [
+            'pendingPriceEntry',
+            'receivedByReceivingManager',
+            'receivedByReceivingBranch',
+          ],
+        )
+        .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(limit)
+        .snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> watchAccountingQueue({
+    int limit = 50,
+  }) {
+    return _collection
+        .where(
+          InterBranchInvoiceFields.status,
+          whereIn: const [
+            'pendingAccountingEntry',
+            'pricesEnteredByCollector',
+            'pricedByGeneralManager',
+          ],
+        )
+        .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(limit)
+        .snapshots();
+  }
+
+  Future<InterBranchInvoicePage> fetchBranchPage({
+    required String branchId,
+    required bool sent,
+    DocumentSnapshot<Map<String, dynamic>>? after,
+    int pageSize = 30,
+  }) async {
+    final cleanBranchId = branchId.trim();
+    if (cleanBranchId.isEmpty) throw ArgumentError('Branch ID is required.');
+    Query<Map<String, dynamic>> query = _collection
+        .where(InterBranchInvoiceFields.branchIds, arrayContains: cleanBranchId)
+        .where(
+          sent
+              ? InterBranchInvoiceFields.sendingBranchId
+              : InterBranchInvoiceFields.receivingBranchId,
+          isEqualTo: cleanBranchId,
+        )
+        .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(pageSize);
+    if (after != null) query = query.startAfterDocument(after);
+    final snapshot = await query.get();
+    return _page(snapshot, pageSize);
+  }
+
+  Future<InterBranchInvoicePage> fetchQueuePage({
+    required UserRole role,
+    DocumentSnapshot<Map<String, dynamic>>? after,
+    int pageSize = 30,
+  }) async {
+    final statuses = switch (role) {
+      UserRole.collector => const [
+        'pendingPriceEntry',
+        'receivedByReceivingManager',
+        'receivedByReceivingBranch',
+      ],
+      UserRole.accountant => const [
+        'pendingAccountingEntry',
+        'pricesEnteredByCollector',
+        'pricedByGeneralManager',
+      ],
+      _ => throw ArgumentError('This role has no global invoice queue.'),
+    };
+    Query<Map<String, dynamic>> query = _collection
+        .where(InterBranchInvoiceFields.status, whereIn: statuses)
+        .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(pageSize);
+    if (after != null) query = query.startAfterDocument(after);
+    final snapshot = await query.get();
+    return _page(snapshot, pageSize);
+  }
+
+  Future<InterBranchInvoicePage> fetchAllPage({
+    required UserRole role,
+    DocumentSnapshot<Map<String, dynamic>>? after,
+    int pageSize = 30,
+  }) async {
+    if (role != UserRole.admin) {
+      throw ArgumentError('Only administrators may request the global list.');
+    }
+    Query<Map<String, dynamic>> query = _collection
+        .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(pageSize);
+    if (after != null) query = query.startAfterDocument(after);
+    final snapshot = await query.get();
+    return _page(snapshot, pageSize);
+  }
+
+  InterBranchInvoicePage _page(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+    int pageSize,
+  ) {
+    return InterBranchInvoicePage(
+      invoices: snapshot.docs
+          .map((doc) => InterBranchInvoiceRead(id: doc.id, data: doc.data()))
+          .toList(growable: false),
+      cursor: snapshot.docs.isEmpty ? null : snapshot.docs.last,
+      hasMore: snapshot.docs.length == pageSize,
+    );
+  }
+
+  Future<InterBranchInvoiceCommandResult> createDirectInvoice({
+    required String receivingBranchId,
+    required List<InterBranchInvoiceItem> items,
+    required String idempotencyKey,
+    String? invoiceNotes,
+  }) => commandApi.createDirectInvoice(
+    receivingBranchId: receivingBranchId,
+    items: items,
+    idempotencyKey: idempotencyKey,
+    invoiceNotes: invoiceNotes,
+  );
+
+  Future<InterBranchInvoiceCommandResult> confirmDirectReceipt({
+    required String invoiceId,
+    required int expectedRevision,
+    required List<InterBranchInvoiceItem> items,
+    required String idempotencyKey,
+    String? receiverNotes,
+  }) => commandApi.confirmReceipt(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    items: items,
+    idempotencyKey: idempotencyKey,
+    receiverNotes: receiverNotes,
+  );
+
+  Future<InterBranchInvoiceCommandResult> confirmDirectPrices({
+    required String invoiceId,
+    required int expectedRevision,
+    required String currency,
+    required List<InterBranchInvoicePriceInput> items,
+    required String idempotencyKey,
+    String? pricingNotes,
+  }) => commandApi.confirmPrices(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    currency: currency,
+    items: items,
+    idempotencyKey: idempotencyKey,
+    pricingNotes: pricingNotes,
+  );
+
+  Future<InterBranchInvoiceCommandResult> postDirectAccounting({
+    required String invoiceId,
+    required int expectedRevision,
+    required String accountingReference,
+    required String idempotencyKey,
+    String? accountingNotes,
+  }) => commandApi.postAccounting(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    accountingReference: accountingReference,
+    idempotencyKey: idempotencyKey,
+    accountingNotes: accountingNotes,
+  );
+
+  @Deprecated(
+    'New request-first invoices are disabled. Use createDirectInvoice.',
+  )
   Future<void> createRequest({
     required String itemName,
     required double requestedQuantity,
@@ -57,64 +254,10 @@ class InterBranchInvoiceService {
     required String receivingBranchName,
     required String sendingBranchId,
     required String sendingBranchName,
-  }) async {
-    if (receivingBranchId == sendingBranchId) {
-      throw Exception('لا يمكن إنشاء طلب بين نفس الفرع.');
-    }
-    final requestItems = _normalizeItems(
-      items,
-      fallbackName: itemName,
-      fallbackUnit: unit,
-      fallbackQuantity: requestedQuantity,
+  }) {
+    throw UnsupportedError(
+      'إنشاء طلبات الإصدار الأول متوقف. استخدم إنشاء الفاتورة المباشرة.',
     );
-    if (requestItems.isEmpty ||
-        requestItems.any((item) => item.requestedQuantity <= 0)) {
-      throw Exception('يجب أن تكون الكمية أكبر من صفر.');
-    }
-
-    final actor = await _getCurrentActor();
-    _validateManagerBranch(actor, receivingBranchId);
-
-    final doc = _collection.doc();
-    await doc.set({
-      'id': doc.id,
-      InterBranchInvoiceFields.items: requestItems
-          .map((item) => item.toMap())
-          .toList(),
-      InterBranchInvoiceFields.itemName: requestItems.first.name,
-      InterBranchInvoiceFields.requestedQuantity:
-          requestItems.first.requestedQuantity,
-      InterBranchInvoiceFields.unit: requestItems.first.unit,
-      InterBranchInvoiceFields.receivingBranchId: receivingBranchId,
-      InterBranchInvoiceFields.receivingBranchName: receivingBranchName,
-      InterBranchInvoiceFields.sendingBranchId: sendingBranchId,
-      InterBranchInvoiceFields.sendingBranchName: sendingBranchName,
-      InterBranchInvoiceFields.branchIds: [receivingBranchId, sendingBranchId],
-      InterBranchInvoiceFields.requestDate: FieldValue.serverTimestamp(),
-      InterBranchInvoiceFields.status:
-          InterBranchInvoiceStatus.requestPending.value,
-      InterBranchInvoiceFields.createdBy: actor['uid'],
-      InterBranchInvoiceFields.createdAt: FieldValue.serverTimestamp(),
-      InterBranchInvoiceFields.lastUpdated: FieldValue.serverTimestamp(),
-      InterBranchInvoiceFields.history: [
-        _historyEntry(
-          action: 'request_created',
-          message: 'تم إنشاء طلب منتجات بين الفروع',
-          actor: actor,
-          changes: {'items_count': requestItems.length},
-        ),
-      ],
-    });
-    final savedInvoice = await doc.get();
-    final savedData = savedInvoice.data();
-    if (savedData != null) {
-      await _notifySafely(
-        () => _notificationService.notifyInterBranchRequestCreated(
-          invoiceId: doc.id,
-          invoiceData: savedData,
-        ),
-      );
-    }
   }
 
   Future<void> submitSenderDecision({
@@ -135,6 +278,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       _ensureStatus(
         data,
         InterBranchInvoiceStatus.requestPending,
@@ -272,6 +416,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       _ensureStatus(
         data,
         InterBranchInvoiceStatus.pendingReceiverReview,
@@ -366,6 +511,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       final status = interBranchInvoiceStatusFromString(
         data[InterBranchInvoiceFields.status]?.toString(),
       );
@@ -450,6 +596,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       final status = interBranchInvoiceStatusFromString(
         data[InterBranchInvoiceFields.status]?.toString(),
       );
@@ -519,6 +666,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       _validateSelectedSendingBranch(data, branchId);
       _ensureStatus(
         data,
@@ -574,6 +722,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       final status = interBranchInvoiceStatusFromString(
         data[InterBranchInvoiceFields.status]?.toString(),
       );
@@ -677,6 +826,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       final status = interBranchInvoiceStatusFromString(
         data[InterBranchInvoiceFields.status]?.toString(),
       );
@@ -787,6 +937,7 @@ class InterBranchInvoiceService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
+      _ensureLegacyWorkflow(data);
       _ensureStatus(
         data,
         requestStatus,
@@ -906,6 +1057,14 @@ class InterBranchInvoiceService {
     return data;
   }
 
+  void _ensureLegacyWorkflow(Map<String, dynamic> data) {
+    final version =
+        (data[InterBranchInvoiceFields.workflowVersion] as num?)?.toInt() ?? 1;
+    if (version >= 2) {
+      throw Exception('يجب تنفيذ هذا الإجراء الآمن عبر خادم أوامر الفواتير.');
+    }
+  }
+
   void _ensureStatus(
     Map<String, dynamic> data,
     InterBranchInvoiceStatus expected,
@@ -975,31 +1134,6 @@ class InterBranchInvoiceService {
         (data[InterBranchInvoiceFields.requestedQuantity] as num?)
             ?.toDouble() ??
         0;
-  }
-
-  List<InterBranchInvoiceItem> _normalizeItems(
-    List<InterBranchInvoiceItem>? items, {
-    required String fallbackName,
-    required String fallbackUnit,
-    required double fallbackQuantity,
-  }) {
-    final source = items == null || items.isEmpty
-        ? [
-            InterBranchInvoiceItem(
-              name: fallbackName,
-              unit: fallbackUnit,
-              requestedQuantity: fallbackQuantity,
-            ),
-          ]
-        : items;
-    return source
-        .where(
-          (item) =>
-              item.name.trim().isNotEmpty &&
-              item.unit.trim().isNotEmpty &&
-              item.requestedQuantity > 0,
-        )
-        .toList();
   }
 
   List<InterBranchInvoiceItem> _itemsFromData(Map<String, dynamic> data) {

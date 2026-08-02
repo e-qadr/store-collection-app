@@ -15,7 +15,7 @@ class InterBranchInvoiceTransitions {
     InterBranchInvoiceStatus.invoiceCreated,
   };
 
-  static const _coreTransitions =
+  static const _legacyCoreTransitions =
       <InterBranchInvoiceStatus, Set<InterBranchInvoiceStatus>>{
         InterBranchInvoiceStatus.requestPending: {
           InterBranchInvoiceStatus.requestRejectedBySupplier,
@@ -48,13 +48,36 @@ class InterBranchInvoiceTransitions {
         },
       };
 
+  static const _directCoreTransitions =
+      <InterBranchInvoiceStatus, Set<InterBranchInvoiceStatus>>{
+        InterBranchInvoiceStatus.pendingReceiverReview: {
+          InterBranchInvoiceStatus.pendingPriceEntry,
+        },
+        InterBranchInvoiceStatus.pendingPriceEntry: {
+          InterBranchInvoiceStatus.pendingAccountingEntry,
+        },
+        InterBranchInvoiceStatus.pendingAccountingEntry: {
+          InterBranchInvoiceStatus.postedToAccounting,
+        },
+      };
+
   static bool isLegacyRequestStatus(InterBranchInvoiceStatus status) =>
       legacyRequestStatuses.contains(status);
 
   static bool allowsCoreTransition(
     InterBranchInvoiceStatus current,
-    InterBranchInvoiceStatus next,
-  ) => _coreTransitions[current]?.contains(next) ?? false;
+    InterBranchInvoiceStatus next, {
+    int workflowVersion = 1,
+  }) {
+    final transitions = workflowVersion >= 2
+        ? _directCoreTransitions
+        : _legacyCoreTransitions;
+    return transitions[current]?.contains(next) ?? false;
+  }
+
+  static bool isDirectWorkflowStatus(InterBranchInvoiceStatus status) =>
+      _directCoreTransitions.containsKey(status) ||
+      status == InterBranchInvoiceStatus.postedToAccounting;
 
   static bool canStartEdit(InterBranchInvoiceStatus status) =>
       status.hasInvoice &&

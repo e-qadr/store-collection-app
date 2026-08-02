@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/user_model.dart';
 import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/utils/password_policy.dart';
@@ -36,6 +37,20 @@ void main() {
     expect(user.mustChangePassword, isFalse);
     expect(user.passwordState, 'active');
     expect(user.temporaryCredentialExpiresAt, isNull);
+    expect(user.hasKnownRole, isTrue);
+  });
+
+  test('يفشل دور المستخدم غير المعروف بشكل مغلق دون إعادة كتابته', () {
+    final user = UserModel.fromJson({
+      'uid': 'unknown-role-user',
+      'name': 'مستخدم بدور غير معروف',
+      'email': 'unknown@example.com',
+      'role': 'future_role',
+    });
+
+    expect(user.hasKnownRole, isFalse);
+    expect(user.role, UserRole.collector);
+    expect(user.toJson()['role'], 'future_role');
   });
 
   test('يفسر إنشاء المستخدم عبر البريد الرسمي', () async {

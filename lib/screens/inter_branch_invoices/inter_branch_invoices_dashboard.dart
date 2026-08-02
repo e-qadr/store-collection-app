@@ -41,7 +41,7 @@ class _InterBranchInvoicesDashboardState
     extends State<InterBranchInvoicesDashboard> {
   final _service = InterBranchInvoiceService();
 
-  bool get _canCreateRequest =>
+  bool get _canCreateInvoice =>
       widget.role == UserRole.manager &&
       widget.branchId != null &&
       widget.branchId!.isNotEmpty;
@@ -63,11 +63,11 @@ class _InterBranchInvoicesDashboardState
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
-        floatingActionButton: _canCreateRequest
+        floatingActionButton: _canCreateInvoice
             ? FloatingActionButton.extended(
                 onPressed: _openNewRequest,
                 icon: const Icon(Icons.add_rounded),
-                label: const Text('طلب جديد'),
+                label: const Text('فاتورة جديدة'),
                 backgroundColor: AppTheme.managerColor,
               )
             : null,
@@ -78,10 +78,7 @@ class _InterBranchInvoicesDashboardState
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 92),
                 child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: _service.watchInvoices(
-                    role: widget.role,
-                    branchId: widget.branchId,
-                  ),
+                  stream: _dashboardStream(),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const SizedBox(
@@ -115,11 +112,11 @@ class _InterBranchInvoicesDashboardState
                           color: Color(0xFF0277BD),
                         ),
                         const SizedBox(height: 14),
-                        if (_canCreateRequest) ...[
+                        if (_canCreateInvoice) ...[
                           _controlCard(
-                            title: 'طلب فاتورة جديد',
+                            title: 'فاتورة تحويل مباشرة',
                             subtitle:
-                                'إنشاء طلب منتجات من فرع آخر وإضافتها كسطور فاتورة.',
+                                'إنشاء فاتورة من منتجات علامة فرعك وإرسالها للفرع المستلم.',
                             countLabel: 'جديد',
                             icon: Icons.add_circle_outline_rounded,
                             color: AppTheme.managerColor,
@@ -131,7 +128,7 @@ class _InterBranchInvoicesDashboardState
                           _controlCard(
                             title: 'الوارد إلى فرعي',
                             subtitle:
-                                'طلبات أرسلتها الفروع الأخرى إلى فرعك للموافقة أو الرفض.',
+                                'فواتير وردت إلى فرعك لمراجعة الكميات وتأكيد الاستلام.',
                             countLabel: '${incoming.length}',
                             icon: Icons.move_to_inbox_rounded,
                             color: AppTheme.managerColor,
@@ -141,17 +138,21 @@ class _InterBranchInvoicesDashboardState
                         ],
                         _controlCard(
                           title: widget.role == UserRole.manager
-                              ? 'طلبات فرعي الصادرة'
-                              : 'فواتير الفرع الصادرة',
+                              ? 'فواتير فرعي الصادرة'
+                              : widget.role == UserRole.collector
+                              ? 'فواتير بانتظار التسعير'
+                              : widget.role == UserRole.accountant
+                              ? 'فواتير بانتظار الترحيل'
+                              : 'كل فواتير الفروع',
                           subtitle: widget.role == UserRole.manager
-                              ? 'طلبات أنشأها فرعك وتنتظر متابعة الفروع الأخرى.'
-                              : 'الفواتير التي خرجت من الفرع المختار فقط.',
+                              ? 'فواتير أنشأها فرعك بصفته المورد.'
+                              : 'قائمة عامة بالفواتير التي تحتاج إجراء دورك.',
                           countLabel: '${outgoing.length}',
                           icon: Icons.outbox_rounded,
                           color: const Color(0xFF0277BD),
                           onTap: () => _openBox(_InvoiceBox.outgoing),
                         ),
-                        if (!_hasBranch) ...[
+                        if (!_hasBranch && widget.role == UserRole.manager) ...[
                           const SizedBox(height: 16),
                           _emptyState(
                             icon: Icons.storefront_outlined,
@@ -188,7 +189,7 @@ class _InterBranchInvoicesDashboardState
       flexibleSpace: FlexibleSpaceBar(
         centerTitle: true,
         title: const Text(
-          'فواتير الطلبات بين الفروع',
+          'فواتير التحويل بين الفروع',
           style: TextStyle(
             color: Colors.white,
             fontSize: 15,
@@ -205,12 +206,26 @@ class _InterBranchInvoicesDashboardState
     );
   }
 
+  Stream<QuerySnapshot<Map<String, dynamic>>> _dashboardStream() {
+    return switch (widget.role) {
+      UserRole.collector => _service.watchPricingQueue(),
+      UserRole.accountant => _service.watchAccountingQueue(),
+      UserRole.manager || UserRole.admin => _service.watchInvoices(
+        role: widget.role,
+        branchId: widget.branchId,
+      ),
+    };
+  }
+
   Widget _buildStats(List<InterBranchInvoiceRead> invoices) {
+    final pendingStatus = switch (widget.role) {
+      UserRole.manager => InterBranchInvoiceStatus.pendingReceiverReview,
+      UserRole.collector => InterBranchInvoiceStatus.pendingPriceEntry,
+      UserRole.accountant => InterBranchInvoiceStatus.pendingAccountingEntry,
+      UserRole.admin => InterBranchInvoiceStatus.pendingReceiverReview,
+    };
     final pending = invoices
-        .where(
-          (invoice) =>
-              invoice.status == InterBranchInvoiceStatus.requestPending,
-        )
+        .where((invoice) => invoice.status == pendingStatus)
         .length;
     final awaitingAccounting = invoices
         .where(
@@ -229,7 +244,7 @@ class _InterBranchInvoicesDashboardState
       children: [
         Expanded(
           child: StatCard(
-            label: 'الإجمالي',
+            label: 'المعروض حالياً',
             value: '${invoices.length}',
             icon: Icons.receipt_long_rounded,
             color: const Color(0xFF0277BD),
@@ -282,7 +297,7 @@ class _InterBranchInvoicesDashboardState
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          onTap: _hasBranch || title == 'طلب فاتورة جديد' ? onTap : null,
+          onTap: _hasBranch || widget.role != UserRole.manager ? onTap : null,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -361,8 +376,8 @@ class _InterBranchInvoicesDashboardState
   }
 
   void _openBox(_InvoiceBox box) {
-    final branchId = widget.branchId;
-    if (branchId == null || branchId.isEmpty) return;
+    final branchId = widget.branchId?.trim() ?? '';
+    if (branchId.isEmpty && widget.role == UserRole.manager) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -382,7 +397,7 @@ class _InterBranchInvoicesDashboardState
     final branchId = widget.branchId;
     if (branchId == null || branchId.isEmpty) return const [];
     return invoices
-        .where((invoice) => invoice.sendingBranchId == branchId)
+        .where((invoice) => invoice.receivingBranchId == branchId)
         .toList();
   }
 
@@ -390,15 +405,33 @@ class _InterBranchInvoicesDashboardState
     List<InterBranchInvoiceRead> invoices,
   ) {
     final branchId = widget.branchId;
-    if (branchId == null || branchId.isEmpty) return const [];
+    if (branchId == null || branchId.isEmpty) {
+      return invoices.where((invoice) {
+        return switch (widget.role) {
+          UserRole.collector =>
+            invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
+          UserRole.accountant =>
+            invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
+          UserRole.admin => true,
+          UserRole.manager => false,
+        };
+      }).toList();
+    }
     if (widget.role == UserRole.manager) {
       return invoices
-          .where((invoice) => invoice.receivingBranchId == branchId)
+          .where((invoice) => invoice.sendingBranchId == branchId)
           .toList();
     }
-    return invoices
-        .where((invoice) => invoice.sendingBranchId == branchId)
-        .toList();
+    return invoices.where((invoice) {
+      return switch (widget.role) {
+        UserRole.collector =>
+          invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
+        UserRole.accountant =>
+          invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
+        UserRole.admin => true,
+        UserRole.manager => false,
+      };
+    }).toList();
   }
 
   List<InterBranchInvoiceRead> _invoiceList(
@@ -485,9 +518,16 @@ class _InterBranchInvoicesBoxScreenState
   InterBranchInvoiceStatus? _statusFilter;
   DateTime? _fromDate;
   DateTime? _toDate;
+  List<InterBranchInvoiceRead> _loadedInvoices = const [];
+  DocumentSnapshot<Map<String, dynamic>>? _pageCursor;
+  bool _loadingPage = false;
+  bool _hasMorePages = true;
+  bool _pageFailed = false;
 
   bool get _showsPrices =>
-      widget.role == UserRole.accountant || widget.role == UserRole.collector;
+      widget.role == UserRole.accountant ||
+      widget.role == UserRole.collector ||
+      widget.role == UserRole.admin;
 
   Color get _roleColor => _roleColorFor(widget.role);
 
@@ -495,16 +535,66 @@ class _InterBranchInvoicesBoxScreenState
     if (widget.role == UserRole.manager && widget.box == _InvoiceBox.incoming) {
       return 'الوارد إلى فرعي';
     }
-    if (widget.role == UserRole.manager) return 'طلبات فرعي الصادرة';
-    return 'فواتير الفرع الصادرة';
+    if (widget.role == UserRole.manager) return 'فواتير فرعي الصادرة';
+    if (widget.role == UserRole.collector) return 'قائمة التسعير العامة';
+    if (widget.role == UserRole.accountant) return 'قائمة الترحيل العامة';
+    return 'كل فواتير الفروع';
   }
 
   String get _counterpartBranchLabel {
     if (widget.role == UserRole.manager && widget.box == _InvoiceBox.incoming) {
-      return 'الفرع الطالب';
+      return 'الفرع المورد';
     }
     if (widget.role != UserRole.manager) return 'الفرع المستلم';
-    return 'الفرع المورد';
+    return 'الفرع المستلم';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPage(reset: true);
+  }
+
+  Future<void> _loadPage({required bool reset}) async {
+    if (_loadingPage || (!reset && !_hasMorePages)) return;
+    setState(() {
+      _loadingPage = true;
+      _pageFailed = false;
+    });
+    try {
+      final after = reset ? null : _pageCursor;
+      final page = switch (widget.role) {
+        UserRole.manager => await _service.fetchBranchPage(
+          branchId: widget.branchId,
+          sent: widget.box == _InvoiceBox.outgoing,
+          after: after,
+        ),
+        UserRole.collector || UserRole.accountant =>
+          await _service.fetchQueuePage(role: widget.role, after: after),
+        UserRole.admin => await _service.fetchAllPage(
+          role: widget.role,
+          after: after,
+        ),
+      };
+      if (!mounted) return;
+      setState(() {
+        if (reset) {
+          _loadedInvoices = page.invoices;
+        } else {
+          final byId = <String, InterBranchInvoiceRead>{
+            for (final invoice in _loadedInvoices) invoice.id: invoice,
+            for (final invoice in page.invoices) invoice.id: invoice,
+          };
+          _loadedInvoices = byId.values.toList(growable: false);
+        }
+        _pageCursor = page.cursor;
+        _hasMorePages = page.hasMore;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _pageFailed = true);
+    } finally {
+      if (mounted) setState(() => _loadingPage = false);
+    }
   }
 
   @override
@@ -518,54 +608,73 @@ class _InterBranchInvoicesBoxScreenState
           backgroundColor: _roleColor,
           actions: const [NotificationBell()],
         ),
-        body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: _service.watchInvoices(
-            role: widget.role,
-            branchId: widget.branchId,
+        body: _buildPagedBody(),
+      ),
+    );
+  }
+
+  Widget _buildPagedBody() {
+    if (_loadingPage && _loadedInvoices.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final scoped = _scopedInvoices(_loadedInvoices);
+    final visibleInvoices = _visibleInvoices(scoped);
+    return RefreshIndicator(
+      onRefresh: () => _loadPage(reset: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+        children: [
+          if (_pageFailed) ...[
+            _emptyState(
+              icon: Icons.error_outline_rounded,
+              title: 'تعذر تحميل الفواتير',
+              subtitle: 'تحقق من الاتصال ثم حاول مرة أخرى.',
+            ),
+            TextButton.icon(
+              onPressed: _loadingPage
+                  ? null
+                  : () => _loadPage(reset: _loadedInvoices.isEmpty),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('إعادة المحاولة'),
+            ),
+            const SizedBox(height: 14),
+          ],
+          _boxSummary(scoped, visibleInvoices),
+          const SizedBox(height: 14),
+          _compactFilterBar(scoped, visibleInvoices),
+          const SizedBox(height: 14),
+          SectionHeader(
+            title: _boxTitle,
+            icon: widget.box == _InvoiceBox.incoming
+                ? Icons.move_to_inbox_rounded
+                : Icons.outbox_rounded,
+            color: _roleColor,
           ),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError) {
-              return _emptyState(
-                icon: Icons.error_outline_rounded,
-                title: 'تعذر تحميل الفواتير',
-                subtitle: 'تحقق من الاتصال ثم حاول مرة أخرى.',
-              );
-            }
-
-            final invoices = _invoiceList(snapshot.data);
-            final scoped = _scopedInvoices(invoices);
-            final visibleInvoices = _visibleInvoices(scoped);
-
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
-              children: [
-                _boxSummary(scoped, visibleInvoices),
-                const SizedBox(height: 14),
-                _compactFilterBar(scoped, visibleInvoices),
-                const SizedBox(height: 14),
-                SectionHeader(
-                  title: _boxTitle,
-                  icon: widget.box == _InvoiceBox.incoming
-                      ? Icons.move_to_inbox_rounded
-                      : Icons.outbox_rounded,
-                  color: _roleColor,
-                ),
-                const SizedBox(height: 12),
-                if (visibleInvoices.isEmpty)
-                  _emptyState(
-                    icon: Icons.receipt_long_outlined,
-                    title: 'لا توجد فواتير',
-                    subtitle: 'لا توجد نتائج مطابقة لهذا الصندوق أو الفلاتر.',
-                  )
-                else
-                  _buildInvoicesList(visibleInvoices),
-              ],
-            );
-          },
-        ),
+          const SizedBox(height: 12),
+          if (visibleInvoices.isEmpty)
+            _emptyState(
+              icon: Icons.receipt_long_outlined,
+              title: 'لا توجد فواتير',
+              subtitle: 'لا توجد نتائج مطابقة لهذا الصندوق أو الفلاتر.',
+            )
+          else
+            _buildInvoicesList(visibleInvoices),
+          if (_hasMorePages) ...[
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _loadingPage ? null : () => _loadPage(reset: false),
+              icon: _loadingPage
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.expand_more_rounded),
+              label: const Text('تحميل فواتير أقدم'),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -574,12 +683,26 @@ class _InterBranchInvoicesBoxScreenState
     List<InterBranchInvoiceRead> scoped,
     List<InterBranchInvoiceRead> visible,
   ) {
-    final pending = scoped
-        .where(
-          (invoice) =>
+    final pending = scoped.where((invoice) {
+      return switch (widget.role) {
+        UserRole.collector =>
+          invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
+        UserRole.accountant =>
+          invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
+        UserRole.admin =>
+          invoice.status == InterBranchInvoiceStatus.pendingReceiverReview ||
+              invoice.status == InterBranchInvoiceStatus.pendingPriceEntry ||
+              invoice.status ==
+                  InterBranchInvoiceStatus.pendingAccountingEntry ||
               invoice.status == InterBranchInvoiceStatus.requestPending,
-        )
-        .length;
+        UserRole.manager =>
+          widget.box == _InvoiceBox.incoming
+              ? invoice.status == InterBranchInvoiceStatus.pendingReceiverReview
+              : invoice.status ==
+                        InterBranchInvoiceStatus.pendingReceiverReview ||
+                    invoice.status == InterBranchInvoiceStatus.requestPending,
+      };
+    }).length;
     final posted = scoped
         .where(
           (invoice) =>
@@ -611,8 +734,16 @@ class _InterBranchInvoicesBoxScreenState
         const SizedBox(width: 10),
         Expanded(
           child: StatCard(
-            label: 'مرحلة',
-            value: '$posted',
+            label:
+                widget.role == UserRole.collector ||
+                    widget.role == UserRole.accountant
+                ? 'بانتظار إجراء'
+                : 'مرحلة',
+            value:
+                widget.role == UserRole.collector ||
+                    widget.role == UserRole.accountant
+                ? '$pending'
+                : '$posted',
             icon: pending > 0
                 ? Icons.pending_actions_rounded
                 : Icons.verified_rounded,
@@ -644,12 +775,20 @@ class _InterBranchInvoicesBoxScreenState
   List<InterBranchInvoiceRead> _scopedInvoices(
     List<InterBranchInvoiceRead> invoices,
   ) {
+    if (widget.role != UserRole.manager) {
+      return invoices.where((invoice) {
+        return switch (widget.role) {
+          UserRole.collector =>
+            invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
+          UserRole.accountant =>
+            invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
+          UserRole.admin => true,
+          UserRole.manager => false,
+        };
+      }).toList();
+    }
     return invoices.where((invoice) {
-      if (widget.role == UserRole.manager &&
-          widget.box == _InvoiceBox.incoming) {
-        return invoice.sendingBranchId == widget.branchId;
-      }
-      if (widget.role == UserRole.manager) {
+      if (widget.box == _InvoiceBox.incoming) {
         return invoice.receivingBranchId == widget.branchId;
       }
       return invoice.sendingBranchId == widget.branchId;
@@ -658,18 +797,18 @@ class _InterBranchInvoicesBoxScreenState
 
   String _counterpartBranchId(InterBranchInvoiceRead invoice) {
     if (widget.role == UserRole.manager && widget.box == _InvoiceBox.incoming) {
-      return invoice.receivingBranchId;
+      return invoice.sendingBranchId;
     }
     if (widget.role != UserRole.manager) return invoice.receivingBranchId;
-    return invoice.sendingBranchId;
+    return invoice.receivingBranchId;
   }
 
   String _counterpartBranchName(InterBranchInvoiceRead invoice) {
     if (widget.role == UserRole.manager && widget.box == _InvoiceBox.incoming) {
-      return invoice.receivingBranchName;
+      return invoice.sendingBranchName;
     }
     if (widget.role != UserRole.manager) return invoice.receivingBranchName;
-    return invoice.sendingBranchName;
+    return invoice.receivingBranchName;
   }
 
   String _effectiveBranchFilter(List<InterBranchInvoiceRead> invoices) {
@@ -1083,8 +1222,8 @@ class _InterBranchInvoicesBoxScreenState
             borderRadius: BorderRadius.circular(12),
             child: InkWell(
               borderRadius: BorderRadius.circular(12),
-              onTap: () {
-                Navigator.push(
+              onTap: () async {
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => InterBranchInvoiceDetailsScreen(
@@ -1095,6 +1234,7 @@ class _InterBranchInvoicesBoxScreenState
                     ),
                   ),
                 );
+                if (mounted) await _loadPage(reset: true);
               },
               child: Padding(
                 padding: const EdgeInsets.all(14),
@@ -1176,11 +1316,15 @@ class _InterBranchInvoicesBoxScreenState
                         ),
                         if (_showsPrices)
                           Text(
-                            invoice.totalPrice == null
+                            invoice.isVersion2
+                                ? 'الأسعار محمية'
+                                : invoice.totalPrice == null
                                 ? 'بدون أسعار'
                                 : _formatNumber(invoice.totalPrice!),
                             style: TextStyle(
-                              color: invoice.totalPrice == null
+                              color: invoice.isVersion2
+                                  ? AppTheme.accountantColor
+                                  : invoice.totalPrice == null
                                   ? AppTheme.textHint
                                   : AppTheme.successColor,
                               fontWeight: FontWeight.bold,
@@ -1270,26 +1414,6 @@ class _InterBranchInvoicesBoxScreenState
         ],
       ),
     );
-  }
-
-  List<InterBranchInvoiceRead> _invoiceList(
-    QuerySnapshot<Map<String, dynamic>>? snapshot,
-  ) {
-    final invoices = (snapshot?.docs ?? [])
-        .map((doc) => InterBranchInvoiceRead(id: doc.id, data: doc.data()))
-        .toList();
-    invoices.sort((a, b) {
-      final aDate =
-          a.invoiceCreatedAt ??
-          a.requestDate ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      final bDate =
-          b.invoiceCreatedAt ??
-          b.requestDate ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      return bDate.compareTo(aDate);
-    });
-    return invoices;
   }
 
   String _formatDate(DateTime? value) {

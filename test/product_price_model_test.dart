@@ -31,7 +31,7 @@ void main() {
     },
   );
 
-  test('only collector can directly confirm protected price memory', () {
+  test('actor validator recognizes only an active general manager', () {
     const collector = CatalogActor(
       uid: 'collector-1',
       name: 'المدير العام',
@@ -67,4 +67,39 @@ void main() {
       throwsStateError,
     );
   });
+
+  test(
+    'client-side direct price-memory writes are disabled for every role',
+    () {
+      final service = ProductPriceService();
+      const actors = [
+        CatalogActor(
+          uid: 'collector-1',
+          name: 'المدير العام',
+          role: 'collector',
+        ),
+        CatalogActor(uid: 'accountant-1', name: 'محاسب', role: 'accountant'),
+        CatalogActor(uid: 'admin-1', name: 'مسؤول', role: 'admin'),
+        CatalogActor(uid: 'manager-1', name: 'مدير فرع', role: 'manager'),
+      ];
+
+      for (final actor in actors) {
+        expect(
+          // ignore: deprecated_member_use_from_same_package
+          () => service.recordConfirmedPrice(
+            actor: actor,
+            brandId: 'brand-1',
+            productId: 'product-1',
+            unitId: 'unit_1',
+            unitValue: 'حبة',
+            price: 10,
+            currency: 'YER',
+            sourceInvoiceId: 'invoice-1',
+          ),
+          throwsUnsupportedError,
+          reason: 'Role ${actor.role} must use the authenticated command API.',
+        );
+      }
+    },
+  );
 }
