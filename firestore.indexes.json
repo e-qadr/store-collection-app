@@ -118,6 +118,14 @@
       ]
     },
     {
+      "collectionGroup": "items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "branch_ids", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "line_number", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "inter_branch_invoices",
       "queryScope": "COLLECTION",
       "fields": [

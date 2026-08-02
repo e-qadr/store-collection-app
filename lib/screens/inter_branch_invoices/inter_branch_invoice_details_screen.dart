@@ -15,11 +15,68 @@ import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/inter_branch_invoice_policies.dart';
 
+typedef DirectReceiptSubmitter =
+    Future<void> Function({
+      required String invoiceId,
+      required int expectedRevision,
+      required List<InterBranchInvoiceItem> items,
+      required String idempotencyKey,
+      String? receiverNotes,
+    });
+
+typedef DirectPriceSubmitter =
+    Future<void> Function({
+      required String invoiceId,
+      required int expectedRevision,
+      required String currency,
+      required List<InterBranchInvoicePriceInput> items,
+      required String idempotencyKey,
+      String? pricingNotes,
+    });
+
+typedef DirectAccountingSubmitter =
+    Future<void> Function({
+      required String invoiceId,
+      required int expectedRevision,
+      required String accountingReference,
+      required String idempotencyKey,
+      String? accountingNotes,
+    });
+
+typedef LegacySupplierDecisionSubmitter =
+    Future<void> Function({
+      required String invoiceId,
+      required bool approved,
+      required List<InterBranchInvoiceItem>? approvedItems,
+      required String notes,
+    });
+
+typedef ProtectedPriceSnapshotLoader =
+    Future<InterBranchInvoicePriceSnapshot?> Function(
+      InterBranchInvoiceRead invoice,
+    );
+
+typedef LatestProductPriceLoader =
+    Future<ProductPriceLatest?> Function({
+      required String brandId,
+      required String productId,
+      required String unitId,
+      required String currency,
+    });
+
 class InterBranchInvoiceDetailsScreen extends StatefulWidget {
   final String invoiceId;
   final UserRole role;
   final String? branchId;
   final String branchName;
+  final Stream<Map<String, dynamic>?>? invoiceDataStream;
+  final Stream<List<Map<String, dynamic>>>? itemDataStream;
+  final ProtectedPriceSnapshotLoader? protectedPriceSnapshotLoader;
+  final LatestProductPriceLoader? latestProductPriceLoader;
+  final DirectReceiptSubmitter? directReceiptSubmitter;
+  final DirectPriceSubmitter? directPriceSubmitter;
+  final DirectAccountingSubmitter? directAccountingSubmitter;
+  final LegacySupplierDecisionSubmitter? legacySupplierDecisionSubmitter;
 
   const InterBranchInvoiceDetailsScreen({
     super.key,
@@ -27,6 +84,14 @@ class InterBranchInvoiceDetailsScreen extends StatefulWidget {
     required this.role,
     required this.branchName,
     this.branchId,
+    this.invoiceDataStream,
+    this.itemDataStream,
+    this.protectedPriceSnapshotLoader,
+    this.latestProductPriceLoader,
+    this.directReceiptSubmitter,
+    this.directPriceSubmitter,
+    this.directAccountingSubmitter,
+    this.legacySupplierDecisionSubmitter,
   });
 
   @override
@@ -36,13 +101,33 @@ class InterBranchInvoiceDetailsScreen extends StatefulWidget {
 
 class _InterBranchInvoiceDetailsScreenState
     extends State<InterBranchInvoiceDetailsScreen> {
-  final _service = InterBranchInvoiceService();
-  final _priceService = ProductPriceService();
+  InterBranchInvoiceService? _service;
+  ProductPriceService? _priceService;
   final _numberFormat = NumberFormat('#,##0.##');
   final _dateFormat = DateFormat('yyyy/MM/dd HH:mm');
 
   bool get _showsPrices =>
       InterBranchInvoicePolicy.mayReadProtectedPrices(widget.role);
+
+  InterBranchInvoiceService get _invoiceService =>
+      _service ??= InterBranchInvoiceService();
+
+  ProductPriceService get _productPriceService =>
+      _priceService ??= ProductPriceService();
+
+  Stream<Map<String, dynamic>?> get _invoiceDataStream =>
+      widget.invoiceDataStream ??
+      _invoiceService
+          .watchInvoice(widget.invoiceId)
+          .map((snapshot) => snapshot.data());
+
+  Stream<List<Map<String, dynamic>>> get _itemDataStream =>
+      widget.itemDataStream ??
+      _invoiceService.watchV2ItemDocuments(
+        invoiceId: widget.invoiceId,
+        role: widget.role,
+        branchId: widget.branchId,
+      );
 
   Color get _roleColor {
     switch (widget.role) {
@@ -67,24 +152,34 @@ class _InterBranchInvoiceDetailsScreenState
           title: const Text('تفاصيل فاتورة بين الفروع'),
           backgroundColor: _roleColor,
           actions: [
-            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection(InterBranchInvoiceFields.collection)
-                  .doc(widget.invoiceId)
-                  .snapshots(),
+            StreamBuilder<Map<String, dynamic>?>(
+              stream: _invoiceDataStream,
               builder: (context, snapshot) {
-                final data = snapshot.data?.data();
+                final data = snapshot.data;
                 if (data == null) return const SizedBox.shrink();
-                final invoice = InterBranchInvoiceRead(
+                final header = InterBranchInvoiceRead(
                   id: widget.invoiceId,
                   data: data,
                 );
-                if (!_canViewInvoice(invoice)) return const SizedBox.shrink();
+                if (!_canViewInvoice(header)) return const SizedBox.shrink();
                 return IconButton(
                   tooltip: 'طباعة PDF',
                   icon: const Icon(Icons.picture_as_pdf_rounded),
                   onPressed: () async {
                     try {
+                      final invoice = header.isVersion2
+                          ? header.withItemDocuments(
+                              await _invoiceService.fetchV2ItemDocuments(
+                                invoiceId: header.id,
+                                role: widget.role,
+                                branchId: widget.branchId,
+                              ),
+                            )
+                          : header;
+                      if (invoice.isVersion2 &&
+                          invoice.items.length != invoice.itemCount) {
+                        throw StateError('Invoice items are incomplete.');
+                      }
                       final protectedPrices = await _loadProtectedPriceSnapshot(
                         invoice,
                       );
@@ -93,6 +188,7 @@ class _InterBranchInvoiceDetailsScreenState
                         publicData: data,
                         audienceRole: widget.role,
                         priceSnapshot: protectedPrices,
+                        itemDocuments: invoice.itemDocuments,
                       );
                     } catch (_) {
                       _showSnack('تعذر إنشاء PDF. حاول مجدداً.');
@@ -103,11 +199,8 @@ class _InterBranchInvoiceDetailsScreenState
             ),
           ],
         ),
-        body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection(InterBranchInvoiceFields.collection)
-              .doc(widget.invoiceId)
-              .snapshots(),
+        body: StreamBuilder<Map<String, dynamic>?>(
+          stream: _invoiceDataStream,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -115,15 +208,15 @@ class _InterBranchInvoiceDetailsScreenState
             if (snapshot.hasError) {
               return const Center(child: Text('تعذر تحميل تفاصيل الفاتورة'));
             }
-            final data = snapshot.data?.data();
+            final data = snapshot.data;
             if (data == null) {
               return const Center(child: Text('الفاتورة غير موجودة'));
             }
-            final invoice = InterBranchInvoiceRead(
+            final header = InterBranchInvoiceRead(
               id: widget.invoiceId,
               data: data,
             );
-            if (!_canViewInvoice(invoice)) {
+            if (!_canViewInvoice(header)) {
               return const Center(
                 child: Padding(
                   padding: EdgeInsets.all(24),
@@ -134,32 +227,56 @@ class _InterBranchInvoiceDetailsScreenState
                 ),
               );
             }
-            return FutureBuilder<InterBranchInvoicePriceSnapshot?>(
-              future: _loadProtectedPriceSnapshot(invoice),
-              builder: (context, priceSnapshot) {
-                final actions = _actions(invoice);
-                return ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-                  children: [
-                    _invoiceDocument(
-                      invoice,
-                      priceSnapshot: priceSnapshot.data,
-                    ),
-                    if (actions != null) ...[
-                      const SizedBox(height: 12),
-                      actions,
-                    ],
-                    const SizedBox(height: 12),
-                    _statusTimeline(invoice),
-                    const SizedBox(height: 12),
-                    _history(invoice),
-                  ],
-                );
-              },
-            );
+            if (header.isVersion2) {
+              return StreamBuilder<List<Map<String, dynamic>>>(
+                stream: _itemDataStream,
+                builder: (context, itemSnapshot) {
+                  if (itemSnapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (itemSnapshot.hasError) {
+                    return const Center(
+                      child: Text('تعذر تحميل أصناف الفاتورة'),
+                    );
+                  }
+                  final invoice = header.withItemDocuments(
+                    itemSnapshot.data ?? const [],
+                  );
+                  if (invoice.items.length != invoice.itemCount) {
+                    return const Center(
+                      child: Text(
+                        'بيانات أصناف الفاتورة غير مكتملة. أعد المحاولة لاحقاً.',
+                      ),
+                    );
+                  }
+                  return _loadedInvoice(invoice);
+                },
+              );
+            }
+            return _loadedInvoice(header);
           },
         ),
       ),
+    );
+  }
+
+  Widget _loadedInvoice(InterBranchInvoiceRead invoice) {
+    return FutureBuilder<InterBranchInvoicePriceSnapshot?>(
+      future: _loadProtectedPriceSnapshot(invoice),
+      builder: (context, priceSnapshot) {
+        final actions = _actions(invoice);
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
+            _invoiceDocument(invoice, priceSnapshot: priceSnapshot.data),
+            if (actions != null) ...[const SizedBox(height: 12), actions],
+            const SizedBox(height: 12),
+            _statusTimeline(invoice),
+            const SizedBox(height: 12),
+            _history(invoice),
+          ],
+        );
+      },
     );
   }
 
@@ -177,6 +294,11 @@ class _InterBranchInvoiceDetailsScreenState
     if (!invoice.isVersion2 ||
         !InterBranchInvoicePolicy.mayReadProtectedPrices(widget.role)) {
       return null;
+    }
+    final loader = widget.protectedPriceSnapshotLoader;
+    if (loader != null) {
+      final result = await loader(invoice);
+      return result?.matchesPublicInvoice(invoice) == true ? result : null;
     }
     try {
       final snapshot = await FirebaseFirestore.instance
@@ -1178,8 +1300,10 @@ class _InterBranchInvoiceDetailsScreenState
           () => _showReason(
             title: 'طلب تعديل الفاتورة',
             label: 'سبب طلب التعديل',
-            onSubmit: (reason) =>
-                _service.requestEdit(invoiceId: invoice.id, reason: reason),
+            onSubmit: (reason) => _invoiceService.requestEdit(
+              invoiceId: invoice.id,
+              reason: reason,
+            ),
           ),
         ),
       );
@@ -1192,7 +1316,7 @@ class _InterBranchInvoiceDetailsScreenState
             () => _showReason(
               title: 'طلب رفض أو إلغاء الفاتورة',
               label: 'سبب الرفض أو الإلغاء',
-              onSubmit: (reason) => _service.requestCancellation(
+              onSubmit: (reason) => _invoiceService.requestCancellation(
                 invoiceId: invoice.id,
                 reason: reason,
               ),
@@ -1342,15 +1466,25 @@ class _InterBranchInvoiceDetailsScreenState
             approvedItems.any((item) => item.approvedQuantity <= 0)) {
           throw Exception('أدخل كمية صحيحة لكل منتج');
         }
-        await _service.submitSenderDecision(
-          invoiceId: invoice.id,
-          approved: approved,
-          approvedQuantity: approved
-              ? approvedItems.first.approvedQuantity
-              : null,
-          approvedItems: approved ? approvedItems : null,
-          notes: notes.text,
-        );
+        final submitter = widget.legacySupplierDecisionSubmitter;
+        if (submitter != null) {
+          await submitter(
+            invoiceId: invoice.id,
+            approved: approved,
+            approvedItems: approved ? approvedItems : null,
+            notes: notes.text,
+          );
+        } else {
+          await _invoiceService.submitSenderDecision(
+            invoiceId: invoice.id,
+            approved: approved,
+            approvedQuantity: approved
+                ? approvedItems.first.approvedQuantity
+                : null,
+            approvedItems: approved ? approvedItems : null,
+            notes: notes.text,
+          );
+        }
       },
     );
   }
@@ -1401,7 +1535,7 @@ class _InterBranchInvoiceDetailsScreenState
         if (receivedItems.any((item) => item.receivedQuantity <= 0)) {
           throw Exception('أدخل كمية استلام صحيحة لكل منتج');
         }
-        await _service.confirmReceipt(
+        await _invoiceService.confirmReceipt(
           invoiceId: invoice.id,
           receivedQuantity: receivedItems.first.receivedQuantity,
           receivedItems: receivedItems,
@@ -1458,7 +1592,7 @@ class _InterBranchInvoiceDetailsScreenState
         )) {
           throw Exception('أدخل سعر صحيح لكل منتج');
         }
-        await _service.addItemPrices(
+        await _invoiceService.addItemPrices(
           invoiceId: invoice.id,
           pricedItems: pricedItems,
           branchId: widget.branchId,
@@ -1496,15 +1630,26 @@ class _InterBranchInvoiceDetailsScreenState
           throw Exception('رقم الفاتورة في النظام المحاسبي مطلوب');
         }
         if (invoice.isVersion2) {
-          await _service.postDirectAccounting(
-            invoiceId: invoice.id,
-            expectedRevision: invoice.revision,
-            accountingReference: reference.text,
-            idempotencyKey: idempotencyKey,
-            accountingNotes: notes.text,
-          );
+          final submitter = widget.directAccountingSubmitter;
+          if (submitter != null) {
+            await submitter(
+              invoiceId: invoice.id,
+              expectedRevision: invoice.revision,
+              accountingReference: reference.text,
+              idempotencyKey: idempotencyKey,
+              accountingNotes: notes.text,
+            );
+          } else {
+            await _invoiceService.postDirectAccounting(
+              invoiceId: invoice.id,
+              expectedRevision: invoice.revision,
+              accountingReference: reference.text,
+              idempotencyKey: idempotencyKey,
+              accountingNotes: notes.text,
+            );
+          }
         } else {
-          await _service.confirmAccounting(
+          await _invoiceService.confirmAccounting(
             invoiceId: invoice.id,
             accountingReference: reference.text,
             branchId: widget.branchId,
@@ -1630,16 +1775,30 @@ class _InterBranchInvoiceDetailsScreenState
               ),
             );
           }
-          await _service.confirmDirectReceipt(
-            invoiceId: invoice.id,
-            expectedRevision: invoice.revision,
-            items: confirmedItems,
-            idempotencyKey: idempotencyKey,
-            receiverNotes: notes.text,
-          );
+          final submitter = widget.directReceiptSubmitter;
+          if (submitter != null) {
+            await submitter(
+              invoiceId: invoice.id,
+              expectedRevision: invoice.revision,
+              items: confirmedItems,
+              idempotencyKey: idempotencyKey,
+              receiverNotes: notes.text,
+            );
+          } else {
+            await _invoiceService.confirmDirectReceipt(
+              invoiceId: invoice.id,
+              expectedRevision: invoice.revision,
+              items: confirmedItems,
+              idempotencyKey: idempotencyKey,
+              receiverNotes: notes.text,
+            );
+          }
         },
       );
     } finally {
+      // Navigator.pop completes the dialog future before the route's text
+      // fields are detached. Wait for that frame before releasing controllers.
+      await WidgetsBinding.instance.endOfFrame;
       for (final controller in [
         ...receivedControllers,
         ...damagedControllers,
@@ -1746,17 +1905,30 @@ class _InterBranchInvoiceDetailsScreenState
               ),
             );
           }
-          await _service.confirmDirectPrices(
-            invoiceId: invoice.id,
-            expectedRevision: invoice.revision,
-            currency: currency,
-            items: inputs,
-            idempotencyKey: idempotencyKey,
-            pricingNotes: notes.text,
-          );
+          final submitter = widget.directPriceSubmitter;
+          if (submitter != null) {
+            await submitter(
+              invoiceId: invoice.id,
+              expectedRevision: invoice.revision,
+              currency: currency,
+              items: inputs,
+              idempotencyKey: idempotencyKey,
+              pricingNotes: notes.text,
+            );
+          } else {
+            await _invoiceService.confirmDirectPrices(
+              invoiceId: invoice.id,
+              expectedRevision: invoice.revision,
+              currency: currency,
+              items: inputs,
+              idempotencyKey: idempotencyKey,
+              pricingNotes: notes.text,
+            );
+          }
         },
       );
     } finally {
+      await WidgetsBinding.instance.endOfFrame;
       for (final controller in [...controllers, notes]) {
         controller.dispose();
       }
@@ -1770,8 +1942,17 @@ class _InterBranchInvoiceDetailsScreenState
     required String currency,
   }) async {
     if (brandId.isEmpty || productId.isEmpty || unitId.isEmpty) return null;
+    final loader = widget.latestProductPriceLoader;
+    if (loader != null) {
+      return loader(
+        brandId: brandId,
+        productId: productId,
+        unitId: unitId,
+        currency: currency,
+      );
+    }
     try {
-      return await _priceService.fetchLatest(
+      return await _productPriceService.fetchLatest(
         brandId: brandId,
         productId: productId,
         unitId: unitId,
@@ -1826,13 +2007,13 @@ class _InterBranchInvoiceDetailsScreenState
       label: approved ? 'ملاحظة' : 'سبب الرفض',
       onSubmit: (reason) {
         if (isCancel) {
-          return _service.approveCancellation(
+          return _invoiceService.approveCancellation(
             invoiceId: invoice.id,
             approved: approved,
             reason: reason,
           );
         }
-        return _service.approveEdit(
+        return _invoiceService.approveEdit(
           invoiceId: invoice.id,
           approved: approved,
           reason: reason,

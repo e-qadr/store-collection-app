@@ -58,8 +58,8 @@ class InterBranchInvoicePriceInput {
 }
 
 class InterBranchInvoiceApiService {
-  /// Kept below Firestore Security Rules' nested-expression budget.
-  static const int maxItems = 13;
+  /// Version-2 public items are stored in a dedicated subcollection.
+  static const int maxItems = 50;
 
   final String _baseUrl;
   final http.Client _client;
@@ -266,10 +266,8 @@ class InterBranchInvoiceApiService {
       final safeError = error is Map
           ? Map<String, dynamic>.from(error)
           : const <String, dynamic>{};
-      throw InterBranchInvoiceApiException(
-        safeError['code']?.toString() ?? 'request-failed',
-        safeError['message']?.toString() ?? 'تعذر إتمام العملية.',
-      );
+      final code = safeError['code']?.toString() ?? 'request-failed';
+      throw InterBranchInvoiceApiException(code, safeMessageForCode(code));
     }
     final result = InterBranchInvoiceCommandResult.fromJson(decoded);
     if (result.invoiceId.isEmpty ||
@@ -310,4 +308,22 @@ class InterBranchInvoiceApiService {
 
   static bool _withinUtf8Limit(String? value, int maximumBytes) =>
       utf8.encode(value?.trim() ?? '').length <= maximumBytes;
+
+  /// Maps backend codes to bounded, user-safe Arabic text without exposing
+  /// server messages, stack traces, payloads, or identifiers.
+  static String safeMessageForCode(String code) {
+    return switch (code) {
+      'counter-uninitialized' =>
+        'عداد فواتير الفرع غير مهيأ. تواصل مع الإدارة قبل إنشاء الفاتورة، ولم يتم استهلاك أي رقم.',
+      'stale-revision' =>
+        'تم تحديث الفاتورة من مستخدم آخر. أعد فتحها ثم حاول مجدداً.',
+      'invalid-state' => 'هذه العملية لم تعد متاحة في حالة الفاتورة الحالية.',
+      'unauthenticated' => 'انتهت جلسة الدخول. سجل الدخول مجدداً.',
+      'forbidden' => 'لا تملك صلاحية تنفيذ هذه العملية.',
+      'payload-too-large' => 'حجم بيانات الفاتورة أكبر من الحد الآمن المسموح.',
+      'network-error' =>
+        'تعذر الاتصال بالخادم. تحقق من الشبكة وحاول مرة أخرى بنفس الطلب.',
+      _ => 'تعذر إتمام العملية بأمان. حاول مجدداً أو تواصل مع الإدارة.',
+    };
+  }
 }

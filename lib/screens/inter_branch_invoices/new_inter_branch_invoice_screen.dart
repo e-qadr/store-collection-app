@@ -12,16 +12,49 @@ import 'package:store_collection_app/services/inter_branch_invoice_service.dart'
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
+class DirectInvoiceBranchOption {
+  final String id;
+  final String name;
+
+  const DirectInvoiceBranchOption({required this.id, required this.name});
+}
+
+class DirectInvoiceCreationFixture {
+  final String brandId;
+  final List<DirectInvoiceBranchOption> branches;
+  final List<ProductCatalogModel> products;
+  final List<InterBranchInvoiceItem> initialItems;
+
+  const DirectInvoiceCreationFixture({
+    required this.brandId,
+    required this.branches,
+    required this.products,
+    this.initialItems = const [],
+  });
+}
+
+typedef DirectInvoiceSubmitter =
+    Future<InterBranchInvoiceCommandResult> Function({
+      required String receivingBranchId,
+      required List<InterBranchInvoiceItem> items,
+      required String idempotencyKey,
+      String? invoiceNotes,
+    });
+
 class NewInterBranchInvoiceScreen extends StatefulWidget {
   /// The authenticated manager's supplying branch. The backend independently
   /// resolves and verifies it; this value is only display/query context.
   final String branchId;
   final String branchName;
+  final DirectInvoiceCreationFixture? fixture;
+  final DirectInvoiceSubmitter? submitter;
 
   const NewInterBranchInvoiceScreen({
     super.key,
     required this.branchId,
     required this.branchName,
+    this.fixture,
+    this.submitter,
   });
 
   @override
@@ -31,8 +64,8 @@ class NewInterBranchInvoiceScreen extends StatefulWidget {
 
 class _NewInterBranchInvoiceScreenState
     extends State<NewInterBranchInvoiceScreen> {
-  final _service = InterBranchInvoiceService();
-  final _catalogService = ProductCatalogService();
+  InterBranchInvoiceService? _service;
+  ProductCatalogService? _catalogService;
   final _searchController = TextEditingController();
   final _quantityController = TextEditingController();
   final _lineNotesController = TextEditingController();
@@ -43,7 +76,7 @@ class _NewInterBranchInvoiceScreenState
   late String _idempotencyKey;
   Timer? _searchDebounce;
   List<ProductCatalogModel> _products = const [];
-  List<_ReceivingBranch> _branches = const [];
+  List<DirectInvoiceBranchOption> _branches = const [];
   DocumentSnapshot<Map<String, dynamic>>? _productCursor;
   DocumentSnapshot<Map<String, dynamic>>? _branchCursor;
   bool _hasMoreProducts = false;
@@ -74,6 +107,16 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Future<_CreationContext> _loadContext() async {
+    final fixture = widget.fixture;
+    if (fixture != null) {
+      _brandId = fixture.brandId;
+      _branches = fixture.branches;
+      _products = fixture.products;
+      _items.addAll(
+        fixture.initialItems.take(InterBranchInvoiceApiService.maxItems),
+      );
+      return const _CreationContext();
+    }
     final firestore = FirebaseFirestore.instance;
     final supplier = await firestore
         .collection('branches')
@@ -115,7 +158,7 @@ class _NewInterBranchInvoiceScreenState
                 doc.data()['is_active'] != false,
           )
           .map(
-            (doc) => _ReceivingBranch(
+            (doc) => DirectInvoiceBranchOption(
               id: doc.id,
               name: doc.data()['name']?.toString() ?? 'فرع غير مسمى',
             ),
@@ -136,12 +179,33 @@ class _NewInterBranchInvoiceScreenState
     if (_loadingProducts || _brandId.isEmpty || !mounted) return;
     setState(() => _loadingProducts = true);
     try {
-      final page = await _catalogService.fetchActiveProductsPage(
-        brandId: _brandId,
-        search: _searchController.text,
-        after: reset ? null : _productCursor,
-        pageSize: 30,
-      );
+      final fixture = widget.fixture;
+      if (fixture != null) {
+        final search = _searchController.text.trim().toLowerCase();
+        final loaded = fixture.products
+            .where(
+              (product) =>
+                  search.isEmpty || product.name.toLowerCase().contains(search),
+            )
+            .toList(growable: false);
+        if (!mounted) return;
+        setState(() {
+          _products = loaded;
+          _hasMoreProducts = false;
+          if (!_products.any((product) => product.id == _selectedProductId)) {
+            _selectedProductId = null;
+            _selectedUnitId = null;
+          }
+        });
+        return;
+      }
+      final page = await (_catalogService ??= ProductCatalogService())
+          .fetchActiveProductsPage(
+            brandId: _brandId,
+            search: _searchController.text,
+            after: reset ? null : _productCursor,
+            pageSize: 30,
+          );
       if (!mounted) return;
       setState(() {
         _products = reset ? page.products : [..._products, ...page.products];
@@ -223,12 +287,20 @@ class _NewInterBranchInvoiceScreenState
     }
     setState(() => _saving = true);
     try {
-      final result = await _service.createDirectInvoice(
-        receivingBranchId: _receivingBranchId!,
-        items: _items,
-        idempotencyKey: _idempotencyKey,
-        invoiceNotes: _invoiceNotesController.text,
-      );
+      final result = widget.submitter != null
+          ? await widget.submitter!(
+              receivingBranchId: _receivingBranchId!,
+              items: List.unmodifiable(_items),
+              idempotencyKey: _idempotencyKey,
+              invoiceNotes: _invoiceNotesController.text,
+            )
+          : await (_service ??= InterBranchInvoiceService())
+                .createDirectInvoice(
+                  receivingBranchId: _receivingBranchId!,
+                  items: _items,
+                  idempotencyKey: _idempotencyKey,
+                  invoiceNotes: _invoiceNotesController.text,
+                );
       if (!mounted) return;
       _showSnack(
         result.invoiceNumber.isEmpty
@@ -514,13 +586,6 @@ class _NewInterBranchInvoiceScreenState
 
 class _CreationContext {
   const _CreationContext();
-}
-
-class _ReceivingBranch {
-  final String id;
-  final String name;
-
-  const _ReceivingBranch({required this.id, required this.name});
 }
 
 class _Utf8LengthLimitingTextInputFormatter extends TextInputFormatter {

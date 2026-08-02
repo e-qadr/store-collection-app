@@ -12,6 +12,8 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -88,9 +90,20 @@ async function seed(collectionName, id, data) {
   });
 }
 
-function v2Item(index = 0, extra = {}) {
+function v2Item(index = 0, extra = {}, invoiceId = 'invoice-v2') {
+  const itemId = `item-${index}`;
   return {
-    item_id: `item-${index}`,
+    id: itemId,
+    invoice_id: invoiceId,
+    schema_version: 2,
+    workflow_version: 2,
+    creation_mode: 'direct_supplier_invoice',
+    invoice_revision: 1,
+    branch_ids: ['branch-a', 'branch-b'],
+    sending_branch_id: 'branch-a',
+    receiving_branch_id: 'branch-b',
+    line_number: index + 1,
+    item_id: itemId,
     product_id: `product-${index}`,
     product_version: 1,
     product_brand_id: brandA,
@@ -120,14 +133,11 @@ function publicHistory(action = 'direct_invoice_created', extra = {}) {
 function v2Invoice({
   id = 'invoice-v2',
   status = 'pendingReceiverReview',
-  items = [v2Item()],
+  itemCount = 1,
   extra = {},
 } = {}) {
   const received = status !== 'pendingReceiverReview';
   const posted = status === 'postedToAccounting';
-  const receivedItems = received
-    ? items.map((item) => ({...item, received_quantity: item.supplied_quantity}))
-    : items;
   return {
     id,
     schema_version: 2,
@@ -144,9 +154,9 @@ function v2Invoice({
     receiving_branch_name: 'B',
     receiving_brand_id: brandB,
     branch_ids: ['branch-a', 'branch-b'],
-    items: receivedItems,
+    item_count: itemCount,
+    item_digest: digest,
     ...(received ? {
-      item_digest: digest,
       receipt_confirmed_by: 'manager-b',
       receipt_confirmed_by_name: 'Manager B',
       receipt_confirmed_at: fixedTimestamp,
@@ -165,6 +175,32 @@ function v2Invoice({
     history: [publicHistory()],
     ...extra,
   };
+}
+
+async function seedV2InvoiceWithItems({
+  id = 'invoice-v2',
+  itemCount = 1,
+  status = 'pendingReceiverReview',
+} = {}) {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    const batch = writeBatch(database);
+    batch.set(doc(database, 'inter_branch_invoices', id), v2Invoice({
+      id,
+      itemCount,
+      status,
+    }));
+    for (let index = 0; index < itemCount; index += 1) {
+      const received = status === 'pendingReceiverReview' ? {} : {
+        received_quantity: index + 1,
+        damaged_quantity: 0,
+        missing_quantity: 0,
+      };
+      const item = v2Item(index, received, id);
+      batch.set(doc(database, 'inter_branch_invoices', id, 'items', item.id), item);
+    }
+    await batch.commit();
+  });
 }
 
 function legacyInvoice({id = 'legacy-request', status = 'requestPending'} = {}) {
@@ -188,9 +224,6 @@ function legacyInvoice({id = 'legacy-request', status = 'requestPending'} = {}) 
 
 test('v2 public invoices are readable only by participant managers and supervisors', async () => {
   await seed('inter_branch_invoices', 'invoice-v2', v2Invoice());
-  await seed('inter_branch_invoices', 'invoice-id-mismatch', v2Invoice({
-    id: 'different-invoice-id',
-  }));
 
   for (const uid of [
     'manager-a', 'manager-b', 'collector-user', 'accountant-user', 'admin-user',
@@ -202,29 +235,33 @@ test('v2 public invoices are readable only by participant managers and superviso
   ]) {
     await assertFails(getDoc(doc(databaseFor(uid), 'inter_branch_invoices', 'invoice-v2')));
   }
-  await assertFails(getDoc(doc(
-    databaseFor('manager-a'), 'inter_branch_invoices', 'invoice-id-mismatch',
-  )));
-
   const managerA = databaseFor('manager-a');
   await assertSucceeds(getDocs(query(
     collection(managerA, 'inter_branch_invoices'),
     where('branch_ids', 'array-contains', 'branch-a'),
+    limit(50),
   )));
-  await assertFails(getDocs(collection(managerA, 'inter_branch_invoices')));
+
+  await seed('inter_branch_invoices', 'invoice-id-mismatch', v2Invoice({
+    id: 'different-invoice-id',
+  }));
+  await assertFails(getDoc(doc(
+    databaseFor('manager-a'), 'inter_branch_invoices', 'invoice-id-mismatch',
+  )));
+  await assertFails(getDocs(query(
+    collection(managerA, 'inter_branch_invoices'),
+    limit(50),
+  )));
   await assertFails(getDocs(query(
     collection(managerA, 'inter_branch_invoices'),
     where('branch_ids', 'array-contains', 'branch-c'),
+    limit(50),
   )));
 });
 
 test('closed public fields and backend-only writes deny client price smuggling', async () => {
   const variants = {
     top: v2Invoice({id: 'bad-top', extra: {unit_price: 10}}),
-    item: v2Invoice({
-      id: 'bad-item',
-      items: [v2Item(0, {unit_price: 10})],
-    }),
     history: v2Invoice({
       id: 'bad-history',
       extra: {history: [publicHistory('created', {changes: {total_price: 10}})]},
@@ -244,22 +281,16 @@ test('closed public fields and backend-only writes deny client price smuggling',
 
   await assertFails(setDoc(
     doc(databaseFor('manager-a'), 'inter_branch_invoices', 'bad-item'),
-    v2Invoice({
-      id: 'bad-item',
-      items: [v2Item(0, {unit_price: 10})],
-    }),
+    v2Invoice({id: 'bad-item'}),
   ));
 });
 
-test('13 closed-schema lines remain readable while oversized arrays fail closed', async () => {
-  const maxItems = Array.from({length: 13}, (_, index) => v2Item(index));
+test('50-item headers remain readable while invalid item counts fail closed', async () => {
   await seed('inter_branch_invoices', 'max-lines', v2Invoice({
-    id: 'max-lines',
-    items: maxItems,
+    id: 'max-lines', itemCount: 50,
   }));
   await seed('inter_branch_invoices', 'too-many-lines', v2Invoice({
-    id: 'too-many-lines',
-    items: [...maxItems, v2Item(13)],
+    id: 'too-many-lines', itemCount: 51,
   }));
   await assertSucceeds(getDoc(doc(
     databaseFor('manager-a'), 'inter_branch_invoices', 'max-lines',
@@ -267,6 +298,74 @@ test('13 closed-schema lines remain readable while oversized arrays fail closed'
   await assertFails(getDoc(doc(
     databaseFor('manager-a'), 'inter_branch_invoices', 'too-many-lines',
   )));
+});
+
+test('v2 item subcollection is branch-scoped, closed, and backend-only', async () => {
+  await seedV2InvoiceWithItems({itemCount: 50});
+  const itemPath = ['inter_branch_invoices', 'invoice-v2', 'items', 'item-0'];
+  for (const uid of [
+    'manager-a', 'manager-b', 'collector-user', 'accountant-user', 'admin-user',
+  ]) {
+    await assertSucceeds(getDoc(doc(databaseFor(uid), ...itemPath)));
+  }
+  for (const uid of [
+    'manager-c', 'employee-user', 'unknown-user', 'inactive-user', 'password-user',
+  ]) {
+    await assertFails(getDoc(doc(databaseFor(uid), ...itemPath)));
+  }
+
+  const managerAItems = collection(
+    databaseFor('manager-a'),
+    'inter_branch_invoices',
+    'invoice-v2',
+    'items',
+  );
+  await assertSucceeds(getDocs(query(
+    managerAItems,
+    where('branch_ids', 'array-contains', 'branch-a'),
+    orderBy('line_number'),
+    limit(50),
+  )));
+  await assertFails(getDocs(query(
+    managerAItems,
+    orderBy('line_number'),
+    limit(50),
+  )));
+  await assertFails(getDocs(query(
+    managerAItems,
+    where('branch_ids', 'array-contains', 'branch-c'),
+    orderBy('line_number'),
+    limit(50),
+  )));
+  await assertSucceeds(getDocs(query(
+    managerAItems,
+    where('branch_ids', 'array-contains', 'branch-a'),
+    orderBy('line_number'),
+  )));
+
+  const managerA = databaseFor('manager-a');
+  await assertFails(setDoc(
+    doc(managerA, 'inter_branch_invoices', 'invoice-v2', 'items', 'client-item'),
+    v2Item(50, {id: 'client-item', item_id: 'client-item'}),
+  ));
+  await assertFails(updateDoc(doc(managerA, ...itemPath), {supplied_quantity: 99}));
+  await assertFails(deleteDoc(doc(managerA, ...itemPath)));
+
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await setDoc(doc(database, ...itemPath), v2Item(0, {unit_price: 10}));
+  });
+  await assertFails(getDoc(doc(databaseFor('manager-a'), ...itemPath)));
+  await assertFails(getDoc(doc(databaseFor('collector-user'), ...itemPath)));
+
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await setDoc(doc(database, ...itemPath), v2Item(0, {
+      line_notes: {nested_total: 10},
+    }));
+  });
+  await assertFails(getDoc(doc(databaseFor('manager-a'), ...itemPath)));
+  await assertFails(getDoc(doc(databaseFor('collector-user'), ...itemPath)));
 });
 
 test('all direct v2 client writes and replays are backend-only', async () => {

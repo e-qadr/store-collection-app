@@ -5,6 +5,7 @@ const express = require("express");
 
 const {
   createInterBranchInvoiceCommandRouter,
+  INTER_BRANCH_JSON_LIMIT,
   safeJsonErrorHandler,
 } = require("../inter-branch-invoice-commands");
 const {
@@ -145,10 +146,84 @@ function seed({includeCounter = true} = {}) {
   };
 }
 
+function seedWithCatalogItems(count) {
+  const data = seed();
+  data.products = {};
+  for (let index = 1; index <= count; index += 1) {
+    const id = `product-${String(index).padStart(2, "0")}`;
+    data.products[id] = {
+      id,
+      brand_id: "brand-a",
+      group_id: "group-a",
+      name: `منتج ${index}`,
+      legacy_code: `P${index}`,
+      active: true,
+      version: 1,
+      units: [{
+        unit_id: "primary",
+        display_value: "حبة",
+        raw_value: "حبه",
+      }],
+    };
+  }
+  return data;
+}
+
+function maximumFiftyItemCreationFixture() {
+  const data = seed();
+  const unitId = "u".repeat(64);
+  const receivingBranchId = "b".repeat(128);
+  data.branches[receivingBranchId] = {
+    ...data.branches["branch-r"],
+    id: receivingBranchId,
+  };
+  delete data.branches["branch-r"];
+  data.users["manager-r"].branchId = receivingBranchId;
+  data.products = {};
+  const items = Array.from({length: 50}, (_, index) => {
+    const suffix = String(index + 1).padStart(2, "0");
+    const productId = `p${suffix}${"x".repeat(125)}`;
+    data.products[productId] = {
+      id: productId,
+      brand_id: "brand-a",
+      group_id: "group-a",
+      name: `منتج حمولة ${index + 1}`,
+      active: true,
+      version: 1,
+      units: [{
+        unit_id: unitId,
+        display_value: "حبة",
+        raw_value: "حبه",
+      }],
+    };
+    return {
+      product_id: productId,
+      unit_id: unitId,
+      supplied_quantity: 1_000_000_000_000_000,
+      line_notes: "ن".repeat(50),
+    };
+  });
+  return {
+    data,
+    payload: {
+      receiving_branch_id: receivingBranchId,
+      invoice_notes: "ن".repeat(500),
+      items,
+    },
+  };
+}
+
 async function withServer(firestore, callback) {
   let uuid = 0;
   const app = express();
+  app.use(
+      "/v1/inter-branch-invoices",
+      express.json({limit: INTER_BRANCH_JSON_LIMIT}),
+  );
   app.use(express.json({limit: "16kb"}));
+  app.post("/test-global-json-limit", (_request, response) => {
+    response.status(204).end();
+  });
   app.use("/v1", createInterBranchInvoiceCommandRouter({
     admin: fakeAdmin(),
     firestore,
@@ -163,6 +238,12 @@ async function withServer(firestore, callback) {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+}
+
+function invoiceItems(firestore, invoiceId) {
+  return firestore
+      .documents(`inter_branch_invoices/${invoiceId}/items`)
+      .sort((left, right) => left.line_number - right.line_number);
 }
 
 function post(baseUrl, path, {uid, key, body}) {
@@ -213,10 +294,14 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
     });
     assert.equal(firestore.documents("inter_branch_invoice_counters")[0].next_number, 1);
     let invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    let items = invoiceItems(firestore, created.invoice_id);
     assert.equal(invoice.sending_brand_id, "brand-a");
     assert.equal(invoice.receiving_brand_id, "brand-b");
-    assert.equal(invoice.items[0].product_name, "منتج أ");
+    assert.equal(invoice.item_count, 1);
+    assert.equal(Object.hasOwn(invoice, "items"), false);
+    assert.equal(items[0].product_name, "منتج أ");
     assert.equal(publicHasProtectedKey(invoice), false);
+    assert.equal(publicHasProtectedKey(items), false);
 
     response = await post(baseUrl, "/v1/inter-branch-invoices", {
       uid: "manager-s",
@@ -244,7 +329,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           key: "wrong-receiver-0001",
           body: {
             expected_revision: 1,
-            items: [{item_id: invoice.items[0].item_id, received_quantity: 10}],
+            items: [{item_id: items[0].item_id, received_quantity: 10}],
           },
         },
     );
@@ -258,7 +343,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           key: "stale-receipt-0001",
           body: {
             expected_revision: 99,
-            items: [{item_id: invoice.items[0].item_id, received_quantity: 10}],
+            items: [{item_id: items[0].item_id, received_quantity: 10}],
           },
         },
     );
@@ -275,7 +360,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
             expected_revision: 1,
             receiver_notes: "تم العد",
             items: [{
-              item_id: invoice.items[0].item_id,
+              item_id: items[0].item_id,
               received_quantity: 8,
               damaged_quantity: 1,
               missing_quantity: 2,
@@ -287,7 +372,8 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
     assert.equal(response.status, 200);
     assert.equal((await response.json()).status, "pendingPriceEntry");
     invoice = firestore.document("inter_branch_invoices", created.invoice_id);
-    assert.equal(invoice.items[0].received_quantity, 8);
+    items = invoiceItems(firestore, created.invoice_id);
+    assert.equal(items[0].received_quantity, 8);
     assert.equal(invoice.item_digest.length, 64);
     assert.equal(publicHasProtectedKey(invoice), false);
 
@@ -301,7 +387,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
             expected_revision: 1,
             receiver_notes: "تم العد",
             items: [{
-              item_id: invoice.items[0].item_id,
+              item_id: items[0].item_id,
               received_quantity: 8,
               damaged_quantity: 1,
               missing_quantity: 2,
@@ -321,7 +407,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           key: "receipt-new-key-0001",
           body: {
             expected_revision: 1,
-            items: [{item_id: invoice.items[0].item_id, received_quantity: 8}],
+            items: [{item_id: items[0].item_id, received_quantity: 8}],
           },
         },
     );
@@ -336,7 +422,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           key: "wrong-receiver-state-0002",
           body: {
             expected_revision: 1,
-            items: [{item_id: invoice.items[0].item_id, received_quantity: 8}],
+            items: [{item_id: items[0].item_id, received_quantity: 8}],
           },
         },
     );
@@ -372,7 +458,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           body: {
             expected_revision: 2,
             currency: "YER",
-            items: [{item_id: invoice.items[0].item_id, unit_price: 12.5}],
+            items: [{item_id: items[0].item_id, unit_price: 12.5}],
           },
         },
     );
@@ -397,7 +483,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           body: {
             expected_revision: 2,
             currency: "YER",
-            items: [{item_id: invoice.items[0].item_id, unit_price: 12.5}],
+            items: [{item_id: items[0].item_id, unit_price: 12.5}],
           },
         },
     );
@@ -412,7 +498,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           body: {
             expected_revision: 2,
             currency: "YER",
-            items: [{item_id: invoice.items[0].item_id, unit_price: 12.5}],
+            items: [{item_id: items[0].item_id, unit_price: 12.5}],
           },
         },
     );
@@ -422,7 +508,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
       expected_revision: 2,
       currency: "YER",
       pricing_notes: "ملاحظة مالية محمية",
-      items: [{item_id: invoice.items[0].item_id, unit_price: 12.5}],
+      items: [{item_id: items[0].item_id, unit_price: 12.5}],
     };
     response = await post(
         baseUrl,
@@ -451,7 +537,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
     assert.equal(firestore.documents("product_price_history").length, 1);
     const latest = firestore.document("product_price_latest", latestKey);
     assert.equal(latest.version, 5);
-    assert.equal(latest.unit_value, invoice.items[0].unit_value);
+    assert.equal(latest.unit_value, items[0].unit_value);
     const priceHistory = firestore.documents("product_price_history")[0];
     assert.equal(priceHistory.previous_price, 100);
     assert.equal(priceHistory.previous_source_invoice_id, "old-invoice");
@@ -625,6 +711,115 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
       ));
       assert.equal(publicHasProtectedKey(event), false);
     }
+  });
+});
+
+test("the isolated parser accepts the measured worst-case valid 50-item creation", async () => {
+  const fixture = maximumFiftyItemCreationFixture();
+  const bytes = Buffer.byteLength(JSON.stringify(fixture.payload), "utf8");
+  assert.equal(bytes, 19983);
+  assert.equal(bytes > 16 * 1024, true);
+  assert.equal((32 * 1024) - bytes, 12785);
+  const firestore = new FakeFirestore(fixture.data);
+  await withServer(firestore, async (baseUrl) => {
+    const response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s",
+      key: "maximum-payload-0001",
+      body: fixture.payload,
+    });
+    assert.equal(response.status, 201);
+    const created = await response.json();
+    assert.equal(invoiceItems(firestore, created.invoice_id).length, 50);
+  });
+});
+
+test("a 50-item invoice completes atomically through every version-2 transition", async () => {
+  const firestore = new FakeFirestore(seedWithCatalogItems(50));
+  await withServer(firestore, async (baseUrl) => {
+    const createItems = Array.from({length: 50}, (_, index) => ({
+      product_id: `product-${String(index + 1).padStart(2, "0")}`,
+      unit_id: "primary",
+      supplied_quantity: index + 1,
+    }));
+    let response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s",
+      key: "fifty-create-0001",
+      body: {receiving_branch_id: "branch-r", items: createItems},
+    });
+    assert.equal(response.status, 201);
+    const created = await response.json();
+    let invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    let items = invoiceItems(firestore, created.invoice_id);
+    assert.equal(invoice.item_count, 50);
+    assert.equal(items.length, 50);
+    assert.equal(Object.hasOwn(invoice, "items"), false);
+    assert.equal(new Set(items.map((item) => item.item_id)).size, 50);
+    assert.equal(new Set(items.map((item) => item.line_number)).size, 50);
+
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/confirm-receipt`,
+        {
+          uid: "manager-r",
+          key: "fifty-receipt-0001",
+          body: {
+            expected_revision: 1,
+            items: items.map((item) => ({
+              item_id: item.item_id,
+              received_quantity: item.supplied_quantity,
+            })),
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    items = invoiceItems(firestore, created.invoice_id);
+    assert.equal(items.every((item) => item.invoice_revision === 2), true);
+
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/confirm-prices`,
+        {
+          uid: "collector",
+          key: "fifty-price-0001",
+          body: {
+            expected_revision: 2,
+            currency: "YER",
+            items: items.map((item, index) => ({
+              item_id: item.item_id,
+              unit_price: index + 1,
+            })),
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(firestore.documents("product_price_latest").length, 50);
+    assert.equal(firestore.documents("product_price_history").length, 50);
+    const priceSnapshot = firestore.document(
+        "inter_branch_invoice_prices",
+        created.invoice_id,
+    );
+    assert.equal(priceSnapshot.item_count, 50);
+    assert.equal(priceSnapshot.items.length, 50);
+
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/post-accounting`,
+        {
+          uid: "accountant",
+          key: "fifty-post-0001",
+          body: {
+            expected_revision: 3,
+            accounting_reference: "ACC-50-ITEMS",
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    assert.equal(invoice.status, "postedToAccounting");
+    assert.equal(
+        firestore.document("inter_branch_invoice_prices", created.invoice_id).locked,
+        true,
+    );
   });
 });
 
@@ -824,11 +1019,9 @@ test("a price-polluted public invoice fails closed before receipt", async () => 
     });
     assert.equal(response.status, 201);
     const created = await response.json();
-    const invoice = firestore.document("inter_branch_invoices", created.invoice_id);
-    firestore._collection("inter_branch_invoices").set(created.invoice_id, {
-      ...invoice,
-      items: [{...invoice.items[0], unit_price: 42}],
-    });
+    const item = invoiceItems(firestore, created.invoice_id)[0];
+    const itemCollection = `inter_branch_invoices/${created.invoice_id}/items`;
+    firestore._collection(itemCollection).set(item.item_id, {...item, unit_price: 42});
 
     response = await post(
         baseUrl,
@@ -838,16 +1031,16 @@ test("a price-polluted public invoice fails closed before receipt", async () => 
           key: "polluted-receipt-0001",
           body: {
             expected_revision: 1,
-            items: [{item_id: invoice.items[0].item_id, received_quantity: 1}],
+            items: [{item_id: item.item_id, received_quantity: 1}],
           },
         },
     );
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error.code, "public-price-field-forbidden");
 
-    firestore._collection("inter_branch_invoices").set(created.invoice_id, {
-      ...invoice,
-      items: [{...invoice.items[0], unexpected_snapshot: "not-supported"}],
+    firestore._collection(itemCollection).set(item.item_id, {
+      ...item,
+      unexpected_snapshot: "not-supported",
     });
     response = await post(
         baseUrl,
@@ -857,12 +1050,12 @@ test("a price-polluted public invoice fails closed before receipt", async () => 
           key: "polluted-extra-0001",
           body: {
             expected_revision: 1,
-            items: [{item_id: invoice.items[0].item_id, received_quantity: 1}],
+            items: [{item_id: item.item_id, received_quantity: 1}],
           },
         },
     );
     assert.equal(response.status, 409);
-    assert.equal((await response.json()).error.code, "invoice-malformed");
+    assert.equal((await response.json()).error.code, "invoice-item-malformed");
   });
   assert.equal(firestore.documents("inter_branch_invoice_commands").length, 1);
   assert.equal(firestore.documents("inter_branch_invoice_events").length, 1);
@@ -913,7 +1106,7 @@ test("malformed and oversized JSON receive sanitized JSON errors", async () => {
     response = await fetch(`${baseUrl}/v1/inter-branch-invoices`, {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({padding: "x".repeat(17 * 1024)}),
+      body: JSON.stringify({padding: "x".repeat(33 * 1024)}),
     });
     assert.equal(response.status, 413);
     assert.deepEqual(await response.json(), {
@@ -922,5 +1115,13 @@ test("malformed and oversized JSON receive sanitized JSON errors", async () => {
         message: "The JSON request exceeds the allowed size.",
       },
     });
+
+    response = await fetch(`${baseUrl}/test-global-json-limit`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({padding: "x".repeat(17 * 1024)}),
+    });
+    assert.equal(response.status, 413);
+    assert.equal((await response.json()).error.code, "payload-too-large");
   });
 });

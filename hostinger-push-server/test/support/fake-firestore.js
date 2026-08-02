@@ -27,13 +27,18 @@ class FakeDocumentReference {
   get() {
     return Promise.resolve(this.firestore._snapshot(this));
   }
+
+  collection(name) {
+    return new FakeCollectionReference(this.firestore, `${this.path}/${name}`);
+  }
 }
 
 class FakeQuery {
-  constructor(firestore, collectionName, filters = []) {
+  constructor(firestore, collectionName, filters = [], orderBys = []) {
     this.firestore = firestore;
     this.collectionName = collectionName;
     this.filters = filters;
+    this.orderBys = orderBys;
     this.kind = "query";
   }
 
@@ -43,6 +48,19 @@ class FakeQuery {
         this.firestore,
         this.collectionName,
         [...this.filters, {field, value}],
+        this.orderBys,
+    );
+  }
+
+  orderBy(field, direction = "asc") {
+    if (direction !== "asc" && direction !== "desc") {
+      throw new Error(`Unsupported fake ordering: ${direction}`);
+    }
+    return new FakeQuery(
+        this.firestore,
+        this.collectionName,
+        this.filters,
+        [...this.orderBys, {field, direction}],
     );
   }
 }
@@ -148,13 +166,25 @@ class FakeFirestore {
   }
 
   _querySnapshot(query) {
-    const documents = [];
+    const matches = [];
     for (const [id, value] of this._collection(query.collectionName)) {
       if (query.filters.every((filter) => value?.[filter.field] === filter.value)) {
-        const reference = new FakeDocumentReference(this, query.collectionName, id);
-        documents.push(new FakeDocumentSnapshot(reference, value));
+        matches.push({id, value});
       }
     }
+    matches.sort((left, right) => {
+      for (const order of query.orderBys) {
+        const leftValue = left.value?.[order.field];
+        const rightValue = right.value?.[order.field];
+        const comparison = leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+        if (comparison !== 0) return order.direction === "asc" ? comparison : -comparison;
+      }
+      return left.id.localeCompare(right.id);
+    });
+    const documents = matches.map(({id, value}) => {
+      const reference = new FakeDocumentReference(this, query.collectionName, id);
+      return new FakeDocumentSnapshot(reference, value);
+    });
     return {docs: documents, empty: documents.length === 0, size: documents.length};
   }
 }

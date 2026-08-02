@@ -788,8 +788,18 @@ service cloud.firestore {
             (interBranchSupervisor() || managerParticipates(data))));
     }
 
-    function validV2PublicItem(item) {
+    function validV2PublicItemData(invoiceId, item) {
       return item is map && item.keys().hasOnly([
+        'id',
+        'invoice_id',
+        'schema_version',
+        'workflow_version',
+        'creation_mode',
+        'invoice_revision',
+        'branch_ids',
+        'sending_branch_id',
+        'receiving_branch_id',
+        'line_number',
         'item_id',
         'product_id',
         'product_version',
@@ -808,27 +818,88 @@ service cloud.firestore {
         'damaged_quantity',
         'missing_quantity',
         'discrepancy_notes'
-      ]);
+      ]) && item.keys().hasAll([
+        'id',
+        'invoice_id',
+        'schema_version',
+        'workflow_version',
+        'creation_mode',
+        'invoice_revision',
+        'branch_ids',
+        'sending_branch_id',
+        'receiving_branch_id',
+        'line_number',
+        'item_id',
+        'product_id',
+        'product_version',
+        'product_brand_id',
+        'product_name',
+        'group_id',
+        'group_name',
+        'unit_id',
+        'unit_value',
+        'unit_raw_value',
+        'supplied_quantity'
+      ]) &&
+        item.id == item.item_id &&
+        item.invoice_id == invoiceId &&
+        item.schema_version == 2 && item.workflow_version == 2 &&
+        item.creation_mode == 'direct_supplier_invoice' &&
+        item.invoice_revision is int && item.invoice_revision > 0 &&
+        item.branch_ids is list && item.branch_ids.size() == 2 &&
+        item.branch_ids[0] == item.sending_branch_id &&
+        item.branch_ids[1] == item.receiving_branch_id &&
+        item.sending_branch_id != item.receiving_branch_id &&
+        item.line_number is int && item.line_number > 0 &&
+          item.line_number <= 50 &&
+        item.product_id is string && item.product_id.size() > 0 &&
+        item.product_version is int && item.product_version > 0 &&
+        item.product_brand_id is string && item.product_brand_id.size() > 0 &&
+        item.product_name is string && item.product_name.size() > 0 &&
+        item.group_id is string && item.group_id.size() > 0 &&
+        item.group_name is string && item.group_name.size() > 0 &&
+        item.unit_id is string && item.unit_id.size() > 0 &&
+        item.unit_value is string && item.unit_value.size() > 0 &&
+        item.unit_raw_value is string && item.unit_raw_value.size() > 0 &&
+        item.supplied_quantity is number && item.supplied_quantity > 0 &&
+        (!item.keys().hasAny(['product_legacy_code']) ||
+          item.product_legacy_code is string) &&
+        (!item.keys().hasAny(['group_legacy_code']) ||
+          item.group_legacy_code is string) &&
+        (!item.keys().hasAny(['line_notes']) || item.line_notes is string) &&
+        (!item.keys().hasAny(['discrepancy_notes']) ||
+          item.discrepancy_notes is string) &&
+        (!item.keys().hasAny(['received_quantity']) ||
+          (item.received_quantity is number && item.received_quantity >= 0)) &&
+        (!item.keys().hasAny(['damaged_quantity']) ||
+          (item.damaged_quantity is number && item.damaged_quantity >= 0 &&
+            item.keys().hasAny(['received_quantity']) &&
+            item.damaged_quantity <= item.received_quantity)) &&
+        (!item.keys().hasAny(['missing_quantity']) ||
+          (item.missing_quantity is number && item.missing_quantity >= 0 &&
+            item.keys().hasAny(['received_quantity'])));
     }
 
-    function validV2PublicItems(items) {
-      let itemCount = items.size();
-      // Thirteen is the highest strict closed-schema expansion that remains
-      // below Firestore's 1,000-expression evaluation limit.
-      return items is list && itemCount > 0 && itemCount <= 13 &&
-        (itemCount < 1 || validV2PublicItem(items[0])) &&
-        (itemCount < 2 || validV2PublicItem(items[1])) &&
-        (itemCount < 3 || validV2PublicItem(items[2])) &&
-        (itemCount < 4 || validV2PublicItem(items[3])) &&
-        (itemCount < 5 || validV2PublicItem(items[4])) &&
-        (itemCount < 6 || validV2PublicItem(items[5])) &&
-        (itemCount < 7 || validV2PublicItem(items[6])) &&
-        (itemCount < 8 || validV2PublicItem(items[7])) &&
-        (itemCount < 9 || validV2PublicItem(items[8])) &&
-        (itemCount < 10 || validV2PublicItem(items[9])) &&
-        (itemCount < 11 || validV2PublicItem(items[10])) &&
-        (itemCount < 12 || validV2PublicItem(items[11])) &&
-        (itemCount < 13 || validV2PublicItem(items[12]));
+    function validV2PublicItem(invoiceId, itemId, item) {
+      return validV2PublicItemData(invoiceId, item) && item.id == itemId;
+    }
+
+    function mayReadV2PublicItem(invoiceId, itemId, item) {
+      return knownInterBranchUser() &&
+        validV2PublicItem(invoiceId, itemId, item) &&
+        (interBranchSupervisor() ||
+          (role() == 'manager' &&
+            item.branch_ids.hasAny([actorBranchId()])));
+    }
+
+    function mayListV2PublicItem(invoiceId, item) {
+      // Firestore list authorization must be provable from queryable branch
+      // metadata. The Admin SDK is the only writer and applies the same closed
+      // schema used by strict single-document reads before every atomic write.
+      return knownInterBranchUser() &&
+        (interBranchSupervisor() ||
+          (role() == 'manager' &&
+            item.branch_ids.hasAny([actorBranchId()])));
     }
 
     function validV2PublicHistoryEvent(event) {
@@ -852,7 +923,7 @@ service cloud.firestore {
         (eventCount < 4 || validV2PublicHistoryEvent(events[3]));
     }
 
-    function validV2PublicInvoice(invoiceId, data) {
+    function validV2PublicInvoiceData(data) {
       return data is map &&
         data.keys().hasOnly([
           'id',
@@ -870,7 +941,7 @@ service cloud.firestore {
           'receiving_branch_name',
           'receiving_brand_id',
           'branch_ids',
-          'items',
+          'item_count',
           'item_digest',
           'invoice_notes',
           'receiver_notes',
@@ -887,8 +958,32 @@ service cloud.firestore {
           'created_at',
           'last_updated',
           'history'
+        ]) && data.keys().hasAll([
+          'id',
+          'schema_version',
+          'workflow_version',
+          'creation_mode',
+          'status',
+          'revision',
+          'invoice_number',
+          'branch_code',
+          'sending_branch_id',
+          'sending_branch_name',
+          'sending_brand_id',
+          'receiving_branch_id',
+          'receiving_branch_name',
+          'receiving_brand_id',
+          'branch_ids',
+          'item_count',
+          'item_digest',
+          'created_by',
+          'created_by_name',
+          'created_by_role',
+          'created_at',
+          'last_updated',
+          'history'
         ]) &&
-        data.id == invoiceId &&
+        data.id is string && data.id.size() > 0 &&
         data.schema_version == 2 &&
         data.workflow_version == 2 &&
         data.creation_mode == 'direct_supplier_invoice' &&
@@ -897,8 +992,25 @@ service cloud.firestore {
         data.branch_ids is list && data.branch_ids.size() == 2 &&
         data.branch_ids[0] == data.sending_branch_id &&
         data.branch_ids[1] == data.receiving_branch_id &&
-        validV2PublicItems(data.items) &&
+        data.revision is int && data.revision > 0 &&
+        data.item_count is int && data.item_count > 0 &&
+          data.item_count <= 50 &&
+        data.item_digest is string && data.item_digest.size() == 64 &&
         validV2PublicHistory(data.history);
+    }
+
+    function validV2PublicInvoice(invoiceId, data) {
+      return validV2PublicInvoiceData(data) && data.id == invoiceId;
+    }
+
+    function mayListInterBranchInvoice(data) {
+      // Header lists retain the approved branch-scoped query contract. Strict
+      // v2 identity/schema checks are applied to direct document reads, while
+      // all v2 writes remain backend-only.
+      return knownInterBranchUser() &&
+        (interBranchSupervisor() ||
+          (role() == 'manager' &&
+            data.branch_ids.hasAny([actorBranchId()])));
     }
 
     function legacyInvoiceIdentityUnchanged() {
@@ -1517,18 +1629,20 @@ service cloud.firestore {
 
     match /inter_branch_invoices/{invoiceId} {
       allow get: if mayReadInterBranchInvoice(invoiceId, resource.data);
-      // List authorization can depend only on queryable branch participation;
-      // it does not re-expand the nested item schema. The trusted backend is the
-      // sole v2 writer and enforces the closed, price-free schema before writing.
-      allow list: if knownInterBranchUser() &&
-        (interBranchSupervisor() ||
-          (role() == 'manager' &&
-            resource.data.branch_ids.hasAny([actorBranchId()])));
+      allow list: if mayListInterBranchInvoice(resource.data);
       // New invoices, all v2 transitions, and deletes are backend-only.
       allow create, delete: if false;
       // A narrowly scoped compatibility path remains for already-stored v1
       // documents. It cannot add workflow_version 2 or rewrite identity.
       allow update: if legacyInvoiceUpdateAllowed();
+
+      match /items/{itemId} {
+        allow get: if mayReadV2PublicItem(invoiceId, itemId, resource.data);
+        // Manager collection queries must include an array-contains constraint
+        // for their own branch so Firestore can prove every result is allowed.
+        allow list: if mayListV2PublicItem(invoiceId, resource.data);
+        allow create, update, delete: if false;
+      }
     }
 
     match /inter_branch_invoice_events/{eventId} {

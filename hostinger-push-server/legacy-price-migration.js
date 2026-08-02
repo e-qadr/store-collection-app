@@ -1,11 +1,28 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const {invoiceItemDigest} = require("./inter-branch-invoice-domain");
 
 const SUPPORTED_CURRENCIES = new Set(["YER", "SAR", "USD"]);
 const PUBLIC_PRICE_KEYS = new Set(["unit_price", "total_price"]);
 const PRICE_LIKE_KEY =
   /(price|prices|total|cost|amount|currency|suggestion|suggested)/i;
+const V2_PUBLIC_ITEM_KEYS = new Set([
+  "id", "invoice_id", "schema_version", "workflow_version", "creation_mode",
+  "invoice_revision", "branch_ids", "sending_branch_id", "receiving_branch_id",
+  "line_number", "item_id", "product_id", "product_version", "product_brand_id",
+  "product_name", "group_id", "group_name", "product_legacy_code",
+  "group_legacy_code", "unit_id", "unit_value", "unit_raw_value",
+  "supplied_quantity", "line_notes", "received_quantity", "damaged_quantity",
+  "missing_quantity", "discrepancy_notes",
+]);
+const V2_PUBLIC_ITEM_REQUIRED_KEYS = new Set([
+  "id", "invoice_id", "schema_version", "workflow_version", "creation_mode",
+  "invoice_revision", "branch_ids", "sending_branch_id", "receiving_branch_id",
+  "line_number", "item_id", "product_id", "product_version", "product_brand_id",
+  "product_name", "group_id", "group_name", "unit_id", "unit_value",
+  "unit_raw_value", "supplied_quantity",
+]);
 
 function assertFirestoreEmulatorOnly({
   environment = process.env,
@@ -29,6 +46,9 @@ function rehearseLegacyPriceMigration(fixture, {tolerance = 1e-6} = {}) {
   const input = fixture && typeof fixture === "object" ? fixture : {};
   const state = {
     public_invoices: clone(input.public_invoices || {}),
+    // Phase-2 line documents are already price-free. A legacy price rehearsal
+    // must preserve them byte-for-byte and must never fold them into headers.
+    public_invoice_items: clone(input.public_invoice_items || {}),
     restricted_snapshots: clone(input.restricted_snapshots || {}),
     restricted_history: clone(input.restricted_history || {}),
   };
@@ -86,6 +106,86 @@ function rehearseLegacyPriceMigration(fixture, {tolerance = 1e-6} = {}) {
     restricted_history: state.restricted_history,
   });
   return {state, report};
+}
+
+function validateV2PublicItemFixture(fixture) {
+  const input = fixture && typeof fixture === "object" ? fixture : {};
+  const invoices = input.public_invoices || {};
+  const itemCollections = input.public_invoice_items || {};
+  const report = {invoices: 0, items: 0, invoice_checksums: {}};
+  for (const [invoiceId, rawEntry] of Object.entries(invoices)) {
+    const header = rawEntry?.data || rawEntry;
+    if (!header || header.workflow_version !== 2 || header.schema_version !== 2) {
+      continue;
+    }
+    if (Object.hasOwn(header, "items")) throw codedError("v2-embedded-items-forbidden");
+    if (header.id !== invoiceId || !Number.isSafeInteger(header.revision) ||
+        header.revision < 1 || !Number.isSafeInteger(header.item_count) ||
+        header.item_count < 1 || header.item_count > 50 ||
+        !isSha256(header.item_digest)) {
+      throw codedError("v2-header-invalid");
+    }
+    const rawItems = itemCollections[invoiceId];
+    const items = Array.isArray(rawItems) ? rawItems :
+      rawItems && typeof rawItems === "object" ? Object.values(rawItems) : [];
+    if (items.length !== header.item_count) throw codedError("v2-item-count-mismatch");
+    const itemIds = new Set();
+    const lines = new Set();
+    const productUnits = new Set();
+    for (const item of items) {
+      validateV2FixtureItem({invoiceId, header, item});
+      const productUnit = `${item.product_id}\u0000${item.unit_id}`;
+      if (itemIds.has(item.item_id) || lines.has(item.line_number) ||
+          productUnits.has(productUnit)) {
+        throw codedError("v2-item-duplicate");
+      }
+      itemIds.add(item.item_id);
+      lines.add(item.line_number);
+      productUnits.add(productUnit);
+    }
+    for (let line = 1; line <= items.length; line += 1) {
+      if (!lines.has(line)) throw codedError("v2-line-sequence-invalid");
+    }
+    if (invoiceItemDigest(items) !== header.item_digest) {
+      throw codedError("v2-item-digest-mismatch");
+    }
+    report.invoices += 1;
+    report.items += items.length;
+    report.invoice_checksums[invoiceId] = checksum({header, items});
+  }
+  if (report.invoices === 0) throw codedError("v2-fixture-empty");
+  return report;
+}
+
+function validateV2FixtureItem({invoiceId, header, item}) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    throw codedError("v2-item-invalid");
+  }
+  let priceLike = false;
+  walk(item, [], (_path, key) => {
+    if (PRICE_LIKE_KEY.test(key)) priceLike = true;
+  });
+  if (priceLike) throw codedError("v2-item-price-field-forbidden");
+  const keys = Object.keys(item);
+  if (keys.some((key) => !V2_PUBLIC_ITEM_KEYS.has(key)) ||
+      [...V2_PUBLIC_ITEM_REQUIRED_KEYS].some((key) => !Object.hasOwn(item, key))) {
+    throw codedError("v2-item-schema-invalid");
+  }
+  if (item.id !== item.item_id || item.invoice_id !== invoiceId ||
+      item.schema_version !== 2 || item.workflow_version !== 2 ||
+      item.creation_mode !== "direct_supplier_invoice" ||
+      item.invoice_revision !== header.revision ||
+      checksum(item.branch_ids) !== checksum(header.branch_ids) ||
+      item.sending_branch_id !== header.sending_branch_id ||
+      item.receiving_branch_id !== header.receiving_branch_id ||
+      !Number.isSafeInteger(item.line_number) || item.line_number < 1 ||
+      item.line_number > header.item_count ||
+      typeof item.product_id !== "string" || !item.product_id ||
+      typeof item.unit_id !== "string" || !item.unit_id ||
+      typeof item.supplied_quantity !== "number" ||
+      !Number.isFinite(item.supplied_quantity) || item.supplied_quantity <= 0) {
+    throw codedError("v2-item-identity-invalid");
+  }
 }
 
 function migrateOne({
@@ -684,4 +784,5 @@ module.exports = {
   checksum,
   locateLegacyPrices,
   rehearseLegacyPriceMigration,
+  validateV2PublicItemFixture,
 };

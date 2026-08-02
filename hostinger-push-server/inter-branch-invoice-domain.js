@@ -1,6 +1,6 @@
 const crypto = require("node:crypto");
 
-const MAX_ITEMS = 13;
+const MAX_ITEMS = 50;
 const MAX_IDEMPOTENCY_KEY_BYTES = 128;
 const MAX_DOCUMENT_ID_BYTES = 128;
 const MAX_UNIT_ID_BYTES = 64;
@@ -13,6 +13,7 @@ const MAX_QUANTITY = 1_000_000_000_000_000;
 const SUPPORTED_CURRENCIES = new Set(["YER", "SAR", "USD"]);
 const DOCUMENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const PRICE_LIKE_KEY_PATTERN =
   /(?:^|_)(?:price|prices|total|cost|amount|currency|suggestion|suggested)(?:_|$)/i;
 
@@ -55,7 +56,10 @@ function requiredString(value, fieldName, maxBytes, pattern) {
     throw new CommandError("invalid-argument", 400, `${fieldName} is required.`);
   }
   const result = value.trim();
-  if (!result || utf8ByteLength(result) > maxBytes || (pattern && !pattern.test(result))) {
+  if (!result ||
+      CONTROL_CHARACTER_PATTERN.test(result) ||
+      utf8ByteLength(result) > maxBytes ||
+      (pattern && !pattern.test(result))) {
     throw new CommandError("invalid-argument", 400, `${fieldName} is invalid.`);
   }
   return result;
@@ -68,7 +72,7 @@ function optionalString(value, fieldName, maxBytes) {
   }
   const result = value.trim();
   if (!result) return undefined;
-  if (utf8ByteLength(result) > maxBytes) {
+  if (CONTROL_CHARACTER_PATTERN.test(result) || utf8ByteLength(result) > maxBytes) {
     throw new CommandError("invalid-argument", 400, `${fieldName} is too long.`);
   }
   return result;
@@ -325,16 +329,42 @@ function canonicalRequestHash(value) {
 }
 
 function invoiceItemDigest(items) {
-  const snapshots = items.map((item) => ({
+  const snapshots = items.map((item, index) => compact({
+    line_number: Number.isSafeInteger(item.line_number) ? item.line_number : index + 1,
     item_id: String(item.item_id),
     product_id: String(item.product_id),
+    product_version: Number(item.product_version),
     product_brand_id: String(item.product_brand_id),
+    product_name: String(item.product_name || ""),
+    product_legacy_code: optionalDigestString(item.product_legacy_code),
+    group_id: String(item.group_id || ""),
+    group_name: String(item.group_name || ""),
+    group_legacy_code: optionalDigestString(item.group_legacy_code),
     unit_id: String(item.unit_id),
     unit_value: String(item.unit_value),
+    unit_raw_value: String(item.unit_raw_value || item.unit_value || ""),
     supplied_quantity: Number(item.supplied_quantity),
-    received_quantity: Number(item.received_quantity),
-  }));
+    line_notes: optionalDigestString(item.line_notes),
+    received_quantity: finiteDigestNumber(item.received_quantity),
+    damaged_quantity: finiteDigestNumber(item.damaged_quantity),
+    missing_quantity: finiteDigestNumber(item.missing_quantity),
+    discrepancy_notes: optionalDigestString(item.discrepancy_notes),
+  })).sort((left, right) =>
+    left.line_number - right.line_number || left.item_id.localeCompare(right.item_id));
   return crypto.createHash("sha256").update(canonicalJson(snapshots)).digest("hex");
+}
+
+function compact(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function optionalDigestString(value) {
+  return value === undefined || value === null || String(value).trim() === "" ?
+    undefined : String(value);
+}
+
+function finiteDigestNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function deterministicDocumentId(...parts) {

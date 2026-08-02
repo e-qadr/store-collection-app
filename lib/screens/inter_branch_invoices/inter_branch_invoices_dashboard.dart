@@ -24,12 +24,16 @@ class InterBranchInvoicesDashboard extends StatefulWidget {
   final UserRole role;
   final String? branchId;
   final String branchName;
+  final Stream<List<InterBranchInvoiceRead>>? invoiceStream;
+  final bool showAppBarActions;
 
   const InterBranchInvoicesDashboard({
     super.key,
     required this.role,
     required this.branchName,
     this.branchId,
+    this.invoiceStream,
+    this.showAppBarActions = true,
   });
 
   @override
@@ -39,7 +43,10 @@ class InterBranchInvoicesDashboard extends StatefulWidget {
 
 class _InterBranchInvoicesDashboardState
     extends State<InterBranchInvoicesDashboard> {
-  final _service = InterBranchInvoiceService();
+  InterBranchInvoiceService? _service;
+
+  InterBranchInvoiceService get _invoiceService =>
+      _service ??= InterBranchInvoiceService();
 
   bool get _canCreateInvoice =>
       widget.role == UserRole.manager &&
@@ -77,7 +84,7 @@ class _InterBranchInvoicesDashboardState
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 92),
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                child: StreamBuilder<List<InterBranchInvoiceRead>>(
                   stream: _dashboardStream(),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
@@ -94,7 +101,7 @@ class _InterBranchInvoicesDashboardState
                       );
                     }
 
-                    final invoices = _invoiceList(snapshot.data);
+                    final invoices = snapshot.data ?? const [];
                     final incoming = _incomingInvoices(invoices);
                     final outgoing = _outgoingInvoices(invoices);
                     final dashboardInvoices = widget.role == UserRole.manager
@@ -178,14 +185,16 @@ class _InterBranchInvoicesDashboardState
       expandedHeight: 170,
       pinned: true,
       backgroundColor: _roleColor,
-      actions: [
-        const NotificationBell(),
-        IconButton(
-          icon: const Icon(Icons.logout_rounded),
-          tooltip: 'تسجيل الخروج',
-          onPressed: () => confirmAndSignOut(context),
-        ),
-      ],
+      actions: widget.showAppBarActions
+          ? [
+              const NotificationBell(),
+              IconButton(
+                icon: const Icon(Icons.logout_rounded),
+                tooltip: 'تسجيل الخروج',
+                onPressed: () => confirmAndSignOut(context),
+              ),
+            ]
+          : null,
       flexibleSpace: FlexibleSpaceBar(
         centerTitle: true,
         title: const Text(
@@ -206,15 +215,18 @@ class _InterBranchInvoicesDashboardState
     );
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _dashboardStream() {
-    return switch (widget.role) {
-      UserRole.collector => _service.watchPricingQueue(),
-      UserRole.accountant => _service.watchAccountingQueue(),
-      UserRole.manager || UserRole.admin => _service.watchInvoices(
+  Stream<List<InterBranchInvoiceRead>> _dashboardStream() {
+    final fixtureStream = widget.invoiceStream;
+    if (fixtureStream != null) return fixtureStream;
+    final snapshotStream = switch (widget.role) {
+      UserRole.collector => _invoiceService.watchPricingQueue(),
+      UserRole.accountant => _invoiceService.watchAccountingQueue(),
+      UserRole.manager || UserRole.admin => _invoiceService.watchInvoices(
         role: widget.role,
         branchId: widget.branchId,
       ),
     };
+    return snapshotStream.map(_invoiceList);
   }
 
   Widget _buildStats(List<InterBranchInvoiceRead> invoices) {
@@ -1308,7 +1320,7 @@ class _InterBranchInvoicesBoxScreenState
                       children: [
                         Expanded(
                           child: Text(
-                            '${invoice.items.length} منتج',
+                            '${invoice.itemCount} منتج',
                             style: const TextStyle(
                               color: AppTheme.textSecondary,
                             ),

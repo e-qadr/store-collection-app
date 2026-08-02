@@ -165,7 +165,9 @@ class InterBranchInvoiceFields {
   static const creationMode = 'creation_mode';
   static const revision = 'revision';
   static const itemDigest = 'item_digest';
+  static const itemCount = 'item_count';
   static const items = 'items';
+  static const itemsSubcollection = 'items';
   static const itemName = 'item_name';
   static const requestedQuantity = 'requested_quantity';
   static const approvedQuantity = 'approved_quantity';
@@ -209,8 +211,13 @@ class InterBranchInvoiceFields {
 class InterBranchInvoiceRead {
   final String id;
   final Map<String, dynamic> data;
+  final List<Map<String, dynamic>>? itemDocuments;
 
-  const InterBranchInvoiceRead({required this.id, required this.data});
+  const InterBranchInvoiceRead({
+    required this.id,
+    required this.data,
+    this.itemDocuments,
+  });
 
   int get schemaVersion =>
       _positiveInt(data[InterBranchInvoiceFields.schemaVersion], 1);
@@ -224,6 +231,18 @@ class InterBranchInvoiceRead {
       _positiveInt(data[InterBranchInvoiceFields.revision], isVersion2 ? 1 : 0);
   String get itemDigest =>
       data[InterBranchInvoiceFields.itemDigest]?.toString().trim() ?? '';
+  int get itemCount => isVersion2
+      ? _positiveInt(data[InterBranchInvoiceFields.itemCount], 0)
+      : items.length;
+  bool get itemsLoaded => !isVersion2 || itemDocuments != null;
+
+  InterBranchInvoiceRead withItemDocuments(
+    List<Map<String, dynamic>> documents,
+  ) => InterBranchInvoiceRead(
+    id: id,
+    data: data,
+    itemDocuments: documents,
+  );
 
   String get rawStatus =>
       data[InterBranchInvoiceFields.status]?.toString().trim() ?? '';
@@ -322,6 +341,23 @@ class InterBranchInvoiceRead {
   bool get hasPrices => !isVersion2 && unitPrice != null && totalPrice != null;
 
   List<InterBranchInvoiceItem> get items {
+    if (isVersion2) {
+      final documents = itemDocuments;
+      if (documents == null) return const [];
+      final ordered = [...documents]..sort((left, right) {
+        final leftLine = (left['line_number'] as num?)?.toInt() ?? 0;
+        final rightLine = (right['line_number'] as num?)?.toInt() ?? 0;
+        return leftLine.compareTo(rightLine);
+      });
+      return ordered
+          .map(
+            (item) => InterBranchInvoiceItem.fromMap(
+              item,
+              allowLegacyPrices: false,
+            ),
+          )
+          .toList(growable: false);
+    }
     final value = data[InterBranchInvoiceFields.items];
     if (value is List && value.isNotEmpty) {
       return value

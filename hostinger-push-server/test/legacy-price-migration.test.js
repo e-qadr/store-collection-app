@@ -10,10 +10,16 @@ const {
   checksum,
   locateLegacyPrices,
   rehearseLegacyPriceMigration,
+  validateV2PublicItemFixture,
 } = require("../legacy-price-migration");
 
 function fixture() {
   const file = path.join(__dirname, "fixtures", "legacy-inter-branch-price-fixture.json");
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function v2Fixture() {
+  const file = path.join(__dirname, "fixtures", "v2-subcollection-rehearsal-fixture.json");
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
@@ -202,6 +208,44 @@ test("idempotent reruns reject partial or corrupt restricted state", () => {
   assert.equal(invoiceReport.conflict_code, "existing_restricted_history_invalid");
   assert.equal(rerun.report.conflicts, first.report.conflicts + 1);
   assert.equal(rerun.report.already_migrated, 0);
+});
+
+test("version-2 subcollection fixtures validate and survive legacy rehearsal", () => {
+  const source = v2Fixture();
+  const beforeItems = checksum(source.public_invoice_items);
+  const validation = validateV2PublicItemFixture(source);
+  assert.equal(validation.invoices, 1);
+  assert.equal(validation.items, 2);
+  assert.equal(Object.keys(validation.invoice_checksums).length, 1);
+
+  const {state, report} = rehearseLegacyPriceMigration(source);
+  assert.equal(report.scanned, 1);
+  assert.equal(report.containing_prices, 0);
+  assert.equal(checksum(state.public_invoice_items), beforeItems);
+  assert.equal(Object.hasOwn(state.public_invoices["v2-scalable"].data, "items"), false);
+});
+
+test("version-2 fixture validation fails closed on schema, count, and digest drift", () => {
+  const polluted = v2Fixture();
+  polluted.public_invoice_items["v2-scalable"][0].unit_price = 1;
+  assert.throws(
+      () => validateV2PublicItemFixture(polluted),
+      (error) => error.code === "v2-item-price-field-forbidden",
+  );
+
+  const wrongCount = v2Fixture();
+  wrongCount.public_invoices["v2-scalable"].data.item_count = 3;
+  assert.throws(
+      () => validateV2PublicItemFixture(wrongCount),
+      (error) => error.code === "v2-item-count-mismatch",
+  );
+
+  const wrongDigest = v2Fixture();
+  wrongDigest.public_invoices["v2-scalable"].data.item_digest = "0".repeat(64);
+  assert.throws(
+      () => validateV2PublicItemFixture(wrongDigest),
+      (error) => error.code === "v2-item-digest-mismatch",
+  );
 });
 
 function valueAtPath(value, sourcePath) {

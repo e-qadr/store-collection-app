@@ -391,12 +391,14 @@ class PdfService {
     required Map<String, dynamic> publicData,
     required UserRole audienceRole,
     InterBranchInvoicePriceSnapshot? priceSnapshot,
+    List<Map<String, dynamic>>? itemDocuments,
   }) {
     final input = prepareSecureInterBranchInvoicePdfInput(
       invoiceId: invoiceId,
       publicData: publicData,
       audienceRole: audienceRole,
       priceSnapshot: priceSnapshot,
+      itemDocuments: itemDocuments,
     );
     return buildInterBranchInvoice(
       data: input.data,
@@ -410,8 +412,13 @@ class PdfService {
     required Map<String, dynamic> publicData,
     required UserRole audienceRole,
     InterBranchInvoicePriceSnapshot? priceSnapshot,
+    List<Map<String, dynamic>>? itemDocuments,
   }) {
-    final invoice = InterBranchInvoiceRead(id: invoiceId, data: publicData);
+    final invoice = InterBranchInvoiceRead(
+      id: invoiceId,
+      data: publicData,
+      itemDocuments: itemDocuments,
+    );
     final mayReadPrices =
         audienceRole == UserRole.collector ||
         audienceRole == UserRole.accountant ||
@@ -538,12 +545,14 @@ class PdfService {
     required Map<String, dynamic> publicData,
     required UserRole audienceRole,
     InterBranchInvoicePriceSnapshot? priceSnapshot,
+    List<Map<String, dynamic>>? itemDocuments,
   }) async {
     final bytes = await buildSecureInterBranchInvoice(
       invoiceId: invoiceId,
       publicData: publicData,
       audienceRole: audienceRole,
       priceSnapshot: priceSnapshot,
+      itemDocuments: itemDocuments,
     );
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,

@@ -8,6 +8,7 @@ class InterBranchInvoicePriceSnapshot {
   final String currency;
   final int pricingRevision;
   final int invoiceRevision;
+  final int itemCount;
   final String itemDigest;
   final List<InterBranchInvoicePriceItem> items;
   final double total;
@@ -24,6 +25,7 @@ class InterBranchInvoicePriceSnapshot {
     required this.currency,
     required this.pricingRevision,
     required this.invoiceRevision,
+    required this.itemCount,
     required this.itemDigest,
     required this.items,
     required this.total,
@@ -41,6 +43,12 @@ class InterBranchInvoicePriceSnapshot {
     Map<String, dynamic> data,
   ) {
     final rawItems = data['items'];
+    final parsedItems = rawItems is List
+        ? rawItems
+              .whereType<Map>()
+              .map(InterBranchInvoicePriceItem.fromMap)
+              .toList(growable: false)
+        : const <InterBranchInvoicePriceItem>[];
     return InterBranchInvoicePriceSnapshot(
       invoiceId: data['invoice_id']?.toString() ?? documentId,
       currency: data['currency']?.toString() ?? '',
@@ -49,16 +57,12 @@ class InterBranchInvoicePriceSnapshot {
           (data['invoice_revision'] as num?)?.toInt() ??
           (data['public_invoice_revision'] as num?)?.toInt() ??
           0,
+      itemCount: (data['item_count'] as num?)?.toInt() ?? parsedItems.length,
       itemDigest:
           data['item_digest']?.toString() ??
           data['invoice_item_digest']?.toString() ??
           '',
-      items: rawItems is List
-          ? rawItems
-                .whereType<Map>()
-                .map(InterBranchInvoicePriceItem.fromMap)
-                .toList(growable: false)
-          : const [],
+      items: parsedItems,
       total:
           (data['invoice_total'] as num?)?.toDouble() ??
           (data['total'] as num?)?.toDouble() ??
@@ -99,7 +103,9 @@ class InterBranchInvoicePriceSnapshot {
     if (invoiceRevision <= 0 || invoiceRevision > invoice.revision) {
       return false;
     }
-    if (items.length != invoice.items.length) {
+    if (!invoice.itemsLoaded ||
+        itemCount != invoice.itemCount ||
+        items.length != invoice.items.length) {
       return false;
     }
     var calculatedTotal = 0.0;

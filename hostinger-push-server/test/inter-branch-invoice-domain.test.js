@@ -40,6 +40,18 @@ test("direct creation accepts a bounded, price-free catalog payload", () => {
       }),
       (error) => error instanceof CommandError && error.code === "price-field-forbidden",
   );
+  assert.throws(
+      () => validateCreatePayload({
+        receiving_branch_id: "branch-b",
+        items: [{
+          product_id: "product-1",
+          unit_id: "unit_2",
+          supplied_quantity: 1,
+          line_notes: {nested_total: 3},
+        }],
+      }),
+      (error) => error instanceof CommandError && error.code === "price-field-forbidden",
+  );
 });
 
 test("creation rejects duplicate catalog selections and more than MAX_ITEMS", () => {
@@ -171,7 +183,7 @@ test("price-memory key exactly matches the Dart base64url contract", () => {
   }), expected);
 });
 
-test("item digest is stable and includes confirmed quantities", () => {
+test("item digest is order-independent and includes the full public snapshot", () => {
   const item = {
     item_id: "item-1",
     product_id: "product-1",
@@ -186,9 +198,19 @@ test("item digest is stable and includes confirmed quantities", () => {
       invoiceItemDigest([item]),
       invoiceItemDigest([{...item, received_quantity: 9}]),
   );
+  const second = {...item, item_id: "item-2", line_number: 2};
+  const first = {...item, line_number: 1};
+  assert.equal(
+      invoiceItemDigest([first, second]),
+      invoiceItemDigest([second, first]),
+  );
+  assert.notEqual(
+      invoiceItemDigest([item]),
+      invoiceItemDigest([{...item, product_name: "لقطة مختلفة"}]),
+  );
 });
 
-test("the measured worst-case 13-line creation remains below 16kb", () => {
+test("the measured worst-case 50-line creation fits the isolated 32kb parser", () => {
   const payload = {
     receiving_branch_id: "b".repeat(128),
     invoice_notes: "م".repeat(500),
@@ -200,8 +222,10 @@ test("the measured worst-case 13-line creation remains below 16kb", () => {
     })),
   };
   const bytes = utf8ByteLength(JSON.stringify(payload));
-  assert.equal(bytes, 6071);
-  assert.equal((16 * 1024) - bytes, 10313);
-  assert.ok(bytes < 16 * 1024);
+  assert.equal(bytes, 19983);
+  assert.equal(bytes - (16 * 1024), 3599);
+  assert.equal((32 * 1024) - bytes, 12785);
+  assert.ok(bytes > 16 * 1024);
+  assert.ok(bytes < 32 * 1024);
   assert.equal(canonicalRequestHash(payload).length, 64);
 });

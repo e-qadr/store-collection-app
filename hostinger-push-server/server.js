@@ -5,11 +5,16 @@ const admin = require("firebase-admin");
 const {createPasswordManagementRouter} = require("./password-management");
 const {
   createInterBranchInvoiceCommandRouter,
+  INTER_BRANCH_JSON_LIMIT,
   safeJsonErrorHandler,
 } = require("./inter-branch-invoice-commands");
 
 const app = express();
 app.set("trust proxy", 1);
+app.use(
+    "/v1/inter-branch-invoices",
+    express.json({limit: INTER_BRANCH_JSON_LIMIT}),
+);
 app.use(express.json({limit: "16kb"}));
 const port = Number(process.env.PORT || 3000);
 const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS || 5000);

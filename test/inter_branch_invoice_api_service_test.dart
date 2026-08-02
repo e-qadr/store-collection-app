@@ -179,7 +179,7 @@ void main() {
     expect(result.status, InterBranchInvoiceStatus.pendingAccountingEntry);
   });
 
-  test('direct invoice line cap accepts 13 and rejects 14', () async {
+  test('direct invoice line cap accepts 50 and rejects 51', () async {
     var requestCount = 0;
     final service = InterBranchInvoiceApiService(
       baseUrl: 'https://api.example.test',
@@ -189,7 +189,7 @@ void main() {
         return http.Response(
           jsonEncode({
             'invoice_id': 'invoice-limit',
-            'invoice_number': 'AB0013',
+            'invoice_number': 'AB0050',
             'status': 'pendingReceiverReview',
             'revision': 1,
           }),
@@ -209,20 +209,20 @@ void main() {
       ),
     );
 
-    expect(InterBranchInvoiceApiService.maxItems, 13);
+    expect(InterBranchInvoiceApiService.maxItems, 50);
     await expectLater(
       service.createDirectInvoice(
         receivingBranchId: 'receiver-1',
-        items: items(13),
-        idempotencyKey: 'create:limit:13',
+        items: items(50),
+        idempotencyKey: 'create:limit:50',
       ),
       completes,
     );
     await expectLater(
       service.createDirectInvoice(
         receivingBranchId: 'receiver-1',
-        items: items(14),
-        idempotencyKey: 'create:limit:14',
+        items: items(51),
+        idempotencyKey: 'create:limit:51',
       ),
       throwsArgumentError,
     );

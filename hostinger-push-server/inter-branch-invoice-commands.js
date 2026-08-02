@@ -42,6 +42,9 @@ const STATUS = Object.freeze({
   postedToAccounting: "postedToAccounting",
 });
 
+const ITEMS_SUBCOLLECTION = "items";
+const INTER_BRANCH_JSON_LIMIT = "32kb";
+
 const OPERATIONAL_ROLES = new Set(["manager", "collector", "accountant", "admin"]);
 const CATALOG_SNAPSHOT_LIMITS = Object.freeze({
   productNameBytes: 400,
@@ -66,7 +69,7 @@ const PUBLIC_INVOICE_KEYS = new Set([
   "receiving_branch_name",
   "receiving_brand_id",
   "branch_ids",
-  "items",
+  "item_count",
   "invoice_notes",
   "receiver_notes",
   "item_digest",
@@ -86,6 +89,16 @@ const PUBLIC_INVOICE_KEYS = new Set([
 ]);
 
 const PUBLIC_ITEM_KEYS = new Set([
+  "id",
+  "invoice_id",
+  "schema_version",
+  "workflow_version",
+  "creation_mode",
+  "invoice_revision",
+  "branch_ids",
+  "sending_branch_id",
+  "receiving_branch_id",
+  "line_number",
   "item_id",
   "product_id",
   "product_version",
@@ -120,6 +133,7 @@ const PROTECTED_SNAPSHOT_KEYS = new Set([
   "invoice_id",
   "invoice_revision",
   "pricing_revision",
+  "item_count",
   "item_digest",
   "currency",
   "items",
@@ -182,6 +196,13 @@ function catalogSnapshotString(value, maximumBytes, {optional = false} = {}) {
   return text;
 }
 
+function optionalStoredString(value, maximumBytes) {
+  return value === undefined ||
+    (typeof value === "string" &&
+      value.trim().length > 0 &&
+      Buffer.byteLength(value, "utf8") <= maximumBytes);
+}
+
 function timestampFor(admin, now) {
   return admin.firestore.Timestamp.fromDate(now());
 }
@@ -211,10 +232,15 @@ function hasOnlyKeys(value, allowedKeys) {
     Object.keys(value).every((key) => allowedKeys.has(key));
 }
 
+function hasAllKeys(value, requiredKeys) {
+  return value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    [...requiredKeys].every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
 function assertClosedPublicInvoice(invoice) {
   if (!hasOnlyKeys(invoice, PUBLIC_INVOICE_KEYS) ||
-      !Array.isArray(invoice.items) ||
-      invoice.items.some((item) => !hasOnlyKeys(item, PUBLIC_ITEM_KEYS)) ||
       !Array.isArray(invoice.history) ||
       invoice.history.some((event) => !hasOnlyKeys(event, PUBLIC_HISTORY_KEYS))) {
     throw new CommandError(
@@ -222,6 +248,109 @@ function assertClosedPublicInvoice(invoice) {
         409,
         "The public invoice contains fields outside the supported schema.",
     );
+  }
+}
+
+
+const REQUIRED_PUBLIC_ITEM_KEYS = new Set([
+  "id",
+  "invoice_id",
+  "schema_version",
+  "workflow_version",
+  "creation_mode",
+  "invoice_revision",
+  "branch_ids",
+  "sending_branch_id",
+  "receiving_branch_id",
+  "line_number",
+  "item_id",
+  "product_id",
+  "product_version",
+  "product_brand_id",
+  "product_name",
+  "group_id",
+  "group_name",
+  "unit_id",
+  "unit_value",
+  "unit_raw_value",
+  "supplied_quantity",
+]);
+
+function assertClosedPublicItem(invoice, item, expectedId) {
+  try {
+    assertNoPriceLikeKeys(item, "invoice_item");
+  } catch (error) {
+    if (error instanceof CommandError && error.code === "price-field-forbidden") {
+      throw new CommandError(
+          "public-price-field-forbidden",
+          409,
+          "A public invoice item contains a forbidden protected field.",
+      );
+    }
+    throw error;
+  }
+  if (!hasOnlyKeys(item, PUBLIC_ITEM_KEYS) ||
+      !hasAllKeys(item, REQUIRED_PUBLIC_ITEM_KEYS) ||
+      item.id !== expectedId ||
+      item.item_id !== expectedId ||
+      item.invoice_id !== invoice.id ||
+      item.schema_version !== 2 ||
+      item.workflow_version !== 2 ||
+      item.creation_mode !== "direct_supplier_invoice" ||
+      !Number.isSafeInteger(item.invoice_revision) ||
+      item.invoice_revision < 1 ||
+      item.invoice_revision > invoice.revision ||
+      !Array.isArray(item.branch_ids) ||
+      item.branch_ids.length !== 2 ||
+      item.branch_ids[0] !== invoice.sending_branch_id ||
+      item.branch_ids[1] !== invoice.receiving_branch_id ||
+      item.sending_branch_id !== invoice.sending_branch_id ||
+      item.receiving_branch_id !== invoice.receiving_branch_id ||
+      !Number.isSafeInteger(item.line_number) ||
+      item.line_number < 1 ||
+      item.line_number > invoice.item_count ||
+      typeof item.product_id !== "string" || !item.product_id ||
+      !Number.isSafeInteger(item.product_version) || item.product_version < 1 ||
+      item.product_brand_id !== invoice.sending_brand_id ||
+      typeof item.product_name !== "string" || !item.product_name ||
+      Buffer.byteLength(item.product_name, "utf8") > CATALOG_SNAPSHOT_LIMITS.productNameBytes ||
+      !optionalStoredString(
+          item.product_legacy_code,
+          CATALOG_SNAPSHOT_LIMITS.legacyCodeBytes,
+      ) ||
+      typeof item.group_id !== "string" || !item.group_id ||
+      typeof item.group_name !== "string" || !item.group_name ||
+      Buffer.byteLength(item.group_name, "utf8") > CATALOG_SNAPSHOT_LIMITS.groupNameBytes ||
+      !optionalStoredString(
+          item.group_legacy_code,
+          CATALOG_SNAPSHOT_LIMITS.legacyCodeBytes,
+      ) ||
+      typeof item.unit_id !== "string" || !item.unit_id ||
+      typeof item.unit_value !== "string" || !item.unit_value ||
+      Buffer.byteLength(item.unit_value, "utf8") > CATALOG_SNAPSHOT_LIMITS.unitValueBytes ||
+      typeof item.unit_raw_value !== "string" || !item.unit_raw_value ||
+      Buffer.byteLength(item.unit_raw_value, "utf8") > CATALOG_SNAPSHOT_LIMITS.unitValueBytes ||
+      !optionalStoredString(item.line_notes, 100) ||
+      !optionalStoredString(item.discrepancy_notes, 100) ||
+      typeof item.supplied_quantity !== "number" ||
+      !Number.isFinite(item.supplied_quantity) || item.supplied_quantity <= 0) {
+    throw new CommandError("invoice-item-malformed", 409, "A public invoice item is invalid.");
+  }
+  if (item.received_quantity !== undefined &&
+      (typeof item.received_quantity !== "number" ||
+       !Number.isFinite(item.received_quantity) || item.received_quantity < 0)) {
+    throw new CommandError("invoice-item-malformed", 409, "A received quantity is invalid.");
+  }
+  if (item.damaged_quantity !== undefined &&
+      (typeof item.damaged_quantity !== "number" ||
+       !Number.isFinite(item.damaged_quantity) || item.damaged_quantity < 0 ||
+       item.damaged_quantity > item.received_quantity)) {
+    throw new CommandError("invoice-item-malformed", 409, "A damaged quantity is invalid.");
+  }
+  if (item.missing_quantity !== undefined &&
+      (typeof item.missing_quantity !== "number" ||
+       !Number.isFinite(item.missing_quantity) || item.missing_quantity < 0)) {
+    throw new CommandError("invoice-item-malformed", 409, "A missing quantity is invalid.");
   }
 }
 
@@ -239,7 +368,11 @@ function requireV2Invoice(snapshot, expectedId) {
         "This command is available only for direct version-2 invoices.",
     );
   }
-  if (!Number.isSafeInteger(invoice.revision) || invoice.revision < 1 || !Array.isArray(invoice.items)) {
+  if (!Number.isSafeInteger(invoice.revision) || invoice.revision < 1 ||
+      !Number.isSafeInteger(invoice.item_count) || invoice.item_count < 1 ||
+      invoice.item_count > 50 ||
+      typeof invoice.item_digest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(invoice.item_digest)) {
     throw new CommandError("invoice-malformed", 409, "The invoice is invalid.");
   }
   if (expectedId && invoice.id !== expectedId) {
@@ -268,6 +401,47 @@ function requireStatusAndRevision(invoice, status, revision) {
   if (invoice.revision !== revision) {
     throw new CommandError("stale-revision", 409, "The invoice revision has changed.");
   }
+}
+
+function invoiceItemsCollection(invoiceRef) {
+  return invoiceRef.collection(ITEMS_SUBCOLLECTION);
+}
+
+async function readV2PublicItems(transaction, invoiceRef, invoice) {
+  const snapshot = await transaction.get(
+      invoiceItemsCollection(invoiceRef).orderBy("line_number", "asc"),
+  );
+  if (snapshot.size !== invoice.item_count || snapshot.docs.length !== invoice.item_count) {
+    throw new CommandError("items-mismatch", 409, "The invoice item count is inconsistent.");
+  }
+  const items = snapshot.docs.map((document) => {
+    const item = document.data();
+    assertClosedPublicItem(invoice, item, document.id);
+    return item;
+  });
+  const itemIds = new Set();
+  const lineNumbers = new Set();
+  const selections = new Set();
+  for (const item of items) {
+    const selection = `${item.product_id}\u001f${item.unit_id}`;
+    if (itemIds.has(item.item_id) ||
+        lineNumbers.has(item.line_number) ||
+        selections.has(selection)) {
+      throw new CommandError("items-mismatch", 409, "The invoice contains duplicate items.");
+    }
+    itemIds.add(item.item_id);
+    lineNumbers.add(item.line_number);
+    selections.add(selection);
+  }
+  for (let lineNumber = 1; lineNumber <= invoice.item_count; lineNumber += 1) {
+    if (!lineNumbers.has(lineNumber)) {
+      throw new CommandError("items-mismatch", 409, "The invoice item order is incomplete.");
+    }
+  }
+  if (invoiceItemDigest(items) !== invoice.item_digest) {
+    throw new CommandError("item-digest-mismatch", 409, "The invoice item snapshot changed.");
+  }
+  return items;
 }
 
 function assertActorManagesBranch(actor, branchId, branch) {
@@ -501,7 +675,17 @@ function catalogUnit(product, unitId) {
     unit && typeof unit === "object" && String(unit.unit_id || "") === unitId) || null;
 }
 
-function buildPublicCatalogItem({input, productId, product, group, itemId}) {
+function buildPublicCatalogItem({
+  input,
+  productId,
+  product,
+  group,
+  itemId,
+  invoiceId,
+  supplyingBranchId,
+  receivingBranchId,
+  lineNumber,
+}) {
   if (!activeCatalogDocument(product)) {
     throw new CommandError("product-inactive", 409, "A selected product is not active.");
   }
@@ -536,6 +720,16 @@ function buildPublicCatalogItem({input, productId, product, group, itemId}) {
       {optional: true},
   );
   return {
+    id: itemId,
+    invoice_id: invoiceId,
+    schema_version: 2,
+    workflow_version: 2,
+    creation_mode: "direct_supplier_invoice",
+    invoice_revision: 1,
+    branch_ids: [supplyingBranchId, receivingBranchId],
+    sending_branch_id: supplyingBranchId,
+    receiving_branch_id: receivingBranchId,
+    line_number: lineNumber,
     item_id: itemId,
     product_id: productId,
     product_version: Number.isSafeInteger(product.version) ? product.version : 1,
@@ -701,7 +895,12 @@ async function createDirectInvoice({
         product: entry.product,
         group: groups.get(entry.groupId),
         itemId: plannedItemIds[index],
+        invoiceId: invoiceRef.id,
+        supplyingBranchId: supplying.id,
+        receivingBranchId: receiving.id,
+        lineNumber: index + 1,
       }));
+      const itemDigest = invoiceItemDigest(items);
       const createdEvent = eventData(
           "direct_invoice_created",
           "تم إنشاء فاتورة تحويل مباشرة وإرسالها إلى الفرع المستلم.",
@@ -724,7 +923,8 @@ async function createDirectInvoice({
         receiving_branch_name: receiving.name,
         receiving_brand_id: receiving.brandId,
         branch_ids: [supplying.id, receiving.id],
-        items,
+        item_count: items.length,
+        item_digest: itemDigest,
         ...(payload.invoice_notes ? {invoice_notes: payload.invoice_notes} : {}),
         created_by: actor.uid,
         created_by_name: actor.name,
@@ -735,8 +935,12 @@ async function createDirectInvoice({
       };
       assertNoPriceLikeKeys(publicInvoice, "invoice");
       assertClosedPublicInvoice(publicInvoice);
+      items.forEach((item) => assertClosedPublicItem(publicInvoice, item, item.item_id));
 
       transaction.set(invoiceRef, publicInvoice);
+      items.forEach((item) => {
+        transaction.set(invoiceItemsCollection(invoiceRef).doc(item.item_id), item);
+      });
       writePublicEvent(transaction, firestore, {
         invoice: publicInvoice,
         event: createdEvent,
@@ -841,7 +1045,12 @@ async function confirmReceipt({
       assertActorManagesBranch(actor, branch.id, branch.data);
       const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
       requireStatusAndRevision(invoice, STATUS.pendingReceiverReview, payload.expected_revision);
-      const items = receiptItemsForInvoice(invoice.items, payload.items);
+      const storedItems = await readV2PublicItems(transaction, invoiceRef, invoice);
+      const revision = invoice.revision + 1;
+      const items = receiptItemsForInvoice(storedItems, payload.items).map((item) => ({
+        ...item,
+        invoice_revision: revision,
+      }));
       const itemDigest = invoiceItemDigest(items);
       const collectors = await activeUsersByRole(transaction, firestore, "collector");
       if (collectors.length === 0) {
@@ -851,7 +1060,6 @@ async function confirmReceipt({
             "No active general manager is configured.",
         );
       }
-      const revision = invoice.revision + 1;
       const event = eventData(
           "receipt_confirmed",
           "أكد مدير الفرع المستلم الكميات المستلمة.",
@@ -859,7 +1067,6 @@ async function confirmReceipt({
           timestamp,
       );
       transaction.update(invoiceRef, {
-        items,
         item_digest: itemDigest,
         status: STATUS.pendingPriceEntry,
         revision,
@@ -869,6 +1076,10 @@ async function confirmReceipt({
         receipt_confirmed_at: timestamp,
         last_updated: timestamp,
         history: historyWithEvent(invoice, event),
+      });
+      items.forEach((item) => {
+        assertClosedPublicItem({...invoice, revision}, item, item.item_id);
+        transaction.set(invoiceItemsCollection(invoiceRef).doc(item.item_id), item);
       });
       writePublicEvent(transaction, firestore, {invoice, event, revision});
       writeNotifications(transaction, firestore, {
@@ -979,8 +1190,9 @@ async function confirmPrices({
       if (protectedSnapshot.exists) {
         throw new CommandError("price-snapshot-exists", 409, "The invoice was already priced.");
       }
-      const protectedItems = priceItemsForInvoice(invoice.items, payload.items);
-      const recalculatedDigest = invoiceItemDigest(invoice.items);
+      const storedItems = await readV2PublicItems(transaction, invoiceRef, invoice);
+      const protectedItems = priceItemsForInvoice(storedItems, payload.items);
+      const recalculatedDigest = invoiceItemDigest(storedItems);
       if (!invoice.item_digest || invoice.item_digest !== recalculatedDigest) {
         throw new CommandError("item-digest-mismatch", 409, "The invoice item snapshot changed.");
       }
@@ -1030,6 +1242,7 @@ async function confirmPrices({
         invoice_id: invoiceId,
         invoice_revision: revision,
         pricing_revision: 1,
+        item_count: invoice.item_count,
         item_digest: invoice.item_digest,
         currency: payload.currency,
         items: protectedItems,
@@ -1114,7 +1327,7 @@ function approximatelyEqual(left, right) {
   return Math.abs(left - right) <= Number.EPSILON * scale * 2;
 }
 
-function assertProtectedSnapshotMatchesInvoice(invoice, snapshot) {
+function assertProtectedSnapshotMatchesInvoice(invoice, publicItems, snapshot) {
   if (!snapshot ||
       snapshot.locked !== false ||
       !hasOnlyKeys(snapshot, PROTECTED_SNAPSHOT_KEYS)) {
@@ -1125,20 +1338,21 @@ function assertProtectedSnapshotMatchesInvoice(invoice, snapshot) {
       snapshot.invoice_revision !== invoice.revision ||
       !Number.isSafeInteger(snapshot.pricing_revision) ||
       snapshot.pricing_revision < 1 ||
+      snapshot.item_count !== invoice.item_count ||
       snapshot.item_digest !== invoice.item_digest ||
       !SUPPORTED_CURRENCIES.has(snapshot.currency) ||
       !Number.isFinite(snapshot.invoice_total) ||
       snapshot.invoice_total < 0 ||
       snapshot.confirmed_by_role !== "collector" ||
       !Array.isArray(snapshot.items) ||
-      snapshot.items.length !== invoice.items.length) {
+      snapshot.items.length !== publicItems.length) {
     throw new CommandError("price-snapshot-mismatch", 409, "The protected snapshot does not match.");
   }
-  const digest = invoiceItemDigest(invoice.items);
+  const digest = invoiceItemDigest(publicItems);
   if (digest !== invoice.item_digest) {
     throw new CommandError("item-digest-mismatch", 409, "The public item snapshot changed.");
   }
-  const publicById = new Map(invoice.items.map((item) => [item.item_id, item]));
+  const publicById = new Map(publicItems.map((item) => [item.item_id, item]));
   const protectedIds = new Set();
   let calculatedInvoiceTotal = 0;
   for (const item of snapshot.items) {
@@ -1206,7 +1420,8 @@ async function postToAccounting({
       ]);
       const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
       requireStatusAndRevision(invoice, STATUS.pendingAccountingEntry, payload.expected_revision);
-      assertProtectedSnapshotMatchesInvoice(invoice, priceSnapshot.data());
+      const storedItems = await readV2PublicItems(transaction, invoiceRef, invoice);
+      assertProtectedSnapshotMatchesInvoice(invoice, storedItems, priceSnapshot.data());
 
       const [supplyingBranchSnapshot, receivingBranchSnapshot] = await Promise.all([
         transaction.get(
@@ -1394,6 +1609,7 @@ function safeJsonErrorHandler(error, _request, response, next) {
 
 module.exports = {
   COLLECTIONS,
+  INTER_BRANCH_JSON_LIMIT,
   STATUS,
   activeDocument,
   assertProtectedSnapshotMatchesInvoice,

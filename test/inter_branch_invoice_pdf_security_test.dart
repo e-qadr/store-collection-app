@@ -12,6 +12,7 @@ void main() {
         publicData: _publicInvoice,
         audienceRole: UserRole.manager,
         priceSnapshot: _priceSnapshot(),
+        itemDocuments: _publicItems,
       );
 
       expect(input.showPrices, isFalse);
@@ -32,6 +33,7 @@ void main() {
         publicData: _publicInvoice,
         audienceRole: UserRole.collector,
         priceSnapshot: _priceSnapshot(),
+        itemDocuments: _publicItems,
       );
       final item = (input.data['items'] as List).single as Map<String, dynamic>;
 
@@ -48,6 +50,7 @@ void main() {
       publicData: _publicInvoice,
       audienceRole: UserRole.accountant,
       priceSnapshot: _priceSnapshot(digest: 'stale'),
+      itemDocuments: _publicItems,
     );
 
     expect(input.showPrices, isFalse);
@@ -62,32 +65,35 @@ final _publicInvoice = <String, dynamic>{
   'workflow_version': 2,
   'revision': 3,
   'status': 'pendingAccountingEntry',
+  'item_count': 1,
   'item_digest': 'digest-1',
   'created_at': DateTime.utc(2026, 8, 2),
   'unit_price': 999999,
   'total_price': 999999,
-  'items': const [
-    {
-      'item_id': 'line-1',
-      'product_id': 'product-1',
-      'product_name': 'منتج عام',
-      'group_id': 'group-1',
-      'group_name': 'مجموعة',
-      'unit_id': 'unit_1',
-      'unit_value': 'حبة',
-      'unit_raw_value': 'حبة',
-      'supplied_quantity': 5,
-      'received_quantity': 5,
-      'unit_price': 999999,
-      'total_price': 999999,
-    },
-  ],
 };
+
+const _publicItems = <Map<String, dynamic>>[
+  {
+    'item_id': 'line-1',
+    'product_id': 'product-1',
+    'product_name': 'منتج عام',
+    'group_id': 'group-1',
+    'group_name': 'مجموعة',
+    'unit_id': 'unit_1',
+    'unit_value': 'حبة',
+    'unit_raw_value': 'حبة',
+    'supplied_quantity': 5,
+    'received_quantity': 5,
+    'unit_price': 999999,
+    'total_price': 999999,
+  },
+];
 
 InterBranchInvoicePriceSnapshot _priceSnapshot({String digest = 'digest-1'}) =>
     InterBranchInvoicePriceSnapshot.fromMap('invoice-1', {
       'invoice_revision': 3,
       'pricing_revision': 1,
+      'item_count': 1,
       'item_digest': digest,
       'currency': 'YER',
       'invoice_total': 35,

@@ -1,0 +1,72 @@
+{
+  "public_invoices": {
+    "v2-scalable": {
+      "data": {
+        "id": "v2-scalable",
+        "schema_version": 2,
+        "workflow_version": 2,
+        "creation_mode": "direct_supplier_invoice",
+        "status": "pendingReceiverReview",
+        "revision": 1,
+        "sending_branch_id": "branch-a",
+        "receiving_branch_id": "branch-b",
+        "branch_ids": ["branch-a", "branch-b"],
+        "item_count": 2,
+        "item_digest": "c8c0ce9dc192748822c963972ee7685505e1185f8454da60d9ffbf42263cb1a4"
+      }
+    }
+  },
+  "public_invoice_items": {
+    "v2-scalable": [
+      {
+        "id": "line-1",
+        "invoice_id": "v2-scalable",
+        "schema_version": 2,
+        "workflow_version": 2,
+        "creation_mode": "direct_supplier_invoice",
+        "invoice_revision": 1,
+        "branch_ids": ["branch-a", "branch-b"],
+        "sending_branch_id": "branch-a",
+        "receiving_branch_id": "branch-b",
+        "line_number": 1,
+        "item_id": "line-1",
+        "product_id": "product-1",
+        "product_version": 1,
+        "product_brand_id": "brand-a",
+        "product_name": "منتج أول",
+        "group_id": "group-1",
+        "group_name": "مجموعة",
+        "unit_id": "unit-1",
+        "unit_value": "حبة",
+        "unit_raw_value": "حبه",
+        "supplied_quantity": 4
+      },
+      {
+        "id": "line-2",
+        "invoice_id": "v2-scalable",
+        "schema_version": 2,
+        "workflow_version": 2,
+        "creation_mode": "direct_supplier_invoice",
+        "invoice_revision": 1,
+        "branch_ids": ["branch-a", "branch-b"],
+        "sending_branch_id": "branch-a",
+        "receiving_branch_id": "branch-b",
+        "line_number": 2,
+        "item_id": "line-2",
+        "product_id": "product-2",
+        "product_version": 3,
+        "product_brand_id": "brand-a",
+        "product_name": "منتج ثان",
+        "group_id": "group-1",
+        "group_name": "مجموعة",
+        "unit_id": "unit-2",
+        "unit_value": "علبة",
+        "unit_raw_value": "علبة",
+        "supplied_quantity": 2,
+        "line_notes": "سليم"
+      }
+    ]
+  },
+  "restricted_snapshots": {},
+  "restricted_history": {}
+}

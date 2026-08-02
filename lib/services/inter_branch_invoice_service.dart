@@ -39,6 +39,64 @@ class InterBranchInvoiceService {
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(InterBranchInvoiceFields.collection);
 
+  Stream<DocumentSnapshot<Map<String, dynamic>>> watchInvoice(
+    String invoiceId,
+  ) => _collection.doc(invoiceId).snapshots();
+
+  Query<Map<String, dynamic>> _v2ItemsQuery({
+    required String invoiceId,
+    required UserRole role,
+    String? branchId,
+  }) {
+    Query<Map<String, dynamic>> query = _collection
+        .doc(invoiceId)
+        .collection(InterBranchInvoiceFields.itemsSubcollection);
+    if (role == UserRole.manager) {
+      final cleanBranchId = branchId?.trim() ?? '';
+      if (cleanBranchId.isEmpty) {
+        throw ArgumentError('Branch ID is required for manager item reads.');
+      }
+      query = query.where(
+        InterBranchInvoiceFields.branchIds,
+        arrayContains: cleanBranchId,
+      );
+    } else if (role != UserRole.collector &&
+        role != UserRole.accountant &&
+        role != UserRole.admin) {
+      throw ArgumentError('This role cannot read inter-branch invoice items.');
+    }
+    return query.orderBy('line_number').limit(50);
+  }
+
+  Stream<List<Map<String, dynamic>>> watchV2ItemDocuments({
+    required String invoiceId,
+    required UserRole role,
+    String? branchId,
+  }) => _v2ItemsQuery(
+    invoiceId: invoiceId,
+    role: role,
+    branchId: branchId,
+  ).snapshots().map(
+    (snapshot) => snapshot.docs
+        .map((document) => document.data())
+        .toList(growable: false),
+  );
+
+  Future<List<Map<String, dynamic>>> fetchV2ItemDocuments({
+    required String invoiceId,
+    required UserRole role,
+    String? branchId,
+  }) async {
+    final snapshot = await _v2ItemsQuery(
+      invoiceId: invoiceId,
+      role: role,
+      branchId: branchId,
+    ).get();
+    return snapshot.docs
+        .map((document) => document.data())
+        .toList(growable: false);
+  }
+
   Future<void> _notifySafely(Future<void> Function() notification) async {
     try {
       await notification();
