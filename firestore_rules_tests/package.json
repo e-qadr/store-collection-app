@@ -1,0 +1,17 @@
+{
+  "name": "store-collection-firestore-rules-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "firebase emulators:exec --config ../firebase.json --project demo-store-collection-catalog --only firestore \"node --test test/catalog_security.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.1",
+    "firebase": "12.17.0",
+    "firebase-tools": "15.25.1"
+  }
+}

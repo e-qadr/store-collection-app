@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
+import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
@@ -286,6 +287,21 @@ class AccountantDashboard extends StatelessWidget {
                             ),
                           );
                         },
+                      ),
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'دليل المواد والمنتجات',
+                        subtitle:
+                            'إدارة كتالوج العلامات والمجموعات وأرشفة المنتجات وسجلها',
+                        icon: Icons.inventory_2_rounded,
+                        color: AppTheme.accountantColor,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                const ProductCatalogManagementScreen(),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 28),
 

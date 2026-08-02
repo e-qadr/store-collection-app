@@ -17,8 +17,691 @@ service cloud.firestore {
         profile().get('mustChangePassword', false) == false;
     }
 
+    function role() {
+      return profile().get('role', '');
+    }
+
     function adminUser() {
-      return operationalUser() && profile().get('role', '') == 'admin';
+      return operationalUser() && role() == 'admin';
+    }
+
+    function accountantUser() {
+      return operationalUser() && role() == 'accountant';
+    }
+
+    function catalogSupervisor() {
+      return operationalUser() &&
+        (role() == 'collector' || role() == 'accountant' || role() == 'admin');
+    }
+
+    function protectedPriceUser() {
+      return catalogSupervisor();
+    }
+
+    function protectedPriceWriter() {
+      return protectedPriceUser();
+    }
+
+    function branchBrandId() {
+      let branchId = profile().get('branchId', '');
+      return branchId is string && branchId.size() > 0 &&
+        exists(/databases/$(database)/documents/branches/$(branchId))
+        ? get(/databases/$(database)/documents/branches/$(branchId)).data.get('brand_id', '')
+        : '';
+    }
+
+    function mayReadCatalogDocument(data) {
+      return operationalUser() &&
+        (catalogSupervisor() ||
+          (branchBrandId().size() > 0 && data.brand_id == branchBrandId()));
+    }
+
+    function brandExists(brandId) {
+      return brandId is string && brandId.size() > 0 &&
+        exists(/databases/$(database)/documents/brands/$(brandId));
+    }
+
+    function validArchiveMetadata(data) {
+      return data.active is bool &&
+        (data.active == true
+          ? !data.keys().hasAny([
+              'archived_by',
+              'archived_by_name',
+              'archived_at'
+            ])
+          :
+          (data.archived_by is string &&
+            data.archived_by.size() > 0 &&
+            data.archived_by_name is string &&
+            data.archived_by_name.size() > 0 &&
+            data.archived_at is timestamp));
+    }
+
+    function validCatalogUnit(unit) {
+      return unit is map &&
+        unit.keys().hasOnly([
+          'unit_id',
+          'display_value',
+          'raw_value',
+          'normalized_value'
+        ]) &&
+        unit.keys().hasAll(['unit_id', 'display_value', 'raw_value']) &&
+        unit.unit_id is string && unit.unit_id.size() > 0 &&
+        unit.display_value is string && unit.display_value.size() > 0 &&
+        unit.raw_value is string && unit.raw_value.size() > 0 &&
+        (!unit.keys().hasAny(['normalized_value']) ||
+          unit.normalized_value is string);
+    }
+
+    function validCatalogUnits(units) {
+      return units is list && units.size() > 0 && units.size() <= 3 &&
+        validCatalogUnit(units[0]) &&
+        (units.size() < 2 || validCatalogUnit(units[1])) &&
+        (units.size() < 3 || validCatalogUnit(units[2]));
+    }
+
+    function validSourceMetadata(metadata) {
+      // This map deliberately has a closed schema: manager-readable product
+      // documents cannot be used to smuggle a protected price in nested data.
+      return metadata is map && metadata.keys().hasOnly([
+        'source_profile',
+        'source_file_sha256',
+        'source_sheet',
+        'source_row',
+        'raw_material_value',
+        'raw_group_value',
+        'raw_primary_unit',
+        'raw_unit_2',
+        'raw_unit_3',
+        'import_id'
+      ]) &&
+        (!metadata.keys().hasAny(['source_profile']) ||
+          metadata.source_profile is string) &&
+        (!metadata.keys().hasAny(['source_file_sha256']) ||
+          metadata.source_file_sha256 is string) &&
+        (!metadata.keys().hasAny(['source_sheet']) ||
+          metadata.source_sheet is string) &&
+        (!metadata.keys().hasAny(['source_row']) ||
+          metadata.source_row is int) &&
+        (!metadata.keys().hasAny(['raw_material_value']) ||
+          metadata.raw_material_value is string) &&
+        (!metadata.keys().hasAny(['raw_group_value']) ||
+          metadata.raw_group_value is string) &&
+        (!metadata.keys().hasAny(['raw_primary_unit']) ||
+          metadata.raw_primary_unit is string) &&
+        (!metadata.keys().hasAny(['raw_unit_2']) ||
+          metadata.raw_unit_2 is string) &&
+        (!metadata.keys().hasAny(['raw_unit_3']) ||
+          metadata.raw_unit_3 is string) &&
+        (!metadata.keys().hasAny(['import_id']) ||
+          metadata.import_id is string);
+    }
+
+    function validProductGroup(groupId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'brand_id',
+          'name',
+          'normalized_name',
+          'legacy_code',
+          'active',
+          'created_by',
+          'created_by_name',
+          'created_at',
+          'updated_by',
+          'updated_by_name',
+          'updated_at',
+          'last_audit_event_id',
+          'archived_by',
+          'archived_by_name',
+          'archived_at'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'brand_id',
+          'name',
+          'normalized_name',
+          'active',
+          'created_by',
+          'created_by_name',
+          'created_at',
+          'updated_by',
+          'updated_by_name',
+          'updated_at',
+          'last_audit_event_id'
+        ]) &&
+        data.id == groupId &&
+        brandExists(data.brand_id) &&
+        data.name is string && data.name.size() > 0 &&
+        data.normalized_name is string && data.normalized_name.size() > 0 &&
+        data.created_by is string && data.created_by.size() > 0 &&
+        data.created_by_name is string &&
+        data.created_at is timestamp &&
+        data.updated_by is string && data.updated_by.size() > 0 &&
+        data.updated_by_name is string &&
+        data.updated_at is timestamp &&
+        data.last_audit_event_id is string &&
+        data.last_audit_event_id.size() > 0 &&
+        (!data.keys().hasAny(['legacy_code']) || data.legacy_code is string) &&
+        validArchiveMetadata(data);
+    }
+
+    function validProductSource(data) {
+      return !data.keys().hasAny(['source_metadata']) ||
+        validSourceMetadata(data.source_metadata);
+    }
+
+    function validLegacyKeyPair(data) {
+      return (!data.keys().hasAny(['legacy_code']) &&
+          !data.keys().hasAny(['legacy_code_unique_key_id'])) ||
+        (data.legacy_code is string && data.legacy_code.size() > 0 &&
+          data.legacy_code_unique_key_id is string &&
+          data.legacy_code_unique_key_id.size() > 0);
+    }
+
+    function productGroupMatches(data) {
+      let group = getAfter(
+        /databases/$(database)/documents/product_groups/$(data.group_id)
+      ).data;
+      return group.brand_id == data.brand_id &&
+        (data.active == false || group.active == true);
+    }
+
+    function productUniqueKeyMatches(keyId, keyType, productId, data) {
+      let uniqueKey = getAfter(
+        /databases/$(database)/documents/product_unique_keys/$(keyId)
+      ).data;
+      return uniqueKey.brand_id == data.brand_id &&
+        uniqueKey.key_type == keyType &&
+        uniqueKey.product_id == productId;
+    }
+
+    function productKeysMatch(productId, data) {
+      return productUniqueKeyMatches(
+          data.name_unique_key_id,
+          'name',
+          productId,
+          data
+        ) &&
+        (!data.keys().hasAny(['legacy_code_unique_key_id']) ||
+          productUniqueKeyMatches(
+            data.legacy_code_unique_key_id,
+            'legacy_code',
+            productId,
+            data
+          ));
+    }
+
+    function validProduct(productId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'brand_id',
+          'group_id',
+          'name',
+          'normalized_name',
+          'legacy_code',
+          'units',
+          'primary_unit_id',
+          'active',
+          'version',
+          'name_unique_key_id',
+          'legacy_code_unique_key_id',
+          'source_metadata',
+          'created_by',
+          'created_by_name',
+          'created_at',
+          'updated_by',
+          'updated_by_name',
+          'updated_at',
+          'last_audit_event_id',
+          'archived_by',
+          'archived_by_name',
+          'archived_at'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'brand_id',
+          'group_id',
+          'name',
+          'normalized_name',
+          'units',
+          'primary_unit_id',
+          'active',
+          'version',
+          'name_unique_key_id',
+          'created_by',
+          'created_by_name',
+          'created_at',
+          'updated_by',
+          'updated_by_name',
+          'updated_at',
+          'last_audit_event_id'
+        ]) &&
+        data.id == productId &&
+        brandExists(data.brand_id) &&
+        data.group_id is string && data.group_id.size() > 0 &&
+        data.name is string && data.name.size() > 0 &&
+        data.normalized_name is string && data.normalized_name.size() > 0 &&
+        validCatalogUnits(data.units) &&
+        data.primary_unit_id is string && data.primary_unit_id.size() > 0 &&
+        data.version is int && data.version > 0 &&
+        data.name_unique_key_id is string && data.name_unique_key_id.size() > 0 &&
+        data.created_by is string && data.created_by.size() > 0 &&
+        data.created_by_name is string &&
+        data.created_at is timestamp &&
+        data.updated_by is string && data.updated_by.size() > 0 &&
+        data.updated_by_name is string &&
+        data.updated_at is timestamp &&
+        data.last_audit_event_id is string &&
+        data.last_audit_event_id.size() > 0 &&
+        validLegacyKeyPair(data) &&
+        validProductSource(data) &&
+        validArchiveMetadata(data) &&
+        productGroupMatches(data) &&
+        productKeysMatch(productId, data);
+    }
+
+    function validUniqueKey(keyId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'brand_id',
+          'key_type',
+          'normalized_value',
+          'product_id',
+          'active',
+          'created_by',
+          'created_at',
+          'updated_by',
+          'updated_at'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'brand_id',
+          'key_type',
+          'normalized_value',
+          'product_id',
+          'active',
+          'created_by',
+          'created_at',
+          'updated_by',
+          'updated_at'
+        ]) &&
+        data.id == keyId &&
+        brandExists(data.brand_id) &&
+        (data.key_type == 'name' || data.key_type == 'legacy_code') &&
+        data.normalized_value is string && data.normalized_value.size() > 0 &&
+        data.product_id is string && data.product_id.size() > 0 &&
+        data.active is bool &&
+        data.created_by is string && data.created_by.size() > 0 &&
+        data.created_at is timestamp &&
+        data.updated_by is string && data.updated_by.size() > 0 &&
+        data.updated_at is timestamp;
+    }
+
+    function uniqueKeyReferencesProduct(keyId, data) {
+      let product = getAfter(
+        /databases/$(database)/documents/products/$(data.product_id)
+      ).data;
+      return product.brand_id == data.brand_id &&
+        product.active == data.active &&
+        ((data.key_type == 'name' && product.name_unique_key_id == keyId) ||
+          (data.key_type == 'legacy_code' &&
+            product.legacy_code_unique_key_id == keyId));
+    }
+
+    function validAuditEvent(eventId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'entity_type',
+          'entity_id',
+          'brand_id',
+          'action',
+          'before',
+          'after',
+          'reason',
+          'actor_uid',
+          'actor_name',
+          'actor_role',
+          'created_at'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'entity_type',
+          'entity_id',
+          'brand_id',
+          'action',
+          'actor_uid',
+          'actor_name',
+          'actor_role',
+          'created_at'
+        ]) &&
+        data.id == eventId &&
+        (data.entity_type == 'product' ||
+          data.entity_type == 'product_group' ||
+          data.entity_type == 'product_accounting_profile') &&
+        data.entity_id is string && data.entity_id.size() > 0 &&
+        brandExists(data.brand_id) &&
+        data.action is string && data.action.size() > 0 &&
+        (!data.keys().hasAny(['before']) || data.before is map) &&
+        (!data.keys().hasAny(['after']) || data.after is map) &&
+        ((data.action == 'archived' || data.action == 'reactivated')
+          ? (data.keys().hasAny(['reason']) &&
+              data.reason is string && data.reason.size() > 0)
+          : (!data.keys().hasAny(['reason']) || data.reason is string)) &&
+        (data.action == 'created'
+          ? (data.keys().hasAny(['after']) &&
+              data.after is map && data.after.keys().size() > 0)
+          : (data.keys().hasAll(['before', 'after']) &&
+              data.before is map && data.before.keys().size() > 0 &&
+              data.after is map && data.after.keys().size() > 0)) &&
+        data.actor_uid == request.auth.uid &&
+        data.actor_name is string &&
+        data.actor_role == 'accountant' &&
+        data.created_at == request.time;
+    }
+
+    function linkedAuditMatches(
+      eventId,
+      entityType,
+      entityId,
+      brandId,
+      action
+    ) {
+      let audit = getAfter(
+        /databases/$(database)/documents/product_audit_events/$(eventId)
+      ).data;
+      return audit.id == eventId &&
+        audit.entity_type == entityType &&
+        audit.entity_id == entityId &&
+        audit.brand_id == brandId &&
+        audit.action == action &&
+        audit.actor_uid == request.auth.uid &&
+        audit.actor_role == 'accountant' &&
+        audit.created_at == request.time;
+    }
+
+    function productMutationAction() {
+      return request.resource.data.active != resource.data.active
+        ? (request.resource.data.active == true ? 'reactivated' : 'archived')
+        : 'updated';
+    }
+
+    function validProductArchiveTransition() {
+      let archiveFields = [
+        'archived_by',
+        'archived_by_name',
+        'archived_at'
+      ];
+      return request.resource.data.active != resource.data.active
+        ? (request.resource.data.active == false
+            ? (request.resource.data.archived_by == request.auth.uid &&
+                request.resource.data.archived_by_name is string &&
+                request.resource.data.archived_by_name.size() > 0 &&
+                request.resource.data.archived_at == request.time)
+            : !request.resource.data.keys().hasAny(archiveFields))
+        : !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(archiveFields);
+    }
+
+    function productAuditTargetPointsBack(eventId, data) {
+      let target = getAfter(
+        /databases/$(database)/documents/products/$(data.entity_id)
+      ).data;
+      return target.last_audit_event_id == eventId &&
+        target.brand_id == data.brand_id;
+    }
+
+    function groupAuditTargetPointsBack(eventId, data) {
+      let target = getAfter(
+        /databases/$(database)/documents/product_groups/$(data.entity_id)
+      ).data;
+      return target.last_audit_event_id == eventId &&
+        target.brand_id == data.brand_id;
+    }
+
+    function accountingAuditTargetPointsBack(eventId, data) {
+      let target = getAfter(
+        /databases/$(database)/documents/product_accounting_profiles/$(data.entity_id)
+      ).data;
+      return target.last_audit_event_id == eventId &&
+        target.brand_id == data.brand_id;
+    }
+
+    function auditTargetPointsBack(eventId, data) {
+      return (data.entity_type == 'product' &&
+          productAuditTargetPointsBack(eventId, data)) ||
+        (data.entity_type == 'product_group' &&
+          groupAuditTargetPointsBack(eventId, data)) ||
+        (data.entity_type == 'product_accounting_profile' &&
+          accountingAuditTargetPointsBack(eventId, data));
+    }
+
+    function validAccountingProfile(profileId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'product_id',
+          'brand_id',
+          'accounting_reference',
+          'sync_state',
+          'notes',
+          'created_by',
+          'created_at',
+          'updated_by',
+          'updated_at',
+          'last_audit_event_id'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'product_id',
+          'brand_id',
+          'sync_state',
+          'created_by',
+          'created_at',
+          'updated_by',
+          'updated_at',
+          'last_audit_event_id'
+        ]) &&
+        data.id == profileId &&
+        data.product_id == profileId &&
+        brandExists(data.brand_id) &&
+        getAfter(
+          /databases/$(database)/documents/products/$(data.product_id)
+        ).data.brand_id == data.brand_id &&
+        data.sync_state is string && data.sync_state.size() > 0 &&
+        (!data.keys().hasAny(['accounting_reference']) ||
+          data.accounting_reference is string) &&
+        (!data.keys().hasAny(['notes']) || data.notes is string) &&
+        data.created_by is string && data.created_by.size() > 0 &&
+        data.created_at is timestamp &&
+        data.updated_by is string && data.updated_by.size() > 0 &&
+        data.updated_at is timestamp &&
+        data.last_audit_event_id is string &&
+        data.last_audit_event_id.size() > 0;
+    }
+
+    function validCurrency(currency) {
+      return currency == 'YER' || currency == 'SAR' || currency == 'USD';
+    }
+
+    function validPriceLatest(latestId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'latest_key',
+          'history_event_id',
+          'brand_id',
+          'product_id',
+          'unit_id',
+          'unit_value',
+          'currency',
+          'price',
+          'source_invoice_id',
+          'changed_by',
+          'changed_by_name',
+          'changed_by_role',
+          'changed_at',
+          'version'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'latest_key',
+          'history_event_id',
+          'brand_id',
+          'product_id',
+          'unit_id',
+          'unit_value',
+          'currency',
+          'price',
+          'source_invoice_id',
+          'changed_by',
+          'changed_by_name',
+          'changed_by_role',
+          'changed_at',
+          'version'
+        ]) &&
+        data.id == latestId && data.latest_key == latestId &&
+        brandExists(data.brand_id) &&
+        data.product_id is string && data.product_id.size() > 0 &&
+        priceProductUnitMatches(data) &&
+        data.unit_id is string && data.unit_id.size() > 0 &&
+        data.unit_value is string && data.unit_value.size() > 0 &&
+        validCurrency(data.currency) &&
+        data.price is number && data.price >= 0 &&
+        data.source_invoice_id is string && data.source_invoice_id.size() > 0 &&
+        data.changed_by == request.auth.uid &&
+        data.changed_by_name is string &&
+        data.changed_by_role == role() &&
+        data.changed_at == request.time &&
+        data.history_event_id is string && data.history_event_id.size() > 0 &&
+        data.version is int && data.version > 0;
+    }
+
+    function priceUnitMatches(unit, unitId, unitValue) {
+      return unit is map &&
+        unit.unit_id == unitId && unit.display_value == unitValue;
+    }
+
+    function priceProductUnitMatches(data) {
+      let product = getAfter(
+        /databases/$(database)/documents/products/$(data.product_id)
+      ).data;
+      return product.brand_id == data.brand_id &&
+        product.units is list && product.units.size() > 0 &&
+        product.units.size() <= 3 &&
+        (priceUnitMatches(product.units[0], data.unit_id, data.unit_value) ||
+          (product.units.size() > 1 &&
+            priceUnitMatches(product.units[1], data.unit_id, data.unit_value)) ||
+          (product.units.size() > 2 &&
+            priceUnitMatches(product.units[2], data.unit_id, data.unit_value)));
+    }
+
+    function latestMatchesHistory(latestId, data) {
+      let history = getAfter(
+        /databases/$(database)/documents/product_price_history/$(data.history_event_id)
+      ).data;
+      return history.id == data.history_event_id &&
+        history.latest_key == latestId &&
+        history.brand_id == data.brand_id &&
+        history.product_id == data.product_id &&
+        history.unit_id == data.unit_id &&
+        history.unit_value == data.unit_value &&
+        history.currency == data.currency &&
+        history.price == data.price &&
+        history.source_invoice_id == data.source_invoice_id &&
+        history.changed_by == data.changed_by &&
+        history.changed_by_role == data.changed_by_role &&
+        history.changed_at == data.changed_at &&
+        history.version == data.version;
+    }
+
+    function validPriceHistory(historyId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'latest_key',
+          'brand_id',
+          'product_id',
+          'unit_id',
+          'unit_value',
+          'currency',
+          'price',
+          'previous_price',
+          'previous_source_invoice_id',
+          'source_invoice_id',
+          'changed_by',
+          'changed_by_name',
+          'changed_by_role',
+          'changed_at',
+          'version'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'latest_key',
+          'brand_id',
+          'product_id',
+          'unit_id',
+          'unit_value',
+          'currency',
+          'price',
+          'source_invoice_id',
+          'changed_by',
+          'changed_by_name',
+          'changed_by_role',
+          'changed_at',
+          'version'
+        ]) &&
+        data.id == historyId &&
+        data.latest_key is string && data.latest_key.size() > 0 &&
+        brandExists(data.brand_id) &&
+        data.product_id is string && data.product_id.size() > 0 &&
+        data.unit_id is string && data.unit_id.size() > 0 &&
+        data.unit_value is string && data.unit_value.size() > 0 &&
+        validCurrency(data.currency) &&
+        data.price is number && data.price >= 0 &&
+        (!data.keys().hasAny(['previous_price']) ||
+          (data.previous_price is number && data.previous_price >= 0)) &&
+        (!data.keys().hasAny(['previous_source_invoice_id']) ||
+          data.previous_source_invoice_id is string) &&
+        data.source_invoice_id is string && data.source_invoice_id.size() > 0 &&
+        data.changed_by == request.auth.uid &&
+        data.changed_by_name is string &&
+        data.changed_by_role == role() &&
+        data.changed_at == request.time &&
+        data.version is int && data.version > 0 &&
+        validPreviousPriceSnapshot(data);
+    }
+
+    function validPreviousPriceSnapshot(data) {
+      let latestPath =
+        /databases/$(database)/documents/product_price_latest/$(data.latest_key);
+      return exists(latestPath)
+        ? (data.keys().hasAll([
+              'previous_price',
+              'previous_source_invoice_id'
+            ]) &&
+            data.previous_price == get(latestPath).data.price &&
+            data.previous_source_invoice_id ==
+              get(latestPath).data.source_invoice_id)
+        : !data.keys().hasAny([
+            'previous_price',
+            'previous_source_invoice_id'
+          ]);
+    }
+
+    function historyMatchesLatest(historyId, data) {
+      let latest = getAfter(
+        /databases/$(database)/documents/product_price_latest/$(data.latest_key)
+      ).data;
+      return latest.history_event_id == historyId &&
+        latest.brand_id == data.brand_id &&
+        latest.product_id == data.product_id &&
+        latest.unit_id == data.unit_id &&
+        latest.unit_value == data.unit_value &&
+        latest.currency == data.currency &&
+        latest.price == data.price &&
+        latest.source_invoice_id == data.source_invoice_id &&
+        latest.changed_by == data.changed_by &&
+        latest.changed_by_role == data.changed_by_role &&
+        latest.changed_at == data.changed_at &&
+        latest.version == data.version;
     }
 
     match /users/{uid} {
@@ -52,6 +735,212 @@ service cloud.firestore {
       allow write: if adminUser();
     }
 
+    // Phase 1 catalog: product and group documents are deliberately price-free.
+    match /product_groups/{groupId} {
+      allow get, list: if mayReadCatalogDocument(resource.data);
+      allow create: if accountantUser() &&
+        validProductGroup(groupId, request.resource.data) &&
+        request.resource.data.active == true &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.created_at == request.time &&
+        request.resource.data.updated_at == request.time &&
+        linkedAuditMatches(
+          request.resource.data.last_audit_event_id,
+          'product_group',
+          groupId,
+          request.resource.data.brand_id,
+          'created'
+        );
+      allow update: if accountantUser() &&
+        validProductGroup(groupId, request.resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name',
+          'normalized_name',
+          'legacy_code',
+          'updated_by',
+          'updated_by_name',
+          'updated_at',
+          'last_audit_event_id'
+        ]) &&
+        request.resource.data.last_audit_event_id !=
+          resource.data.last_audit_event_id &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.updated_at == request.time &&
+        linkedAuditMatches(
+          request.resource.data.last_audit_event_id,
+          'product_group',
+          groupId,
+          request.resource.data.brand_id,
+          'updated'
+        );
+      allow delete: if false;
+    }
+
+    match /products/{productId} {
+      allow get, list: if mayReadCatalogDocument(resource.data);
+      allow create: if accountantUser() &&
+        validProduct(productId, request.resource.data) &&
+        request.resource.data.active == true &&
+        request.resource.data.version == 1 &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.created_at == request.time &&
+        request.resource.data.updated_at == request.time &&
+        linkedAuditMatches(
+          request.resource.data.last_audit_event_id,
+          'product',
+          productId,
+          request.resource.data.brand_id,
+          'created'
+        );
+      allow update: if accountantUser() &&
+        validProduct(productId, request.resource.data) &&
+        validProductArchiveTransition() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'group_id',
+          'name',
+          'normalized_name',
+          'legacy_code',
+          'units',
+          'primary_unit_id',
+          'active',
+          'version',
+          'name_unique_key_id',
+          'legacy_code_unique_key_id',
+          'source_metadata',
+          'updated_by',
+          'updated_by_name',
+          'updated_at',
+          'last_audit_event_id',
+          'archived_by',
+          'archived_by_name',
+          'archived_at'
+        ]) &&
+        request.resource.data.last_audit_event_id !=
+          resource.data.last_audit_event_id &&
+        request.resource.data.version == resource.data.version + 1 &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.updated_at == request.time &&
+        linkedAuditMatches(
+          request.resource.data.last_audit_event_id,
+          'product',
+          productId,
+          request.resource.data.brand_id,
+          productMutationAction()
+        );
+      allow delete: if false;
+    }
+
+    // Deterministic, permanently reserved keys make duplicate prevention safe
+    // under concurrent catalog writes. Product and key writes must share a batch
+    // or transaction, as checked with getAfter().
+    match /product_unique_keys/{keyId} {
+      allow read: if accountantUser();
+      allow create: if accountantUser() &&
+        validUniqueKey(keyId, request.resource.data) &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.created_at == request.time &&
+        request.resource.data.updated_at == request.time &&
+        uniqueKeyReferencesProduct(keyId, request.resource.data);
+      allow update: if accountantUser() &&
+        validUniqueKey(keyId, request.resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'active',
+          'updated_by',
+          'updated_at'
+        ]) &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.updated_at == request.time &&
+        uniqueKeyReferencesProduct(keyId, request.resource.data);
+      allow delete: if false;
+    }
+
+    match /product_audit_events/{eventId} {
+      allow read: if catalogSupervisor();
+      allow create: if accountantUser() &&
+        validAuditEvent(eventId, request.resource.data) &&
+        auditTargetPointsBack(eventId, request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /product_accounting_profiles/{profileId} {
+      allow read: if accountantUser() || adminUser();
+      allow create: if accountantUser() &&
+        validAccountingProfile(profileId, request.resource.data) &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.created_at == request.time &&
+        request.resource.data.updated_at == request.time &&
+        linkedAuditMatches(
+          request.resource.data.last_audit_event_id,
+          'product_accounting_profile',
+          profileId,
+          request.resource.data.brand_id,
+          'created'
+        );
+      allow update: if accountantUser() &&
+        validAccountingProfile(profileId, request.resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'accounting_reference',
+          'sync_state',
+          'notes',
+          'updated_by',
+          'updated_at',
+          'last_audit_event_id'
+        ]) &&
+        request.resource.data.last_audit_event_id !=
+          resource.data.last_audit_event_id &&
+        request.resource.data.updated_by == request.auth.uid &&
+        request.resource.data.updated_at == request.time &&
+        linkedAuditMatches(
+          request.resource.data.last_audit_event_id,
+          'product_accounting_profile',
+          profileId,
+          request.resource.data.brand_id,
+          'updated'
+        );
+      allow delete: if false;
+    }
+
+    // Price memory is physically separate from manager-readable catalog data.
+    // Every latest-price write must atomically append its immutable history row.
+    match /product_price_latest/{latestId} {
+      allow get, list: if protectedPriceUser();
+      allow create: if protectedPriceWriter() &&
+        validPriceLatest(latestId, request.resource.data) &&
+        request.resource.data.version == 1 &&
+        latestMatchesHistory(latestId, request.resource.data);
+      allow update: if protectedPriceWriter() &&
+        validPriceLatest(latestId, request.resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'history_event_id',
+          'unit_value',
+          'price',
+          'source_invoice_id',
+          'changed_by',
+          'changed_by_name',
+          'changed_by_role',
+          'changed_at',
+          'version'
+        ]) &&
+        request.resource.data.history_event_id != resource.data.history_event_id &&
+        request.resource.data.version == resource.data.version + 1 &&
+        latestMatchesHistory(latestId, request.resource.data);
+      allow delete: if false;
+    }
+
+    match /product_price_history/{historyId} {
+      allow get, list: if protectedPriceUser();
+      allow create: if protectedPriceWriter() &&
+        validPriceHistory(historyId, request.resource.data) &&
+        historyMatchesLatest(historyId, request.resource.data);
+      allow update, delete: if false;
+    }
+
+    // Existing application collections retain their current permissions in
+    // Phase 1. Their schema/workflow changes belong to later approved phases.
     match /transactions/{document=**} {
       allow read, write: if operationalUser();
     }

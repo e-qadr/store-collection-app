@@ -56,6 +56,11 @@ server/hostinger/upload_invoice.config.php
 node_modules/
 *.zip
 
+# Local legacy catalog source files and generated previews
+*.xls
+*.xlsx
+legacy_catalog_previews/
+
 # Firebase Admin service-account credentials (client google-services.json is not a secret key)
 **/*service-account*.json
 **/*service_account*.json

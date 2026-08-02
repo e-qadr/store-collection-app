@@ -10,6 +10,7 @@ import 'package:store_collection_app/screens/dashboards/collector_dashboard.dart
 import 'package:store_collection_app/screens/dashboards/manager_dashboard.dart';
 import 'package:store_collection_app/screens/consumables/consumable_requests_dashboard.dart';
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
+import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
@@ -96,6 +97,23 @@ class SystemSelectionScreen extends StatelessWidget {
                       color: AppTheme.collectorColor,
                       onTap: () => _openCollectionSystem(context),
                     ),
+                    if (role == UserRole.accountant) ...[
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'دليل المواد والمنتجات',
+                        subtitle:
+                            'إدارة المنتجات حسب العلامة والمجموعة وأرشفتها ومراجعة سجل التغييرات',
+                        icon: Icons.inventory_2_rounded,
+                        color: AppTheme.accountantColor,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                const ProductCatalogManagementScreen(),
+                          ),
+                        ),
+                      ),
+                    ],
                     if (role != UserRole.admin) ...[
                       const SizedBox(height: 12),
                       ActionCard(
