@@ -9,6 +9,7 @@ class NotificationService {
   static const consumableRequestsModule = 'consumable_requests';
   static const cashExpenseRequestsModule = 'cash_expense_requests';
   static const interBranchInvoicesModule = 'inter_branch_invoices';
+  static const purchaseInvoicesModule = 'purchase_invoices';
 
   Stream<QuerySnapshot<Map<String, dynamic>>> getCurrentUserNotifications() {
     final uid = FirebaseAuth.instance.currentUser?.uid;

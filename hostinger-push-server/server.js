@@ -8,12 +8,20 @@ const {
   INTER_BRANCH_JSON_LIMIT,
   safeJsonErrorHandler,
 } = require("./inter-branch-invoice-commands");
+const {
+  createPurchaseInvoiceCommandRouter,
+  PURCHASE_JSON_LIMIT,
+} = require("./purchase-invoice-commands");
 
 const app = express();
 app.set("trust proxy", 1);
 app.use(
     "/v1/inter-branch-invoices",
     express.json({limit: INTER_BRANCH_JSON_LIMIT}),
+);
+app.use(
+    "/v1/purchase-invoices",
+    express.json({limit: PURCHASE_JSON_LIMIT}),
 );
 app.use(express.json({limit: "16kb"}));
 const port = Number(process.env.PORT || 3000);
@@ -94,6 +102,7 @@ function notificationDataPayload(reference, notification, title, body) {
     consumable_request_id: stringValue(notification.consumable_request_id),
     cash_expense_request_id: stringValue(notification.cash_expense_request_id),
     inter_branch_invoice_id: stringValue(notification.inter_branch_invoice_id),
+    purchase_invoice_id: stringValue(notification.purchase_invoice_id),
   };
 }
 
@@ -144,6 +153,10 @@ if (firestore) {
     passwordResetContinueUrl: process.env.PASSWORD_RESET_CONTINUE_URL,
   }));
   app.use("/v1", createInterBranchInvoiceCommandRouter({
+    admin,
+    firestore,
+  }));
+  app.use("/v1", createPurchaseInvoiceCommandRouter({
     admin,
     firestore,
   }));

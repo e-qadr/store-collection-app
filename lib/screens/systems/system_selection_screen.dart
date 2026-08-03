@@ -11,6 +11,7 @@ import 'package:store_collection_app/screens/dashboards/manager_dashboard.dart';
 import 'package:store_collection_app/screens/consumables/consumable_requests_dashboard.dart';
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
 import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_invoices_dashboard.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
@@ -123,6 +124,17 @@ class SystemSelectionScreen extends StatelessWidget {
                       color: const Color(0xFF0277BD),
                       onTap: () => _openInterBranchInvoicesSystem(context),
                     ),
+                    if (_hasPurchaseRole) ...[
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'فواتير المشتريات',
+                        subtitle:
+                            'إنشاء فاتورة شراء، استلام الكميات، اعتماد الأسعار والترحيل المحاسبي',
+                        icon: Icons.shopping_cart_checkout_rounded,
+                        color: const Color(0xFF00695C),
+                        onTap: () => _openPurchaseInvoicesSystem(context),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     ActionCard(
                       title: 'طلب استهلاك منتج للعرض',
@@ -231,6 +243,28 @@ class SystemSelectionScreen extends StatelessWidget {
       ),
     );
   }
+
+  void _openPurchaseInvoicesSystem(BuildContext context) {
+    if (!_hasPurchaseRole) return;
+    final id = branchId?.trim() ?? '';
+    if (role == UserRole.manager && id.isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PurchaseInvoicesDashboard(
+          role: role,
+          branchId: id.isEmpty ? null : id,
+          branchName: role == UserRole.manager ? branchName : 'جميع الفروع',
+        ),
+      ),
+    );
+  }
+
+  bool get _hasPurchaseRole => const {
+    UserRole.manager,
+    UserRole.collector,
+    UserRole.accountant,
+  }.contains(role);
 
   void _openConsumableRequestsSystem(BuildContext context) {
     if (role == UserRole.admin) return;

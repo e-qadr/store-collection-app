@@ -6,6 +6,7 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/cash_expenses/cash_expense_details_screen.dart';
 import 'package:store_collection_app/screens/consumables/consumable_request_details_screen.dart';
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoice_details_screen.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_details_screen.dart';
 import 'package:store_collection_app/screens/transactions/transaction_details_screen.dart';
 import 'package:store_collection_app/services/device_notification_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
@@ -225,6 +226,12 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     if (module == NotificationService.interBranchInvoicesModule ||
         collection == NotificationService.interBranchInvoicesModule) {
       await _openInterBranchInvoice(data);
+      return;
+    }
+
+    if (module == NotificationService.purchaseInvoicesModule ||
+        collection == NotificationService.purchaseInvoicesModule) {
+      await _openPurchaseInvoice(data);
     }
   }
 
@@ -297,6 +304,23 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           role: targetContext.role,
           branchId: targetContext.branchId,
           branchName: targetContext.branchName,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPurchaseInvoice(Map<String, dynamic> data) async {
+    final invoiceId = _targetId(data, 'purchase_invoice_id');
+    if (invoiceId.isEmpty) return;
+    final targetContext = await _loadTargetContext(data);
+    if (!mounted || targetContext == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PurchaseInvoiceDetailsScreen(
+          invoiceId: invoiceId,
+          role: targetContext.role,
+          branchId: targetContext.branchId,
         ),
       ),
     );

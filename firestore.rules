@@ -734,6 +734,353 @@ service cloud.firestore {
         latest.version == data.version;
     }
 
+    function knownPurchaseUser() {
+      return operationalUser() &&
+        (role() == 'manager' || role() == 'collector' ||
+          role() == 'accountant' || role() == 'admin');
+    }
+
+    function purchaseSupervisor() {
+      return knownPurchaseUser() &&
+        (role() == 'collector' || role() == 'accountant' || role() == 'admin');
+    }
+
+    function purchaseActorBranchId() {
+      return profile().get('branchId', '');
+    }
+
+    function purchaseStatus(value) {
+      return value == 'pendingReceiverReview' ||
+        value == 'pendingPriceEntry' ||
+        value == 'pendingAccountingEntry' ||
+        value == 'postedToAccounting';
+    }
+
+    function validPurchaseHistoryEvent(event) {
+      return event is map && event.keys().hasOnly([
+          'action',
+          'message',
+          'actor_id',
+          'actor_name',
+          'actor_role',
+          'timestamp'
+        ]) &&
+        event.action is string && event.action.size() > 0 &&
+        event.message is string && event.message.size() > 0 &&
+        event.actor_id is string && event.actor_id.size() > 0 &&
+        event.actor_name is string &&
+        (event.actor_role == 'manager' || event.actor_role == 'collector' ||
+          event.actor_role == 'accountant') &&
+        event.timestamp is timestamp;
+    }
+
+    function validPurchaseHistory(events) {
+      let count = events.size();
+      return events is list && count > 0 && count <= 8 &&
+        validPurchaseHistoryEvent(events[0]) &&
+        (count < 2 || validPurchaseHistoryEvent(events[1])) &&
+        (count < 3 || validPurchaseHistoryEvent(events[2])) &&
+        (count < 4 || validPurchaseHistoryEvent(events[3])) &&
+        (count < 5 || validPurchaseHistoryEvent(events[4])) &&
+        (count < 6 || validPurchaseHistoryEvent(events[5])) &&
+        (count < 7 || validPurchaseHistoryEvent(events[6])) &&
+        (count < 8 || validPurchaseHistoryEvent(events[7]));
+    }
+
+    function validPurchaseHeader(invoiceId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'schema_version',
+          'workflow_version',
+          'workflow_identity',
+          'status',
+          'revision',
+          'purchase_number',
+          'receiving_branch_id',
+          'receiving_branch_name',
+          'receiving_brand_id',
+          'branch_ids',
+          'item_count',
+          'item_digest',
+          'currency',
+          'supplier_name',
+          'supplier_invoice_number',
+          'supplier_invoice_date',
+          'general_manager_notes',
+          'receiver_notes',
+          'created_by',
+          'created_by_name',
+          'created_by_role',
+          'created_at',
+          'receipt_confirmed_by',
+          'receipt_confirmed_by_name',
+          'receipt_confirmed_at',
+          'posted_by',
+          'posted_by_name',
+          'posted_at',
+          'posted_with_unresolved_override',
+          'last_updated',
+          'history'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'schema_version',
+          'workflow_version',
+          'workflow_identity',
+          'status',
+          'revision',
+          'purchase_number',
+          'receiving_branch_id',
+          'receiving_branch_name',
+          'receiving_brand_id',
+          'branch_ids',
+          'item_count',
+          'item_digest',
+          'currency',
+          'created_by',
+          'created_by_name',
+          'created_by_role',
+          'created_at',
+          'last_updated',
+          'history'
+        ]) &&
+        data.id == invoiceId &&
+        data.schema_version == 1 && data.workflow_version == 1 &&
+        data.workflow_identity == 'purchase_invoice_v1' &&
+        purchaseStatus(data.status) &&
+        data.revision is int && data.revision > 0 &&
+        data.purchase_number is string && data.purchase_number.size() > 0 &&
+        data.receiving_branch_id is string &&
+        data.receiving_branch_id.size() > 0 &&
+        data.receiving_branch_name is string &&
+        data.receiving_brand_id is string && data.receiving_brand_id.size() > 0 &&
+        data.branch_ids is list && data.branch_ids.size() == 1 &&
+        data.branch_ids[0] == data.receiving_branch_id &&
+        data.item_count is int && data.item_count > 0 && data.item_count <= 50 &&
+        data.item_digest is string && data.item_digest.matches('^[a-f0-9]{64}$') &&
+        validCurrency(data.currency) &&
+        (!data.keys().hasAny(['supplier_name']) || data.supplier_name is string) &&
+        (!data.keys().hasAny(['supplier_invoice_number']) ||
+          data.supplier_invoice_number is string) &&
+        (!data.keys().hasAny(['supplier_invoice_date']) ||
+          (data.supplier_invoice_date is string &&
+            data.supplier_invoice_date.matches('^\\d{4}-\\d{2}-\\d{2}$'))) &&
+        (!data.keys().hasAny(['general_manager_notes']) ||
+          data.general_manager_notes is string) &&
+        (!data.keys().hasAny(['receiver_notes']) || data.receiver_notes is string) &&
+        data.created_by is string && data.created_by.size() > 0 &&
+        data.created_by_name is string && data.created_by_role == 'collector' &&
+        data.created_at is timestamp && data.last_updated is timestamp &&
+        (!data.keys().hasAny(['receipt_confirmed_by']) ||
+          (data.receipt_confirmed_by is string &&
+            data.receipt_confirmed_by_name is string &&
+            data.receipt_confirmed_at is timestamp)) &&
+        (!data.keys().hasAny(['posted_by']) ||
+          (data.posted_by is string && data.posted_by_name is string &&
+            data.posted_at is timestamp)) &&
+        (!data.keys().hasAny(['posted_with_unresolved_override']) ||
+          data.posted_with_unresolved_override == true) &&
+        validPurchaseHistory(data.history);
+    }
+
+    function mayGetPurchaseInvoice(invoiceId, data) {
+      return validPurchaseHeader(invoiceId, data) && knownPurchaseUser() &&
+        mayReadPurchaseBranch(data);
+    }
+
+    function mayReadPurchaseBranch(data) {
+      return purchaseSupervisor() ||
+        (role() == 'manager' &&
+          purchaseActorBranchId() == data.receiving_branch_id);
+    }
+
+    function mayListPurchaseInvoice(data) {
+      // List rules must be provable from the query constraints. Strict closed
+      // schema validation remains on direct reads, and every write is performed
+      // by the backend after applying the same closed schema.
+      return knownPurchaseUser() &&
+        ((role() == 'manager' &&
+            purchaseActorBranchId() == data.receiving_branch_id) ||
+          (role() == 'collector' && data.status == 'pendingPriceEntry') ||
+          (role() == 'accountant' && data.status == 'pendingAccountingEntry'));
+    }
+
+    function purchaseReviewStatus(value) {
+      return value == 'not_required' || value == 'pending_review' ||
+        value == 'clarification_requested' || value == 'linked_material' ||
+        value == 'newly_created_material' || value == 'synchronized';
+    }
+
+    function validPurchaseParentLink(invoiceId, invoice) {
+      return invoice.id == invoiceId && invoice.schema_version == 1 &&
+        invoice.workflow_version == 1 &&
+        invoice.workflow_identity == 'purchase_invoice_v1' &&
+        purchaseStatus(invoice.status) && invoice.revision is int &&
+        invoice.revision > 0 && invoice.receiving_branch_id is string &&
+        invoice.receiving_brand_id is string && invoice.branch_ids is list &&
+        invoice.branch_ids.size() == 1 &&
+        invoice.branch_ids[0] == invoice.receiving_branch_id;
+    }
+
+    function validPurchaseItem(invoiceId, itemId, item) {
+      let invoice = get(
+        /databases/$(database)/documents/purchase_invoices/$(invoiceId)
+      ).data;
+      return item.keys().hasOnly([
+          'id',
+          'invoice_id',
+          'schema_version',
+          'workflow_version',
+          'workflow_identity',
+          'invoice_revision',
+          'branch_ids',
+          'receiving_branch_id',
+          'receiving_brand_id',
+          'line_number',
+          'item_id',
+          'source_type',
+          'original_material_name',
+          'original_group_text',
+          'original_unit_text',
+          'canonical_product_id',
+          'canonical_product_version',
+          'canonical_product_name',
+          'canonical_product_legacy_code',
+          'canonical_group_id',
+          'canonical_group_name',
+          'canonical_group_legacy_code',
+          'canonical_unit_id',
+          'canonical_unit_value',
+          'canonical_unit_raw_value',
+          'review_task_id',
+          'review_status',
+          'ordered_quantity',
+          'line_notes',
+          'received_quantity',
+          'damaged_quantity',
+          'missing_quantity',
+          'discrepancy_notes'
+        ]) &&
+        item.keys().hasAll([
+          'id',
+          'invoice_id',
+          'schema_version',
+          'workflow_version',
+          'workflow_identity',
+          'invoice_revision',
+          'branch_ids',
+          'receiving_branch_id',
+          'receiving_brand_id',
+          'line_number',
+          'item_id',
+          'source_type',
+          'original_material_name',
+          'original_group_text',
+          'original_unit_text',
+          'review_status',
+          'ordered_quantity'
+        ]) &&
+        validPurchaseParentLink(invoiceId, invoice) &&
+        item.id == itemId && item.item_id == itemId && item.invoice_id == invoiceId &&
+        item.schema_version == 1 && item.workflow_version == 1 &&
+        item.workflow_identity == 'purchase_invoice_v1' &&
+        item.invoice_revision is int && item.invoice_revision > 0 &&
+        item.invoice_revision <= invoice.revision &&
+        item.branch_ids == invoice.branch_ids &&
+        item.receiving_branch_id == invoice.receiving_branch_id &&
+        item.receiving_brand_id == invoice.receiving_brand_id &&
+        item.line_number is int && item.line_number > 0 &&
+        (item.source_type == 'catalog' || item.source_type == 'unmatched') &&
+        item.original_material_name is string &&
+        item.original_material_name.size() > 0 &&
+        item.original_group_text is string &&
+        item.original_unit_text is string && item.original_unit_text.size() > 0 &&
+        purchaseReviewStatus(item.review_status) &&
+        item.ordered_quantity is number && item.ordered_quantity > 0 &&
+        (!item.keys().hasAny(['received_quantity']) ||
+          (item.received_quantity is number && item.received_quantity >= 0)) &&
+        (!item.keys().hasAny(['damaged_quantity']) ||
+          (item.damaged_quantity is number && item.damaged_quantity >= 0)) &&
+        (!item.keys().hasAny(['missing_quantity']) ||
+          (item.missing_quantity is number && item.missing_quantity >= 0)) &&
+        (!item.keys().hasAny(['line_notes']) || item.line_notes is string) &&
+        (!item.keys().hasAny(['discrepancy_notes']) ||
+          item.discrepancy_notes is string) &&
+        (item.source_type == 'catalog'
+          ? (item.review_status == 'not_required' &&
+              item.canonical_product_id is string &&
+              item.canonical_product_id.size() > 0 &&
+              item.canonical_unit_id is string &&
+              item.canonical_unit_id.size() > 0 &&
+              !item.keys().hasAny(['review_task_id']))
+          : (item.review_task_id is string && item.review_task_id.size() > 0));
+    }
+
+    function mayReadPurchaseItem(invoiceId, itemId, item) {
+      let invoice = get(
+        /databases/$(database)/documents/purchase_invoices/$(invoiceId)
+      ).data;
+      return validPurchaseItem(invoiceId, itemId, item) &&
+        knownPurchaseUser() && mayReadPurchaseBranch(invoice);
+    }
+
+    function mayListPurchaseItem(invoiceId) {
+      let invoice = get(
+        /databases/$(database)/documents/purchase_invoices/$(invoiceId)
+      ).data;
+      return mayGetPurchaseInvoice(invoiceId, invoice);
+    }
+
+    function validPurchaseEvent(eventId, data) {
+      let invoice = get(
+        /databases/$(database)/documents/purchase_invoices/$(data.invoice_id)
+      ).data;
+      return data.keys().hasOnly([
+          'id',
+          'invoice_id',
+          'workflow_version',
+          'workflow_identity',
+          'receiving_branch_id',
+          'branch_ids',
+          'revision',
+          'action',
+          'message',
+          'actor_id',
+          'actor_name',
+          'actor_role',
+          'created_at'
+        ]) &&
+        data.id == eventId && data.invoice_id is string &&
+        validPurchaseParentLink(data.invoice_id, invoice) &&
+        data.workflow_version == 1 &&
+        data.workflow_identity == 'purchase_invoice_v1' &&
+        data.receiving_branch_id == invoice.receiving_branch_id &&
+        data.branch_ids == invoice.branch_ids &&
+        data.revision is int && data.revision > 0 &&
+        data.action is string && data.action.size() > 0 &&
+        data.message is string && data.message.size() > 0 &&
+        data.actor_id is string && data.actor_id.size() > 0 &&
+        data.actor_name is string &&
+        (data.actor_role == 'manager' || data.actor_role == 'collector' ||
+          data.actor_role == 'accountant') &&
+        data.created_at is timestamp;
+    }
+
+    function mayReadPurchaseEvent(eventId, data) {
+      let invoice = get(
+        /databases/$(database)/documents/purchase_invoices/$(data.invoice_id)
+      ).data;
+      return validPurchaseEvent(eventId, data) &&
+        knownPurchaseUser() && mayReadPurchaseBranch(invoice);
+    }
+
+    function mayListPurchaseEvent(data) {
+      return knownPurchaseUser() &&
+        (purchaseSupervisor() ||
+          (role() == 'manager' &&
+            purchaseActorBranchId() == data.receiving_branch_id));
+    }
+
     function knownInterBranchUser() {
       return operationalUser() &&
         (role() == 'manager' || role() == 'collector' ||
@@ -1672,6 +2019,47 @@ service cloud.firestore {
       allow update: if legacyCounterOwner(branchId) &&
         validLegacyCounterUpdate(branchId);
       allow delete: if false;
+    }
+
+    // Phase 3 purchase invoices use independent public documents and backend-only writes.
+    match /purchase_invoices/{invoiceId} {
+      allow get: if mayGetPurchaseInvoice(invoiceId, resource.data);
+      allow list: if mayListPurchaseInvoice(resource.data);
+      allow create, update, delete: if false;
+
+      match /items/{itemId} {
+        allow get: if mayReadPurchaseItem(invoiceId, itemId, resource.data);
+        allow list: if mayListPurchaseItem(invoiceId);
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /purchase_invoice_events/{eventId} {
+      allow get: if mayReadPurchaseEvent(eventId, resource.data);
+      allow list: if mayListPurchaseEvent(resource.data);
+      allow create, update, delete: if false;
+    }
+
+    // Prices, provisional prices, accounting references/notes, and override
+    // reasons live only here. Managers and employees cannot read this document.
+    match /purchase_invoice_prices/{invoiceId} {
+      allow get, list: if protectedPriceUser();
+      allow create, update, delete: if false;
+    }
+
+    // The accountant review record contains clarification and accounting-only
+    // metadata. Managers see only the bounded public review_status on items.
+    match /product_review_tasks/{taskId} {
+      allow get, list: if accountantUser();
+      allow create, update, delete: if false;
+    }
+
+    match /purchase_invoice_commands/{commandId} {
+      allow read, write: if false;
+    }
+
+    match /purchase_invoice_unique_keys/{keyId} {
+      allow read, write: if false;
     }
   }
 }
