@@ -370,6 +370,7 @@ class LegacyCatalogRecord {
       'raw_primary_unit': rawPrimaryUnit,
       'raw_unit_2': rawUnit2,
       'raw_unit_3': rawUnit3,
+      'source_fingerprint': fingerprint,
       'original_group_missing': originalGroupMissing,
       'fallback_system_group_assigned': fallbackAssigned,
       if (fallbackAssigned)

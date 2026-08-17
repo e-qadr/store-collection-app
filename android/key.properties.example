@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties. The copied file is ignored by Git.
+# Never put real passwords or a real keystore path in this example.
+storeFile=keystore/upload-keystore.jks
+storePassword=REPLACE_WITH_LOCAL_STORE_PASSWORD
+keyAlias=REPLACE_WITH_LOCAL_KEY_ALIAS
+keyPassword=REPLACE_WITH_LOCAL_KEY_PASSWORD

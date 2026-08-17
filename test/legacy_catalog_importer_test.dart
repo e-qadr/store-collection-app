@@ -117,6 +117,7 @@ void main() {
           'raw_primary_unit': 'حبه',
           'raw_unit_2': 'علبه',
           'raw_unit_3': 'اوقيه',
+          'source_fingerprint': record.fingerprint,
           'original_group_missing': false,
           'fallback_system_group_assigned': false,
           'import_id': 'preview-1',

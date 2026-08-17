@@ -1107,6 +1107,7 @@ test('a full three-unit legacy-coded import product stays under the rule limit',
         raw_primary_unit: 'حبه',
         raw_unit_2: 'علبة',
         raw_unit_3: 'تولة',
+        source_fingerprint: 'full-import-source-fingerprint',
         import_id: 'full-import-preview',
         original_group_missing: false,
         fallback_system_group_assigned: false,
@@ -1597,6 +1598,30 @@ test('protected roles read price memory but every client write is backend-only',
       'product_price_history',
       'history-a',
     )));
+  }
+});
+
+test('administrative import and migration state is invisible to every client role', async () => {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await setDoc(doc(database, 'catalog_import_manifests', 'run-a'), {
+      status: 'completed',
+    });
+    await setDoc(doc(database, 'legacy_price_migration_run_state', 'run-b'), {
+      status: 'planned',
+    });
+  });
+
+  for (const uid of [
+    'manager-a', 'employee-a', 'collector-user', 'accountant-user', 'admin-user',
+  ]) {
+    const database = databaseFor(uid);
+    await assertFails(getDoc(doc(database, 'catalog_import_manifests', 'run-a')));
+    await assertFails(getDocs(collection(database, 'catalog_import_run_state')));
+    await assertFails(getDoc(doc(database, 'legacy_price_migration_run_state', 'run-b')));
+    await assertFails(setDoc(doc(database, 'catalog_import_manifests', `write-${uid}`), {
+      status: 'forbidden',
+    }));
   }
 });
 

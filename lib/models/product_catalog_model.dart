@@ -48,6 +48,7 @@ class ProductSourceMetadataFields {
   static const fallbackSystemGroupAssigned = 'fallback_system_group_assigned';
   static const fallbackSystemGroupKey = 'fallback_system_group_key';
   static const fallbackSystemGroupId = 'fallback_system_group_id';
+  static const sourceFingerprint = 'source_fingerprint';
 }
 
 class CatalogActor {

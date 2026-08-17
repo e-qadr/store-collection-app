@@ -34,11 +34,12 @@ class FakeDocumentReference {
 }
 
 class FakeQuery {
-  constructor(firestore, collectionName, filters = [], orderBys = []) {
+  constructor(firestore, collectionName, filters = [], orderBys = [], collectionGroup = false) {
     this.firestore = firestore;
     this.collectionName = collectionName;
     this.filters = filters;
     this.orderBys = orderBys;
+    this.collectionGroup = collectionGroup;
     this.kind = "query";
   }
 
@@ -49,6 +50,7 @@ class FakeQuery {
         this.collectionName,
         [...this.filters, {field, value}],
         this.orderBys,
+        this.collectionGroup,
     );
   }
 
@@ -61,7 +63,12 @@ class FakeQuery {
         this.collectionName,
         this.filters,
         [...this.orderBys, {field, direction}],
+        this.collectionGroup,
     );
+  }
+
+  get() {
+    return Promise.resolve(this.firestore._querySnapshot(this));
   }
 }
 
@@ -131,6 +138,10 @@ class FakeFirestore {
     return new FakeCollectionReference(this, name);
   }
 
+  collectionGroup(name) {
+    return new FakeQuery(this, name, [], [], true);
+  }
+
   runTransaction(callback) {
     const run = this.transactionTail.then(async () => {
       const transaction = new FakeTransaction(this);
@@ -167,9 +178,16 @@ class FakeFirestore {
 
   _querySnapshot(query) {
     const matches = [];
-    for (const [id, value] of this._collection(query.collectionName)) {
-      if (query.filters.every((filter) => value?.[filter.field] === filter.value)) {
-        matches.push({id, value});
+    const collections = query.collectionGroup ?
+      [...this.collections.entries()].filter(([name]) =>
+        name === query.collectionName || name.endsWith(`/${query.collectionName}`)) :
+      [[query.collectionName, this._collection(query.collectionName)]];
+    for (const [collectionName, collection] of collections) {
+      for (const [id, value] of collection) {
+        if (query.filters.every((filter) =>
+          valueAtFieldPath(value, filter.field) === filter.value)) {
+          matches.push({id, value, collectionName});
+        }
       }
     }
     matches.sort((left, right) => {
@@ -181,12 +199,18 @@ class FakeFirestore {
       }
       return left.id.localeCompare(right.id);
     });
-    const documents = matches.map(({id, value}) => {
-      const reference = new FakeDocumentReference(this, query.collectionName, id);
+    const documents = matches.map(({id, value, collectionName}) => {
+      const reference = new FakeDocumentReference(this, collectionName, id);
       return new FakeDocumentSnapshot(reference, value);
     });
     return {docs: documents, empty: documents.length === 0, size: documents.length};
   }
+}
+
+function valueAtFieldPath(value, fieldPath) {
+  return String(fieldPath).split(".").reduce(
+      (current, field) => current?.[field], value,
+  );
 }
 
 function fakeAdmin() {

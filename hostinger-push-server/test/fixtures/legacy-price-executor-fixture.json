@@ -1,0 +1,122 @@
+{
+  "entries": [
+    {
+      "invoice_id": "legacy-ready",
+      "header": {
+        "id": "legacy-ready",
+        "path": "inter_branch_invoices/legacy-ready",
+        "data": {
+          "id": "legacy-ready",
+          "workflow_version": 1,
+          "status": "postedToAccounting",
+          "sending_branch_id": "branch-a",
+          "receiving_branch_id": "branch-b",
+          "currency": "YER",
+          "total_price": 48,
+          "accounting_reference": "FIXTURE-100"
+        }
+      },
+      "items": [
+        {
+          "id": "item-a",
+          "path": "inter_branch_invoices/legacy-ready/items/item-a",
+          "data": {
+            "item_id": "item-a",
+            "name": "منتج أ",
+            "unit": "حبة",
+            "received_quantity": 2,
+            "unit_price": 10,
+            "total_price": 20
+          }
+        },
+        {
+          "id": "item-b",
+          "path": "inter_branch_invoices/legacy-ready/items/item-b",
+          "data": {
+            "item_id": "item-b",
+            "name": "منتج ب",
+            "unit": "علبة",
+            "received_quantity": 2,
+            "unit_price": 14,
+            "total_price": 28
+          }
+        }
+      ],
+      "history": [
+        {
+          "id": "event-a",
+          "path": "inter_branch_invoice_events/event-a",
+          "data": {
+            "id": "event-a",
+            "invoice_id": "legacy-ready",
+            "action": "prices_entered_by_collector",
+            "actor_id": "collector-fixture",
+            "actor_role": "collector",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "changes": {"items_count": 2, "total_price": 48}
+          }
+        }
+      ],
+      "notifications": [
+        {
+          "id": "notification-a",
+          "path": "notifications/notification-a",
+          "data": {
+            "id": "notification-a",
+            "inter_branch_invoice_id": "legacy-ready",
+            "recipient_id": "accountant-fixture",
+            "unit_price": 10,
+            "message": "fixture"
+          }
+        }
+      ]
+    },
+    {
+      "invoice_id": "legacy-missing-currency",
+      "header": {
+        "id": "legacy-missing-currency",
+        "path": "inter_branch_invoices/legacy-missing-currency",
+        "data": {
+          "id": "legacy-missing-currency",
+          "workflow_version": 1,
+          "received_quantity": 1,
+          "unit_price": 5,
+          "total_price": 5
+        }
+      },
+      "items": [], "history": [], "notifications": []
+    },
+    {
+      "invoice_id": "legacy-malformed",
+      "header": {
+        "id": "legacy-malformed",
+        "path": "inter_branch_invoices/legacy-malformed",
+        "data": {
+          "id": "legacy-malformed",
+          "workflow_version": 1,
+          "currency": "USD",
+          "received_quantity": 1,
+          "unit_price": "not-a-number",
+          "total_price": 7
+        }
+      },
+      "items": [], "history": [], "notifications": []
+    },
+    {
+      "invoice_id": "legacy-conflict",
+      "header": {
+        "id": "legacy-conflict",
+        "path": "inter_branch_invoices/legacy-conflict",
+        "data": {
+          "id": "legacy-conflict",
+          "workflow_version": 1,
+          "currency": "SAR",
+          "received_quantity": 2,
+          "unit_price": 7,
+          "total_price": 99
+        }
+      },
+      "items": [], "history": [], "notifications": []
+    }
+  ]
+}

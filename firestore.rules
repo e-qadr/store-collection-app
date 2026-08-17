@@ -113,6 +113,7 @@ service cloud.firestore {
         'raw_primary_unit',
         'raw_unit_2',
         'raw_unit_3',
+        'source_fingerprint',
         'import_id',
         'original_group_missing',
         'fallback_system_group_assigned',
@@ -128,6 +129,7 @@ service cloud.firestore {
         metadata.get('raw_primary_unit', '') is string &&
         metadata.get('raw_unit_2', '') is string &&
         metadata.get('raw_unit_3', '') is string &&
+        metadata.get('source_fingerprint', '') is string &&
         metadata.get('import_id', '') is string &&
         metadata.get('original_group_missing', false) is bool &&
         metadata.get('fallback_system_group_assigned', false) is bool &&
@@ -1936,6 +1938,28 @@ service cloud.firestore {
     match /product_price_history/{historyId} {
       allow get, list: if protectedPriceUser();
       allow create, update, delete: if false;
+    }
+
+    // Local Admin SDK release tools own these operational records. Import and
+    // legacy-price migration manifests/checkpoints are never client data.
+    match /catalog_import_manifests/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /catalog_import_run_state/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /catalog_import_rollback_manifests/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /legacy_price_migration_manifests/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /legacy_price_migration_run_state/{document=**} {
+      allow read, write: if false;
     }
 
     // Existing application collections retain their current permissions in

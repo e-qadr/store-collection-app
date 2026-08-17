@@ -946,6 +946,7 @@ class ProductCatalogService {
       ProductSourceMetadataFields.fallbackSystemGroupAssigned,
       ProductSourceMetadataFields.fallbackSystemGroupKey,
       ProductSourceMetadataFields.fallbackSystemGroupId,
+      ProductSourceMetadataFields.sourceFingerprint,
     };
     final unsupportedFields = sourceMetadata.keys.toSet().difference(
       allowedSourceFields,
@@ -964,6 +965,7 @@ class ProductCatalogService {
     for (final field in const [
       ProductSourceMetadataFields.fallbackSystemGroupKey,
       ProductSourceMetadataFields.fallbackSystemGroupId,
+      ProductSourceMetadataFields.sourceFingerprint,
     ]) {
       if (sourceMetadata.containsKey(field) &&
           (sourceMetadata[field] is! String ||

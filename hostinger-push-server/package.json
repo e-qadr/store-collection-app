@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check password-management.js && node --check inter-branch-invoice-domain.js && node --check inter-branch-invoice-commands.js && node --check purchase-invoice-domain.js && node --check purchase-invoice-commands.js && node --check legacy-price-migration.js",
+    "check": "node --check server.js && node --check password-management.js && node --check inter-branch-invoice-domain.js && node --check inter-branch-invoice-commands.js && node --check purchase-invoice-domain.js && node --check purchase-invoice-commands.js && node --check legacy-price-migration.js && node --check catalog-import-executor.js && node --check legacy-price-migration-executor.js",
     "test": "node --test"
   },
   "dependencies": {

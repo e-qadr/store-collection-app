@@ -51,6 +51,13 @@ app.*.map.json
 !**/.env.*.example
 .vscode/*.local.json
 server/hostinger/upload_invoice.config.php
+android/key.properties
+android/keystore/
+android/release-signing/
+**/*.keystore
+**/*.jks
+hostinger-push-server/legacy-price-currency-map.json
+hostinger-push-server/*.migration.local.json
 
 # Server dependencies and deployment archives
 node_modules/
