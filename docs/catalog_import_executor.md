@@ -20,7 +20,7 @@ node hostinger-push-server/catalog-import-executor.js `
 ```
 
 For Eqlid use profile `eqlid_legacy_catalog`, brand document
-`WLMnMVT6u1H2VQ0qziJ3`, and exact name `اقليد`. Review every conflict and
+`WLMnMVT6u1H2VQ0qziJ3`, and exact name `إقليد`. Review every conflict and
 skipped/review row. Invalid rows, including missing primary units, are never
 created. A missing source group uses only the deterministic existing contract
 named exactly `غير مصنف`; its missing raw value and fallback reason remain in

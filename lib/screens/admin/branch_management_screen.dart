@@ -20,7 +20,6 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
 
   Future<void> _saveBranch({
     String? branchId,
-    String managerId = '',
     String oldBranchCode = '',
   }) async {
     final name = _branchNameController.text.trim();
@@ -74,7 +73,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           'brand_id': _selectedBrandId,
           'company_name': _selectedBrandName,
           'branch_code': branchCode,
-          'branch_manager_id': managerId,
+          if (branchId == null) 'branch_manager_id': null,
         }, SetOptions(merge: true));
         transaction.set(newCodeRef, {
           'branch_id': branchRef.id,
@@ -344,16 +343,11 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
     _selectedBrandName = data['company_name'];
     _showBranchDialog(
       branchId: branchId,
-      managerId: data['branch_manager_id'] ?? '',
       oldBranchCode: data['branch_code'] ?? '',
     );
   }
 
-  void _showBranchDialog({
-    String? branchId,
-    String managerId = '',
-    String oldBranchCode = '',
-  }) {
+  void _showBranchDialog({String? branchId, String oldBranchCode = ''}) {
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -444,11 +438,8 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
               child: const Text('إلغاء'),
             ),
             FilledButton.icon(
-              onPressed: () => _saveBranch(
-                branchId: branchId,
-                managerId: managerId,
-                oldBranchCode: oldBranchCode,
-              ),
+              onPressed: () =>
+                  _saveBranch(branchId: branchId, oldBranchCode: oldBranchCode),
               icon: const Icon(Icons.save_rounded, size: 18),
               label: const Text('حفظ بيانات الفرع'),
             ),
@@ -551,7 +542,9 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                       itemBuilder: (context, index) {
                         final doc = branches[index];
                         final data = doc.data() as Map<String, dynamic>;
-                        final managerId = data['branch_manager_id'] ?? '';
+                        final managerId = (data['branch_manager_id'] as String?)
+                            ?.trim();
+                        final hasManager = managerId?.isNotEmpty == true;
 
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
@@ -561,8 +554,10 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                             borderRadius: BorderRadius.circular(16),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
-                              onTap: () =>
-                                  _showAssignManagerDialog(doc.id, managerId),
+                              onTap: () => _showAssignManagerDialog(
+                                doc.id,
+                                managerId ?? '',
+                              ),
                               child: Padding(
                                 padding: const EdgeInsets.all(16),
                                 child: Row(
@@ -605,9 +600,9 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                             ),
                                           ),
                                           const SizedBox(height: 6),
-                                          managerId.isEmpty
+                                          !hasManager
                                               ? const Text(
-                                                  'لم يتم تعيين مدير للفرع',
+                                                  'لا يوجد مدير معيّن',
                                                   style: TextStyle(
                                                     color: Colors.red,
                                                     fontSize: 12,
@@ -618,7 +613,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                                   future: FirebaseFirestore
                                                       .instance
                                                       .collection('users')
-                                                      .doc(managerId)
+                                                      .doc(managerId!)
                                                       .get(),
                                                   builder: (context, userSnapshot) {
                                                     if (!userSnapshot.hasData) {
@@ -688,7 +683,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                           onPressed: () =>
                                               _showAssignManagerDialog(
                                                 doc.id,
-                                                managerId,
+                                                managerId ?? '',
                                               ),
                                         ),
                                         IconButton(

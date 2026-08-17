@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const http = require("node:http");
 const test = require("node:test");
 const express = require("express");
+const {FakeFirestore} = require("./support/fake-firestore");
 
 const {
   GENERIC_RESET_MESSAGE,
@@ -37,6 +38,87 @@ function fakeFirestore(role = "collector") {
       }),
     }),
   };
+}
+
+function managementAdmin() {
+  const authUsers = new Map();
+  let nextUid = 0;
+  const auth = {
+    verifyIdToken: async (token) => {
+      if (token !== "admin-token") throw new Error("Invalid token");
+      return {uid: "admin-user", auth_time: 1000};
+    },
+    createUser: async ({email, displayName, disabled}) => {
+      const uid = `created-${++nextUid}`;
+      authUsers.set(uid, {email, displayName, disabled});
+      return {uid};
+    },
+    updateUser: async (uid, updates) => {
+      authUsers.set(uid, {...(authUsers.get(uid) || {}), ...updates});
+      return {uid};
+    },
+    revokeRefreshTokens: async (uid) => {
+      authUsers.set(uid, {...(authUsers.get(uid) || {}), refreshTokensRevoked: true});
+    },
+    deleteUser: async (uid) => authUsers.delete(uid),
+  };
+  return {
+    admin: {
+      auth: () => auth,
+      firestore: {
+        FieldValue: {serverTimestamp: () => "server-time"},
+        Timestamp: {fromDate: (date) => date},
+      },
+    },
+    authUsers,
+  };
+}
+
+function managementFixture() {
+  const firestore = new FakeFirestore({
+    users: {
+      "admin-user": {role: "admin", isActive: true},
+      "manager-1": {role: "manager", isActive: true, branchId: null},
+      "manager-2": {role: "manager", isActive: true, branchId: "branch-a"},
+    },
+    branches: {
+      "branch-a": {id: "branch-a", branch_manager_id: "manager-2"},
+      "branch-b": {id: "branch-b", branch_manager_id: null},
+    },
+  });
+  const state = managementAdmin();
+  return {
+    firestore,
+    authUsers: state.authUsers,
+    router: createPasswordManagementRouter({
+      admin: state.admin,
+      firestore,
+      now: () => new Date("2026-08-17T00:00:00.000Z"),
+      randomBytes: () => Buffer.alloc(48, 7),
+    }),
+  };
+}
+
+async function postJson(baseUrl, path, body) {
+  return fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer admin-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+async function patchJson(baseUrl, path, body) {
+  return fetch(`${baseUrl}${path}`, {
+    method: "PATCH",
+    headers: {
+      authorization: "Bearer admin-token",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 }
 
 async function withServer(router, callback) {
@@ -122,4 +204,76 @@ test("forgot-password response is neutral even when Firebase rejects email", asy
     assert.equal(response.status, 200);
     assert.equal((await response.json()).message, GENERIC_RESET_MESSAGE);
   });
+});
+
+test("admins can create and edit users with no branch, including managers", async () => {
+  const {firestore, router} = managementFixture();
+  await withServer(router, async (baseUrl) => {
+    let response = await postJson(baseUrl, "/v1/admin/users", {
+      name: "Unassigned collector",
+      email: "collector@example.com",
+      role: "collector",
+    });
+    assert.equal(response.status, 201);
+    const collector = (await response.json()).user.uid;
+    assert.equal(firestore.document("users", collector).branchId, null);
+
+    response = await patchJson(baseUrl, `/v1/admin/users/${collector}`, {
+      role: "accountant",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(firestore.document("users", collector).role, "accountant");
+    assert.equal(firestore.document("users", collector).branchId, null);
+
+    response = await postJson(baseUrl, "/v1/admin/users", {
+      name: "Unassigned manager",
+      email: "manager@example.com",
+      role: "manager",
+    });
+    assert.equal(response.status, 201);
+    const manager = (await response.json()).user.uid;
+    assert.equal(firestore.document("users", manager).role, "manager");
+    assert.equal(firestore.document("users", manager).branchId, null);
+  });
+});
+
+test("manager assignment, reassignment, and removal keep both sides consistent", async () => {
+  const {firestore, router} = managementFixture();
+  await withServer(router, async (baseUrl) => {
+    let response = await postJson(baseUrl, "/v1/admin/branches/branch-b/manager", {
+      managerUid: "manager-1",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(firestore.document("branches", "branch-b").branch_manager_id, "manager-1");
+    assert.equal(firestore.document("users", "manager-1").branchId, "branch-b");
+
+    response = await postJson(baseUrl, "/v1/admin/branches/branch-a/manager", {
+      managerUid: "manager-1",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(firestore.document("branches", "branch-a").branch_manager_id, "manager-1");
+    assert.equal(firestore.document("branches", "branch-b").branch_manager_id, null);
+    assert.equal(firestore.document("users", "manager-1").branchId, "branch-a");
+    assert.equal(firestore.document("users", "manager-2").branchId, null);
+
+    response = await postJson(baseUrl, "/v1/admin/branches/branch-a/manager", {});
+    assert.equal(response.status, 200);
+    assert.equal(firestore.document("branches", "branch-a").branch_manager_id, null);
+    assert.equal(firestore.document("users", "manager-1").branchId, null);
+  });
+});
+
+test("deactivating an assigned manager clears stale branch references", async () => {
+  const {firestore, authUsers, router} = managementFixture();
+  await withServer(router, async (baseUrl) => {
+    const response = await patchJson(baseUrl, "/v1/admin/users/manager-2", {
+      isActive: false,
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.equal(firestore.document("users", "manager-2").isActive, false);
+  assert.equal(firestore.document("users", "manager-2").branchId, null);
+  assert.equal(firestore.document("branches", "branch-a").branch_manager_id, null);
+  assert.equal(authUsers.get("manager-2").disabled, true);
+  assert.equal(authUsers.get("manager-2").refreshTokensRevoked, true);
 });

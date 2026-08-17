@@ -520,7 +520,7 @@ emulator logs
 | Brand | Brand ID | Input |
 |---|---|---|
 | الأصالة | TlOswncJiWX7mwsf3U4e | C:\Users\E_QDR\Downloads\الاصناف مع الوحدات - الاصالة.xls |
-| اقليد | WLMnMVT6u1H2VQ0qziJ3 | C:\Users\E_QDR\Downloads\دليل المواد - فرع اقليد جبران.xls |
+| إقليد | WLMnMVT6u1H2VQ0qziJ3 | C:\Users\E_QDR\Downloads\دليل المواد - فرع اقليد جبران.xls |
 
 Dry-run facts:
 
@@ -615,7 +615,7 @@ Read-only Excel previews:
 
 ~~~powershell
 dart run tool/legacy_catalog_dry_run.dart --profile al_asalah_legacy_catalog --file "C:\Users\E_QDR\Downloads\الاصناف مع الوحدات - الاصالة.xls" --brand-id TlOswncJiWX7mwsf3U4e --brand-name "الأصالة" --details
-dart run tool/legacy_catalog_dry_run.dart --profile eqlid_legacy_catalog --file "C:\Users\E_QDR\Downloads\دليل المواد - فرع اقليد جبران.xls" --brand-id WLMnMVT6u1H2VQ0qziJ3 --brand-name "اقليد" --details
+dart run tool/legacy_catalog_dry_run.dart --profile eqlid_legacy_catalog --file "C:\Users\E_QDR\Downloads\دليل المواد - فرع اقليد جبران.xls" --brand-id WLMnMVT6u1H2VQ0qziJ3 --brand-name "إقليد" --details
 ~~~
 
 Conditional Firebase deployment — not authorized until all blockers pass:

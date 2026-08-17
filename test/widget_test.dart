@@ -21,4 +21,18 @@ void main() {
       'branch_manager_id': 'manager-1',
     });
   });
+
+  test('يدعم الفرع بدون مدير معيّن', () {
+    final branch = BranchModel.fromJson({
+      'id': 'branch-1',
+      'name': 'فرع بلا مدير',
+      'company_name': 'شركة المتجر',
+      'brand_id': 'brand-1',
+      'branch_code': 'AM',
+      'branch_manager_id': null,
+    });
+
+    expect(branch.branchManagerId, isNull);
+    expect(branch.toJson()['branch_manager_id'], isNull);
+  });
 }

@@ -180,6 +180,74 @@ function createPasswordManagementRouter({
     await firestore.collection("password_audit_events").add(auditData(event));
   }
 
+  function assignedId(value) {
+    const id = String(value || "").trim();
+    return id || null;
+  }
+
+  function activeManager(profile) {
+    return profile?.role === "manager" && profile?.isActive !== false;
+  }
+
+  async function prepareManagerAssignment(transaction, {
+    branchId,
+    managerUid,
+    manager,
+  }) {
+    if (!activeManager(manager)) {
+      throw Object.assign(new Error("Invalid manager"), {publicCode: "invalid-argument"});
+    }
+    const branchReference = firestore.collection("branches").doc(branchId);
+    const managerReferences = firestore.collection("branches")
+        .where("branch_manager_id", "==", managerUid);
+    const [branchSnapshot, currentAssignments] = await Promise.all([
+      transaction.get(branchReference),
+      transaction.get(managerReferences),
+    ]);
+    if (!branchSnapshot.exists) {
+      throw Object.assign(new Error("Branch missing"), {publicCode: "invalid-argument"});
+    }
+    const previousManagerUid = assignedId(branchSnapshot.data()?.branch_manager_id);
+    const previousManagerSnapshot = previousManagerUid && previousManagerUid !== managerUid ?
+      await transaction.get(firestore.collection("users").doc(previousManagerUid)) : null;
+    return {
+      branchReference,
+      branchId,
+      managerUid,
+      currentAssignments,
+      previousManagerSnapshot,
+    };
+  }
+
+  function applyManagerAssignment(transaction, plan, managerReference, managerWrite, {
+    createManager = false,
+  } = {}) {
+    for (const assignedBranch of plan.currentAssignments.docs) {
+      if (assignedBranch.id !== plan.branchId) {
+        transaction.update(assignedBranch.ref, {branch_manager_id: null});
+      }
+    }
+    const previousManager = plan.previousManagerSnapshot;
+    if (previousManager?.exists &&
+        assignedId(previousManager.data()?.branchId) === plan.branchId) {
+      transaction.update(previousManager.ref, {branchId: null});
+    }
+    if (createManager) {
+      transaction.set(managerReference, {...managerWrite, branchId: plan.branchId});
+    } else {
+      transaction.update(managerReference, {...managerWrite, branchId: plan.branchId});
+    }
+    transaction.update(plan.branchReference, {branch_manager_id: plan.managerUid});
+  }
+
+  async function clearManagerReferences(transaction, managerUid) {
+    const assignments = await transaction.get(firestore.collection("branches")
+        .where("branch_manager_id", "==", managerUid));
+    for (const branch of assignments.docs) {
+      transaction.update(branch.ref, {branch_manager_id: null});
+    }
+  }
+
   async function authenticatedUser(request, _response, next) {
     try {
       const token = bearerToken(request);
@@ -243,12 +311,12 @@ function createPasswordManagementRouter({
     const email = normalizedEmail(request.body?.email);
     const name = String(request.body?.name || "").trim();
     const role = String(request.body?.role || "");
-    const branchId = request.body?.branchId == null ? null : String(request.body.branchId);
+    const branchId = assignedId(request.body?.branchId);
     let targetUid = "not-created";
     let createdAuthUser = false;
     try {
       if (!isEmail(email) || name.length < 2 || name.length > 100 ||
-          !MANAGED_ROLES.has(role) || (role === "manager" && !branchId)) {
+          !MANAGED_ROLES.has(role)) {
         throw Object.assign(new Error("Invalid user data"), {publicCode: "invalid-argument"});
       }
       const temporaryPassword = secureTemporaryPassword(randomBytes);
@@ -264,9 +332,7 @@ function createPasswordManagementRouter({
       targetUid = userRecord.uid;
       createdAuthUser = true;
       const userReference = firestore.collection("users").doc(targetUid);
-      const auditReference = firestore.collection("password_audit_events").doc();
-      const batch = firestore.batch();
-      batch.set(userReference, {
+      const userData = {
         uid: targetUid,
         name,
         email,
@@ -280,14 +346,28 @@ function createPasswordManagementRouter({
         passwordVersion: 1,
         credentialIssuedAt: fieldValue.serverTimestamp(),
         temporaryCredentialExpiresAt: timestampFromDate(admin, expiresAt),
+      };
+      const auditReference = firestore.collection("password_audit_events").doc();
+      await firestore.runTransaction(async (transaction) => {
+        if (role === "manager" && branchId) {
+          const plan = await prepareManagerAssignment(transaction, {
+            branchId,
+            managerUid: targetUid,
+            manager: userData,
+          });
+          applyManagerAssignment(transaction, plan, userReference, userData, {
+            createManager: true,
+          });
+        } else {
+          transaction.set(userReference, userData);
+        }
+        transaction.set(auditReference, auditData({
+          actorUid,
+          targetUid,
+          operation: "admin_create_user",
+          result: "account_created",
+        }));
       });
-      batch.set(auditReference, auditData({
-        actorUid,
-        targetUid,
-        operation: "admin_create_user",
-        result: "account_created",
-      }));
-      await batch.commit();
       const delivery = await createOrResetResponse(email, temporaryPassword, expiresAt);
       if (delivery.delivery === "email") {
         const deliveryBatch = firestore.batch();
@@ -416,6 +496,8 @@ function createPasswordManagementRouter({
       if (!targetSnapshot.exists || target?.role === "admin") {
         throw Object.assign(new Error("Target denied"), {publicCode: "forbidden"});
       }
+      const requestedBranch = request.body?.branchId === undefined ?
+        undefined : assignedId(request.body.branchId);
       const updates = {};
       if (request.body?.role !== undefined) {
         const role = String(request.body.role);
@@ -423,11 +505,13 @@ function createPasswordManagementRouter({
           throw Object.assign(new Error("Invalid role"), {publicCode: "invalid-argument"});
         }
         updates.role = role;
-        if (role !== "manager") updates.branchId = fieldValue.delete();
+        if (role !== "manager") updates.branchId = null;
       }
-      if (request.body?.branchId !== undefined) {
-        const branchId = request.body.branchId;
-        updates.branchId = branchId ? String(branchId) : fieldValue.delete();
+      const effectiveRole = updates.role || target.role;
+      if (requestedBranch && effectiveRole !== "manager") {
+        throw Object.assign(new Error("Only managers may be assigned to a branch"), {
+          publicCode: "invalid-argument",
+        });
       }
       if (request.body?.isActive !== undefined) {
         if (typeof request.body.isActive !== "boolean") {
@@ -441,12 +525,34 @@ function createPasswordManagementRouter({
       if (Object.keys(updates).length === 0) {
         throw Object.assign(new Error("No changes"), {publicCode: "invalid-argument"});
       }
-      const batch = firestore.batch();
-      batch.update(firestore.collection("users").doc(targetUid), updates);
-      batch.set(firestore.collection("password_audit_events").doc(), auditData({
-        actorUid, targetUid, operation: "admin_update_user", result: "success",
-      }));
-      await batch.commit();
+      const targetReference = firestore.collection("users").doc(targetUid);
+      await firestore.runTransaction(async (transaction) => {
+        const currentSnapshot = await transaction.get(targetReference);
+        const current = currentSnapshot.data();
+        if (!currentSnapshot.exists || current?.role === "admin") {
+          throw Object.assign(new Error("Target denied"), {publicCode: "forbidden"});
+        }
+        const currentRole = updates.role || current.role;
+        const mustDetach = request.body?.isActive === false ||
+          currentRole !== "manager" || requestedBranch === null;
+        if (requestedBranch && currentRole === "manager") {
+          const plan = await prepareManagerAssignment(transaction, {
+            branchId: requestedBranch,
+            managerUid: targetUid,
+            manager: {...current, ...updates, role: currentRole},
+          });
+          applyManagerAssignment(transaction, plan, targetReference, updates);
+        } else {
+          if (mustDetach) {
+            await clearManagerReferences(transaction, targetUid);
+            updates.branchId = null;
+          }
+          transaction.update(targetReference, updates);
+        }
+        transaction.set(firestore.collection("password_audit_events").doc(), auditData({
+          actorUid, targetUid, operation: "admin_update_user", result: "success",
+        }));
+      });
       response.json({success: true});
     } catch (error) {
       if (authenticationStatusChanged && target) {
@@ -467,30 +573,37 @@ function createPasswordManagementRouter({
   router.post("/admin/branches/:branchId/manager", requireAdmin, async (request, response) => {
     const actorUid = request.authenticatedUser.decoded.uid;
     const branchId = request.params.branchId;
-    const managerUid = request.body?.managerUid ? String(request.body.managerUid) : null;
+    const managerUid = assignedId(request.body?.managerUid);
     try {
       await firestore.runTransaction(async (transaction) => {
-        const branchReference = firestore.collection("branches").doc(branchId);
-        const branchSnapshot = await transaction.get(branchReference);
-        if (!branchSnapshot.exists) {
-          throw Object.assign(new Error("Branch missing"), {publicCode: "invalid-argument"});
-        }
-        const oldManagerUid = String(branchSnapshot.data()?.branch_manager_id || "");
         if (managerUid) {
           const managerReference = firestore.collection("users").doc(managerUid);
           const managerSnapshot = await transaction.get(managerReference);
           const manager = managerSnapshot.data();
-          if (!managerSnapshot.exists || manager?.role !== "manager" || manager?.isActive === false) {
+          if (!managerSnapshot.exists) {
             throw Object.assign(new Error("Invalid manager"), {publicCode: "invalid-argument"});
           }
-          transaction.update(managerReference, {branchId});
-        }
-        if (oldManagerUid && oldManagerUid !== managerUid) {
-          transaction.update(firestore.collection("users").doc(oldManagerUid), {
-            branchId: fieldValue.delete(),
+          const plan = await prepareManagerAssignment(transaction, {
+            branchId,
+            managerUid,
+            manager,
           });
+          applyManagerAssignment(transaction, plan, managerReference, {});
+        } else {
+          const branchReference = firestore.collection("branches").doc(branchId);
+          const branchSnapshot = await transaction.get(branchReference);
+          if (!branchSnapshot.exists) {
+            throw Object.assign(new Error("Branch missing"), {publicCode: "invalid-argument"});
+          }
+          const oldManagerUid = assignedId(branchSnapshot.data()?.branch_manager_id);
+          const oldManagerSnapshot = oldManagerUid ?
+            await transaction.get(firestore.collection("users").doc(oldManagerUid)) : null;
+          transaction.update(branchReference, {branch_manager_id: null});
+          if (oldManagerSnapshot?.exists &&
+              assignedId(oldManagerSnapshot.data()?.branchId) === branchId) {
+            transaction.update(oldManagerSnapshot.ref, {branchId: null});
+          }
         }
-        transaction.update(branchReference, {branch_manager_id: managerUid || ""});
         transaction.set(firestore.collection("password_audit_events").doc(), auditData({
           actorUid,
           targetUid: managerUid || "none",

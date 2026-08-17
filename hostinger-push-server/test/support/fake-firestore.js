@@ -28,6 +28,21 @@ class FakeDocumentReference {
     return Promise.resolve(this.firestore._snapshot(this));
   }
 
+  update(value) {
+    const collection = this.firestore._collection(this.collectionName);
+    const current = collection.get(this.id);
+    if (current === undefined) {
+      return Promise.reject(new Error(`Missing document for update: ${this.path}`));
+    }
+    collection.set(this.id, {...clone(current), ...clone(value)});
+    return Promise.resolve();
+  }
+
+  delete() {
+    this.firestore._collection(this.collectionName).delete(this.id);
+    return Promise.resolve();
+  }
+
   collection(name) {
     return new FakeCollectionReference(this.firestore, `${this.path}/${name}`);
   }

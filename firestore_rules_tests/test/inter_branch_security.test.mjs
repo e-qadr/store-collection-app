@@ -60,6 +60,7 @@ beforeEach(async () => {
       ['manager-a', 'manager', 'branch-a', {}],
       ['manager-b', 'manager', 'branch-b', {}],
       ['manager-c', 'manager', 'branch-c', {}],
+      ['manager-unassigned', 'manager', null, {branchId: null}],
       ['collector-user', 'collector', '', {}],
       ['accountant-user', 'accountant', '', {}],
       ['admin-user', 'admin', '', {}],
@@ -231,7 +232,7 @@ test('v2 public invoices are readable only by participant managers and superviso
     await assertSucceeds(getDoc(doc(databaseFor(uid), 'inter_branch_invoices', 'invoice-v2')));
   }
   for (const uid of [
-    'manager-c', 'employee-user', 'unknown-user', 'inactive-user', 'password-user',
+    'manager-c', 'manager-unassigned', 'employee-user', 'unknown-user', 'inactive-user', 'password-user',
   ]) {
     await assertFails(getDoc(doc(databaseFor(uid), 'inter_branch_invoices', 'invoice-v2')));
   }
@@ -255,6 +256,17 @@ test('v2 public invoices are readable only by participant managers and superviso
   await assertFails(getDocs(query(
     collection(managerA, 'inter_branch_invoices'),
     where('branch_ids', 'array-contains', 'branch-c'),
+    limit(50),
+  )));
+});
+
+test('manager without a branch is denied all branch-scoped inter-branch reads', async () => {
+  await seed('inter_branch_invoices', 'invoice-v2', v2Invoice());
+  const manager = databaseFor('manager-unassigned');
+  await assertFails(getDoc(doc(manager, 'inter_branch_invoices', 'invoice-v2')));
+  await assertFails(getDocs(query(
+    collection(manager, 'inter_branch_invoices'),
+    where('branch_ids', 'array-contains', 'branch-a'),
     limit(50),
   )));
 });

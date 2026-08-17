@@ -23,7 +23,7 @@ const PROFILES = Object.freeze({
   }),
   eqlid_legacy_catalog: Object.freeze({
     brandId: "WLMnMVT6u1H2VQ0qziJ3",
-    brandName: "اقليد",
+    brandName: "إقليد",
   }),
 });
 

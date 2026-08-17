@@ -184,7 +184,7 @@ void main() {
         profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
         brandSelection: const LegacyCatalogBrandSelection.validated(
           documentId: 'WLMnMVT6u1H2VQ0qziJ3',
-          name: 'اقليد',
+          name: 'إقليد',
           exists: true,
           evidence: LegacyBrandDocumentEvidence.firestoreEmulator,
         ),
@@ -269,7 +269,7 @@ void main() {
         profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
         brandSelection: const LegacyCatalogBrandSelection.contractOnly(
           documentId: 'WLMnMVT6u1H2VQ0qziJ3',
-          name: 'اقليد',
+          name: 'إقليد',
         ),
       );
 
@@ -325,7 +325,7 @@ void main() {
           profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
           brandSelection: const LegacyCatalogBrandSelection.contractOnly(
             documentId: 'WLMnMVT6u1H2VQ0qziJ3',
-            name: 'اقليد',
+            name: 'إقليد',
           ),
         ),
         throwsA(isA<LegacyCatalogImportException>()),
@@ -378,6 +378,46 @@ void main() {
       }
     },
   );
+
+  test('Eqlid brand contract requires the canonical production spelling', () async {
+    final source = await _writeWorkbook(
+      temporaryDirectory,
+      name: 'eqlid_brand_contract.xls',
+      materialColumn: 8,
+      groupColumn: 12,
+      productRows: const [
+        _FixtureProductRow(
+          material: '1001-منتج',
+          group: '1-مجموعة',
+          primaryUnit: 'حبة',
+        ),
+      ],
+    );
+    const importer = LegacyCatalogImporter();
+    const validSelection = LegacyCatalogBrandSelection.contractOnly(
+      documentId: 'WLMnMVT6u1H2VQ0qziJ3',
+      name: 'إقليد',
+    );
+
+    final report = await importer.createDryRun(
+      sourceFile: source,
+      profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
+      brandSelection: validSelection,
+    );
+    expect(report.records, hasLength(1));
+
+    expect(
+      () => importer.createDryRun(
+        sourceFile: source,
+        profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
+        brandSelection: const LegacyCatalogBrandSelection.contractOnly(
+          documentId: 'WLMnMVT6u1H2VQ0qziJ3',
+          name: 'اقليد',
+        ),
+      ),
+      throwsA(isA<LegacyCatalogImportException>()),
+    );
+  });
 
   test(
     'content-based skipping classifies headers, blanks, and totals',
@@ -496,7 +536,7 @@ void main() {
         profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
         brandSelection: const LegacyCatalogBrandSelection.contractOnly(
           documentId: 'WLMnMVT6u1H2VQ0qziJ3',
-          name: 'اقليد',
+          name: 'إقليد',
         ),
       );
 
@@ -664,7 +704,7 @@ void main() {
         profileId: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
         brandSelection: const LegacyCatalogBrandSelection.contractOnly(
           documentId: 'WLMnMVT6u1H2VQ0qziJ3',
-          name: 'اقليد',
+          name: 'إقليد',
         ),
       );
 

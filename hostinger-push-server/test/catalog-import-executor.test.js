@@ -17,6 +17,9 @@ const {FakeFirestore} = require("./support/fake-firestore");
 const BRAND_ID = "TlOswncJiWX7mwsf3U4e";
 const BRAND_NAME = "الأصالة";
 const PROFILE = "al_asalah_legacy_catalog";
+const EQLID_BRAND_ID = "WLMnMVT6u1H2VQ0qziJ3";
+const EQLID_BRAND_NAME = "إقليد";
+const EQLID_PROFILE = "eqlid_legacy_catalog";
 const ACTOR = "accountant-1";
 const PROJECT = "production-project";
 
@@ -104,6 +107,31 @@ test("live brand and active accountant must exactly match the source profile", a
   wrongRole.users[ACTOR].role = "manager";
   await assert.rejects(() => context(new FakeFirestore(wrongRole)), (error) =>
     error.code === "active-accountant-required");
+});
+
+test("Eqlid requires the canonical production brand spelling", async () => {
+  const firestore = new FakeFirestore({
+    brands: {
+      [EQLID_BRAND_ID]: {id: EQLID_BRAND_ID, name: EQLID_BRAND_NAME},
+    },
+    users: seed().users,
+  });
+  const result = await readProductionContext({
+    firestore,
+    profile: EQLID_PROFILE,
+    brandId: EQLID_BRAND_ID,
+    brandName: EQLID_BRAND_NAME,
+    actorUid: ACTOR,
+  });
+  assert.equal(result.brand.name, EQLID_BRAND_NAME);
+
+  await assert.rejects(() => readProductionContext({
+    firestore,
+    profile: EQLID_PROFILE,
+    brandId: EQLID_BRAND_ID,
+    brandName: "اقليد",
+    actorUid: ACTOR,
+  }), (error) => error.code === "brand-name-mismatch");
 });
 
 test("apply requires the exact second confirmation and creates no price fields", async () => {

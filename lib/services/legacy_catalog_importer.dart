@@ -65,7 +65,7 @@ class LegacyCatalogSourceProfile {
   static const eqlid = LegacyCatalogSourceProfile(
     id: LegacyCatalogSourceProfileId.eqlidLegacyCatalog,
     expectedBrandId: 'WLMnMVT6u1H2VQ0qziJ3',
-    expectedBrandName: 'اقليد',
+    expectedBrandName: 'إقليد',
     unit3Column: 1,
     unit2Column: 4,
     primaryUnitColumn: 6,

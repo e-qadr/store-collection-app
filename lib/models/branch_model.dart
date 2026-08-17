@@ -4,7 +4,7 @@ class BranchModel {
   final String companyName;
   final String brandId;
   final String branchCode;
-  final String branchManagerId;
+  final String? branchManagerId;
 
   BranchModel({
     required this.id,
@@ -12,7 +12,7 @@ class BranchModel {
     required this.companyName,
     this.brandId = '',
     required this.branchCode,
-    required this.branchManagerId,
+    this.branchManagerId,
   });
 
   factory BranchModel.fromJson(Map<String, dynamic> json) {
@@ -22,7 +22,7 @@ class BranchModel {
       companyName: json['company_name'] ?? 'بدون شركة',
       brandId: json['brand_id'] ?? '',
       branchCode: json['branch_code'] ?? '',
-      branchManagerId: json['branch_manager_id'] ?? '',
+      branchManagerId: json['branch_manager_id'] as String?,
     );
   }
 

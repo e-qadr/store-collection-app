@@ -34,13 +34,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       return;
     }
 
-    if (_selectedRole == 'manager' && _selectedBranchId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('الرجاء اختيار فرع للمدير')));
-      return;
-    }
-
     setState(() => _isLoading = true);
 
     try {
@@ -846,6 +839,32 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                       ),
                                                     );
                                                   },
+                                                ),
+                                              ] else if (role == 'manager') ...[
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.orange
+                                                        .withValues(alpha: 0.1),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          8,
+                                                        ),
+                                                  ),
+                                                  child: const Text(
+                                                    'غير مرتبط بفرع',
+                                                    style: TextStyle(
+                                                      color: Colors.orange,
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  ),
                                                 ),
                                               ],
                                             ],

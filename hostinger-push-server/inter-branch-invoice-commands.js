@@ -757,7 +757,7 @@ function validateCounter(snapshot, supplyingBranch) {
   }
   const data = snapshot.data();
   if (!Number.isSafeInteger(data?.next_number) ||
-      data.next_number < 0 ||
+      data.next_number < 1 ||
       data.next_number >= Number.MAX_SAFE_INTEGER) {
     throw new CommandError("counter-invalid", 409, "The invoice counter is invalid.");
   }
