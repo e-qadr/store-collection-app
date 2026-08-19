@@ -522,7 +522,7 @@ function createPasswordManagementRouter({
         authenticationStatusChanged = true;
         if (!request.body.isActive) await auth.revokeRefreshTokens(targetUid);
       }
-      if (Object.keys(updates).length === 0) {
+      if (Object.keys(updates).length === 0 && requestedBranch === undefined) {
         throw Object.assign(new Error("No changes"), {publicCode: "invalid-argument"});
       }
       const targetReference = firestore.collection("users").doc(targetUid);

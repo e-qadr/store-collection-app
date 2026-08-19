@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
+import 'package:store_collection_app/utils/manager_assignment.dart';
 
 class BranchManagementScreen extends StatefulWidget {
   const BranchManagementScreen({super.key});
@@ -228,7 +229,10 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                     );
                   }
 
-                  final managers = snapshot.data!.docs;
+                  final managers = snapshot.data!.docs.where((manager) {
+                    final data = manager.data() as Map<String, dynamic>;
+                    return isActiveManagerForAssignment(data);
+                  }).toList();
                   if (managers.isEmpty) {
                     return const Text(
                       'لا يوجد مدراء مسجلين في النظام. أضف مديراً أولاً.',

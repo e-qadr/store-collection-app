@@ -263,6 +263,56 @@ test("manager assignment, reassignment, and removal keep both sides consistent",
   });
 });
 
+test("user PATCH assigns, moves, and removes active managers atomically", async () => {
+  const {firestore, router} = managementFixture();
+  await withServer(router, async (baseUrl) => {
+    let response = await patchJson(baseUrl, "/v1/admin/users/manager-1", {
+      branchId: "branch-b",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(firestore.document("users", "manager-1").branchId, "branch-b");
+    assert.equal(firestore.document("branches", "branch-b").branch_manager_id, "manager-1");
+
+    response = await patchJson(baseUrl, "/v1/admin/users/manager-1", {
+      branchId: "branch-a",
+    });
+    assert.equal(response.status, 200);
+    assert.equal(firestore.document("users", "manager-1").branchId, "branch-a");
+    assert.equal(firestore.document("users", "manager-2").branchId, null);
+    assert.equal(firestore.document("branches", "branch-a").branch_manager_id, "manager-1");
+    assert.equal(firestore.document("branches", "branch-b").branch_manager_id, null);
+
+    response = await patchJson(baseUrl, "/v1/admin/users/manager-1", {
+      branchId: null,
+    });
+    assert.equal(response.status, 200);
+    assert.equal(firestore.document("users", "manager-1").branchId, null);
+    assert.equal(firestore.document("branches", "branch-a").branch_manager_id, null);
+  });
+});
+
+test("user PATCH rejects inactive manager assignment and empty updates", async () => {
+  const {firestore, router} = managementFixture();
+  firestore._collection("users").set("manager-inactive", {
+    role: "manager",
+    isActive: false,
+    branchId: null,
+  });
+  await withServer(router, async (baseUrl) => {
+    let response = await patchJson(baseUrl, "/v1/admin/users/manager-inactive", {
+      branchId: "branch-b",
+    });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, "invalid-argument");
+    assert.equal(firestore.document("users", "manager-inactive").branchId, null);
+    assert.equal(firestore.document("branches", "branch-b").branch_manager_id, null);
+
+    response = await patchJson(baseUrl, "/v1/admin/users/manager-1", {});
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, "invalid-argument");
+  });
+});
+
 test("deactivating an assigned manager clears stale branch references", async () => {
   const {firestore, authUsers, router} = managementFixture();
   await withServer(router, async (baseUrl) => {

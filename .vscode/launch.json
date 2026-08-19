@@ -7,7 +7,7 @@
       "type": "dart",
       "toolArgs": [
         "--dart-define",
-        "AUTH_API_BASE_URL=https://lemonchiffon-penguin-698240.hostingersite.com",
+        "AUTH_API_BASE_URL=https://collection-api.alasalh.com",
         "--dart-define",
         "INVOICE_UPLOAD_URL=https://skyblue-mongoose-418684.hostingersite.com/api/upload_invoice.php",
         "--dart-define",
