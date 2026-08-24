@@ -13,6 +13,7 @@ const COLLECTIONS = Object.freeze({
   audits: "product_audit_events",
   manifests: "catalog_import_manifests",
   runState: "catalog_import_run_state",
+  runChunks: "chunks",
   rollbackManifests: "catalog_import_rollback_manifests",
 });
 
@@ -29,6 +30,14 @@ const PROFILES = Object.freeze({
 
 const UNCATEGORIZED_NAME = "غير مصنف";
 const UNCATEGORIZED_KEY = "uncategorized";
+const NON_BLOCKING_REVIEW_REASON = "source-validation-required";
+const FIRESTORE_ABORTED_CODE = 10;
+const CHECKPOINT_BATCH_SIZE = 25;
+const PRODUCT_CHUNK_PAUSE_MS = 250;
+const IMPORT_EXECUTION_VERSION = 2;
+const MAX_PRODUCT_WRITES_WITH_LEGACY_CODE = 4;
+const MAX_TRANSACTION_WRITES = 500;
+const MAX_CHECKPOINT_STATE_BYTES = 512 * 1024;
 
 function checksum(value) {
   return crypto.createHash("sha256").update(stableJson(value)).digest("hex");
@@ -401,59 +410,61 @@ function withoutMutableCatalogFields(value) {
   return copy;
 }
 
-async function applyCatalogImport({firestore, plan, projectId, confirmation, clock = () => new Date()}) {
+async function applyCatalogImport({
+  firestore, plan, projectId, confirmation, clock = () => new Date(),
+  checkpointBatchSize = CHECKPOINT_BATCH_SIZE,
+  chunkPauseMs = PRODUCT_CHUNK_PAUSE_MS,
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+}) {
   if (!projectId) throw codedError("project-id-required");
+  if (!Number.isInteger(checkpointBatchSize) || checkpointBatchSize < 1 ||
+      checkpointBatchSize > CHECKPOINT_BATCH_SIZE) {
+    throw codedError("invalid-checkpoint-batch-size");
+  }
+  if (!Number.isInteger(chunkPauseMs) || chunkPauseMs < 0) {
+    throw codedError("invalid-chunk-pause");
+  }
+  if (maximumProductChunkWrites(checkpointBatchSize) > MAX_TRANSACTION_WRITES) {
+    throw codedError("product-chunk-write-limit-exceeded");
+  }
   const required = expectedConfirmation({
     projectId, runId: plan.run_id, planChecksum: plan.plan_checksum,
   });
   if (confirmation !== required) throw codedError("apply-confirmation-mismatch");
-  if (plan.group_conflicts.length || plan.review_rows.length) {
+  if (plan.group_conflicts.length || !hasOnlyNonBlockingReviewRows(plan.review_rows)) {
     throw codedError("unresolved-catalog-review-blocks-apply");
   }
+  assertCheckpointStateCapacity(plan);
   const stateRef = firestore.collection(COLLECTIONS.runState).doc(plan.run_id);
-  await firestore.runTransaction(async (transaction) => {
-    const state = await transaction.get(stateRef);
-    const current = state.data();
-    if (current && current.plan_checksum !== plan.plan_checksum) {
-      throw codedError("run-state-plan-conflict");
-    }
-    transaction.set(stateRef, {
-      schema_version: 1,
-      run_id: plan.run_id,
-      plan_checksum: plan.plan_checksum,
-      status: "applying",
-      brand_id: plan.brand_id,
-      source_sha256: plan.source_sha256,
-      actor_uid: plan.actor.uid,
-      started_at: current?.started_at || clock(),
-      updated_at: clock(),
-      completed_group_ids: current?.completed_group_ids || [],
-      completed_product_ids: current?.completed_product_ids || [],
-    });
-  });
-
-  for (const group of plan.groupOperations.create) {
-    await ensureGroup({firestore, plan, group, clock});
-    await checkpoint({firestore, plan, clock, field: "completed_group_ids", id: group.group_id});
-  }
-  for (const entry of plan.productOperations.filter((item) =>
-    item.action === "create" || item.action === "unchanged")) {
-    await ensureProduct({firestore, plan, entry, clock});
-    await checkpoint({firestore, plan, clock, field: "completed_product_ids", id: entry.product.id});
-  }
-  const completedAt = clock();
   const manifestRef = firestore.collection(COLLECTIONS.manifests).doc(plan.run_id);
+  const existingManifest = await manifestRef.get();
+  if (existingManifest.exists) {
+    assertMatchingManifest(existingManifest.data(), plan);
+    return {run_id: plan.run_id, status: "completed", counts: plan.counts};
+  }
+
+  const runState = await initializeRunState({
+    firestore, stateRef, plan, clock, checkpointBatchSize,
+  });
+  const groupOperations = operationsForInitialGroupIds({plan, runState});
+  const productOperations = operationsForInitialProductIds({plan, runState});
+  await applyGroupChunks({
+    firestore, stateRef, plan, operations: groupOperations, checkpointBatchSize, clock,
+  });
+  await applyProductChunks({
+    firestore, stateRef, plan, operations: productOperations, checkpointBatchSize,
+    chunkPauseMs, wait, clock,
+  });
+  await verifyCompletedRunState({
+    firestore, stateRef, plan, runState, checkpointBatchSize,
+  });
+  const completedAt = clock();
   await firestore.runTransaction(async (transaction) => {
-    const [manifest, state] = await Promise.all([
-      transaction.get(manifestRef), transaction.get(stateRef),
-    ]);
+    const [manifest, state] = await transaction.getAll(manifestRef, stateRef);
     const existing = manifest.data();
+    assertRunStateApplying(state.data(), plan);
     const immutableManifest = manifestData(plan, state.data(), completedAt);
-    if (existing && (existing.plan_checksum !== plan.plan_checksum ||
-        existing.source_sha256 !== plan.source_sha256 ||
-        existing.brand_id !== plan.brand_id)) {
-      throw codedError("immutable-manifest-conflict");
-    }
+    if (existing) assertMatchingManifest(existing, plan);
     if (!existing) transaction.set(manifestRef, immutableManifest);
     transaction.set(stateRef, {
       ...state.data(), status: "completed", updated_at: completedAt,
@@ -463,116 +474,455 @@ async function applyCatalogImport({firestore, plan, projectId, confirmation, clo
   return {run_id: plan.run_id, status: "completed", counts: plan.counts};
 }
 
-async function ensureGroup({firestore, plan, group, clock}) {
-  const groupRef = firestore.collection(COLLECTIONS.groups).doc(group.group_id);
-  const auditRef = firestore.collection(COLLECTIONS.audits).doc(group.audit_id);
-  await firestore.runTransaction(async (transaction) => {
-    const [existingGroup, existingAudit] = await Promise.all([
-      transaction.get(groupRef), transaction.get(auditRef),
-    ]);
-    if (existingGroup.exists) {
-      if (!groupMatches(existingGroup.data(), group, plan.brand_id)) {
-        throw codedError("group-changed-after-plan");
-      }
-      return;
+async function initializeRunState({firestore, stateRef, plan, clock, checkpointBatchSize}) {
+  return firestore.runTransaction(async (transaction) => {
+    const state = await transaction.get(stateRef);
+    const current = state.data();
+    if (current && current.plan_checksum !== plan.plan_checksum) {
+      throw codedError("run-state-plan-conflict");
     }
-    if (existingAudit.exists) throw codedError("orphaned-group-audit");
-    const now = clock();
-    const groupData = compact({
-      id: group.group_id,
+    if (current?.status === "completed") {
+      throw codedError("completed-run-state-without-manifest");
+    }
+    const initialProductIds = current?.initial_product_ids || expectedProductIds(plan);
+    const initialCreatedGroupIds = current?.initial_created_group_ids ||
+      current?.completed_group_ids || plan.groupOperations.create.map((group) => group.group_id);
+    if (!sameIdSet(initialProductIds, expectedProductIds(plan)) ||
+        !isIdSubset(initialCreatedGroupIds, expectedAllGroupIds(plan))) {
+      throw codedError("run-state-operation-set-conflict");
+    }
+    const next = {
+      ...current,
+      schema_version: 1,
+      execution_version: IMPORT_EXECUTION_VERSION,
+      run_id: plan.run_id,
+      plan_checksum: plan.plan_checksum,
+      status: "applying",
       brand_id: plan.brand_id,
-      name: group.name,
-      normalized_name: group.normalized_name,
-      legacy_code: group.legacy_code,
-      is_system_group: group.is_system_group,
-      system_key: group.system_key,
-      active: true,
+      source_sha256: plan.source_sha256,
+      actor_uid: plan.actor.uid,
+      started_at: current?.started_at || clock(),
+      updated_at: clock(),
+      initial_product_ids: uniqueSortedIds(initialProductIds),
+      initial_created_product_ids: uniqueSortedIds(
+          current?.initial_created_product_ids || initialProductIds),
+      initial_created_group_ids: uniqueSortedIds(initialCreatedGroupIds),
+      product_chunk_size: checkpointBatchSize,
+    };
+    transaction.set(stateRef, next);
+    return next;
+  });
+}
+
+function operationsForInitialGroupIds({plan, runState}) {
+  const byId = new Map([...plan.groupOperations.create, ...plan.groupOperations.unchanged]
+      .map((group) => [group.group_id, group]));
+  return operationsForIds({
+    ids: runState.initial_created_group_ids || [], byId,
+    code: "run-state-group-operation-missing",
+  });
+}
+
+function operationsForInitialProductIds({plan, runState}) {
+  const byId = new Map(plan.productOperations.filter((entry) =>
+    entry.action === "create" || entry.action === "unchanged")
+      .map((entry) => [entry.product.id, entry]));
+  return operationsForIds({
+    ids: runState.initial_product_ids || [], byId,
+    code: "run-state-product-operation-missing",
+  });
+}
+
+function operationsForIds({ids, byId, code}) {
+  return uniqueSortedIds(ids).map((id) => {
+    const operation = byId.get(id);
+    if (!operation) throw codedError(code);
+    return operation;
+  });
+}
+
+async function applyGroupChunks({
+  firestore, stateRef, plan, operations, checkpointBatchSize, clock,
+}) {
+  const chunks = partitionOperations(operations, checkpointBatchSize);
+  for (let index = 0; index < chunks.length; index += 1) {
+    await runChunkTransaction(firestore, (transaction) => applyGroupChunk({
+      firestore, transaction, stateRef, plan, operations: chunks[index],
+      checkpointId: checkpointId("groups", index), clock,
+    }));
+  }
+}
+
+async function applyProductChunks({
+  firestore, stateRef, plan, operations, checkpointBatchSize, chunkPauseMs, wait, clock,
+}) {
+  const chunks = partitionOperations(operations, checkpointBatchSize);
+  for (let index = 0; index < chunks.length; index += 1) {
+    const committed = await runChunkTransaction(firestore, (transaction) => applyProductChunk({
+      firestore, transaction, stateRef, plan, operations: chunks[index],
+      checkpointId: checkpointId("products", index), clock,
+    }));
+    if (committed && chunkPauseMs > 0 && index + 1 < chunks.length) {
+      await wait(chunkPauseMs);
+    }
+  }
+}
+
+async function runChunkTransaction(firestore, operation) {
+  return retryAbortedFirestoreOperation(() => firestore.runTransaction(operation));
+}
+
+async function applyGroupChunk({
+  firestore, transaction, stateRef, plan, operations, checkpointId: id, clock,
+}) {
+  const chunkRef = stateRef.collection(COLLECTIONS.runChunks).doc(id);
+  const brandRef = firestore.collection(COLLECTIONS.brands).doc(plan.brand_id);
+  const groupRefs = operations.map((group) =>
+    firestore.collection(COLLECTIONS.groups).doc(group.group_id));
+  const auditRefs = operations.filter((group) => group.audit_id).map((group) =>
+    firestore.collection(COLLECTIONS.audits).doc(group.audit_id));
+  const snapshots = await snapshotsByPath(transaction, [
+    stateRef, brandRef, chunkRef, ...groupRefs, ...auditRefs,
+  ]);
+  assertRunStateApplying(snapshotFor(snapshots, stateRef).data(), plan);
+  assertLiveBrand(snapshotFor(snapshots, brandRef), plan);
+  const payload = chunkPayload({plan, phase: "groups", id,
+    operationIds: operations.map((group) => group.group_id), clock});
+  if (applyExistingChunkOrThrow(snapshotFor(snapshots, chunkRef), payload)) return false;
+  for (const group of operations) {
+    ensureGroupInChunk({
+      transaction, plan, group,
+      existingGroup: snapshotFor(snapshots,
+          firestore.collection(COLLECTIONS.groups).doc(group.group_id)),
+      existingAudit: group.audit_id ? snapshotFor(snapshots,
+          firestore.collection(COLLECTIONS.audits).doc(group.audit_id)) : undefined,
+      clock,
+    });
+  }
+  transaction.set(chunkRef, payload);
+  return true;
+}
+
+async function applyProductChunk({
+  firestore, transaction, stateRef, plan, operations, checkpointId: id, clock,
+}) {
+  const chunkRef = stateRef.collection(COLLECTIONS.runChunks).doc(id);
+  const brandRef = firestore.collection(COLLECTIONS.brands).doc(plan.brand_id);
+  const groupRefs = uniqueReferences(operations.map((entry) =>
+    firestore.collection(COLLECTIONS.groups).doc(entry.product.group_id)));
+  const productRefs = operations.map((entry) =>
+    firestore.collection(COLLECTIONS.products).doc(entry.product.id));
+  const auditRefs = operations.map((entry) =>
+    firestore.collection(COLLECTIONS.audits).doc(entry.auditId));
+  const nameKeyRefs = operations.map((entry) =>
+    firestore.collection(COLLECTIONS.uniqueKeys).doc(entry.nameKeyId));
+  const codeKeyRefs = operations.filter((entry) => entry.codeKeyId).map((entry) =>
+    firestore.collection(COLLECTIONS.uniqueKeys).doc(entry.codeKeyId));
+  const snapshots = await snapshotsByPath(transaction, uniqueReferences([
+    stateRef, brandRef, chunkRef, ...groupRefs, ...productRefs, ...auditRefs,
+    ...nameKeyRefs, ...codeKeyRefs,
+  ]));
+  assertRunStateApplying(snapshotFor(snapshots, stateRef).data(), plan);
+  assertLiveBrand(snapshotFor(snapshots, brandRef), plan);
+  const payload = chunkPayload({plan, phase: "products", id,
+    operationIds: operations.map((entry) => entry.product.id), clock});
+  if (applyExistingChunkOrThrow(snapshotFor(snapshots, chunkRef), payload)) return false;
+  for (const entry of operations) {
+    const product = entry.product;
+    ensureProductInChunk({
+      transaction, plan, entry,
+      group: snapshotFor(snapshots,
+          firestore.collection(COLLECTIONS.groups).doc(product.group_id)),
+      existingProduct: snapshotFor(snapshots,
+          firestore.collection(COLLECTIONS.products).doc(product.id)),
+      existingAudit: snapshotFor(snapshots,
+          firestore.collection(COLLECTIONS.audits).doc(entry.auditId)),
+      nameKey: snapshotFor(snapshots,
+          firestore.collection(COLLECTIONS.uniqueKeys).doc(entry.nameKeyId)),
+      codeKey: entry.codeKeyId ? snapshotFor(snapshots,
+          firestore.collection(COLLECTIONS.uniqueKeys).doc(entry.codeKeyId)) : undefined,
+      clock,
+    });
+  }
+  transaction.set(chunkRef, payload);
+  return true;
+}
+
+function ensureGroupInChunk({transaction, plan, group, existingGroup, existingAudit, clock}) {
+  if (existingGroup.exists) {
+    if (!groupMatches(existingGroup.data(), group, plan.brand_id)) {
+      throw codedError("group-changed-after-plan");
+    }
+    return;
+  }
+  if (!group.audit_id) throw codedError("group-create-audit-missing");
+  if (existingAudit?.exists) throw codedError("orphaned-group-audit");
+  const now = clock();
+  const groupData = compact({
+    id: group.group_id,
+    brand_id: plan.brand_id,
+    name: group.name,
+    normalized_name: group.normalized_name,
+    legacy_code: group.legacy_code,
+    is_system_group: group.is_system_group,
+    system_key: group.system_key,
+    active: true,
+    created_by: plan.actor.uid,
+    created_by_name: plan.actor.name,
+    created_at: now,
+    updated_by: plan.actor.uid,
+    updated_by_name: plan.actor.name,
+    updated_at: now,
+    last_audit_event_id: group.audit_id,
+  });
+  transaction.set(existingGroup.ref, groupData);
+  transaction.set(existingAudit.ref, auditData({
+    id: group.audit_id,
+    entityType: "product_group",
+    entityId: group.group_id,
+    brandId: plan.brand_id,
+    action: group.is_system_group ? "system_group_created" : "created",
+    after: groupData,
+    actor: plan.actor,
+    createdAt: now,
+    reason: `catalog_import:${plan.run_id}`,
+  }));
+}
+
+function ensureProductInChunk({
+  transaction, plan, entry, group, existingProduct, existingAudit, nameKey, codeKey, clock,
+}) {
+  const product = entry.product;
+  if (!group.exists || group.data()?.brand_id !== plan.brand_id ||
+      group.data()?.active !== true) throw codedError("product-group-not-ready");
+  if (existingProduct.exists) {
+    const current = existingProduct.data();
+    if (current?.source_metadata?.import_id !== plan.run_id ||
+        current?.source_metadata?.source_fingerprint !==
+          product.source_metadata.source_fingerprint) {
+      throw codedError("product-changed-after-plan");
+    }
+    if (!existingAudit.exists) throw codedError("imported-product-audit-missing");
+  } else {
+    if (existingAudit.exists) throw codedError("orphaned-product-audit");
+    const now = clock();
+    const productData = {
+      ...product,
       created_by: plan.actor.uid,
       created_by_name: plan.actor.name,
       created_at: now,
       updated_by: plan.actor.uid,
       updated_by_name: plan.actor.name,
       updated_at: now,
-      last_audit_event_id: group.audit_id,
-    });
-    transaction.set(groupRef, groupData);
-    transaction.set(auditRef, auditData({
-      id: group.audit_id,
-      entityType: "product_group",
-      entityId: group.group_id,
-      brandId: plan.brand_id,
-      action: group.is_system_group ? "system_group_created" : "created",
-      after: groupData,
-      actor: plan.actor,
-      createdAt: now,
+    };
+    assertNoPriceFields(productData);
+    transaction.set(existingProduct.ref, productData);
+    transaction.set(existingAudit.ref, auditData({
+      id: entry.auditId, entityType: "product", entityId: product.id,
+      brandId: plan.brand_id, action: "created", after: productData,
+      actor: plan.actor, createdAt: now,
       reason: `catalog_import:${plan.run_id}`,
     }));
+  }
+  ensureUniqueKeyWrite({
+    transaction, snapshot: nameKey, reference: nameKey.ref,
+    id: entry.nameKeyId, keyType: "name",
+    normalizedValue: product.normalized_name, productId: product.id,
+    plan, clock,
+  });
+  if (codeKey) {
+    ensureUniqueKeyWrite({
+      transaction, snapshot: codeKey, reference: codeKey.ref,
+      id: entry.codeKeyId, keyType: "legacy_code",
+      normalizedValue: normalizeLegacyCode(product.legacy_code),
+      productId: product.id, plan, clock,
+    });
+  }
+}
+
+async function verifyCompletedRunState({
+  firestore, stateRef, plan, runState, checkpointBatchSize,
+}) {
+  const groupChunks = expectedChunks({
+    phase: "groups", operations: operationsForInitialGroupIds({plan, runState}),
+    idOf: (group) => group.group_id, checkpointBatchSize,
+  });
+  const productChunks = expectedChunks({
+    phase: "products", operations: operationsForInitialProductIds({plan, runState}),
+    idOf: (entry) => entry.product.id, checkpointBatchSize,
+  });
+  const references = [stateRef, ...[...groupChunks, ...productChunks].map((chunk) =>
+    stateRef.collection(COLLECTIONS.runChunks).doc(chunk.id))];
+  const snapshots = await firestore.getAll(...references);
+  const byPath = new Map(snapshots.map((snapshot) => [snapshot.ref.path, snapshot]));
+  const state = snapshotFor(byPath, stateRef).data();
+  assertRunStateApplying(state, plan);
+  for (const chunk of [...groupChunks, ...productChunks]) {
+    const reference = stateRef.collection(COLLECTIONS.runChunks).doc(chunk.id);
+    const payload = chunkPayload({plan, phase: chunk.phase, id: chunk.id,
+      operationIds: chunk.operationIds, clock: () => undefined});
+    if (!applyExistingChunkOrThrow(snapshotFor(byPath, reference), payload)) {
+      throw codedError("run-state-incomplete");
+    }
+  }
+  if (!sameIdSet(state.initial_product_ids, expectedProductIds(plan)) ||
+      !sameIdSet(productChunks.flatMap((chunk) => chunk.operationIds),
+          state.initial_product_ids)) {
+    throw codedError("run-state-incomplete");
+  }
+}
+
+function expectedAllGroupIds(plan) {
+  return [...plan.groupOperations.create, ...plan.groupOperations.unchanged]
+      .map((group) => group.group_id);
+}
+
+function expectedProductIds(plan) {
+  return plan.productOperations.filter((entry) =>
+    entry.action === "create" || entry.action === "unchanged")
+      .map((entry) => entry.product.id);
+}
+
+function sameIdSet(actual, expected) {
+  if (!Array.isArray(actual) || !Array.isArray(expected)) return false;
+  const actualSet = new Set(actual);
+  const expectedSet = new Set(expected);
+  if (actualSet.size !== actual.length || expectedSet.size !== expected.length ||
+      actualSet.size !== expectedSet.size) return false;
+  return [...expectedSet].every((id) => actualSet.has(id));
+}
+
+function isIdSubset(actual, expected) {
+  if (!Array.isArray(actual) || !Array.isArray(expected)) return false;
+  const actualSet = new Set(actual);
+  const expectedSet = new Set(expected);
+  return actualSet.size === actual.length && [...actualSet].every((id) => expectedSet.has(id));
+}
+
+function uniqueSortedIds(ids) {
+  if (!Array.isArray(ids) || ids.some((id) => !String(id || "").trim())) {
+    throw codedError("invalid-run-operation-ids");
+  }
+  const result = [...new Set(ids)].sort();
+  if (result.length !== ids.length) throw codedError("duplicate-run-operation-id");
+  return result;
+}
+
+function partitionOperations(operations, size) {
+  const chunks = [];
+  for (let start = 0; start < operations.length; start += size) {
+    chunks.push(operations.slice(start, start + size));
+  }
+  return chunks;
+}
+
+function checkpointId(phase, index) {
+  return `${phase}-${String(index).padStart(4, "0")}`;
+}
+
+function expectedChunks({phase, operations, idOf, checkpointBatchSize}) {
+  return partitionOperations(operations, checkpointBatchSize).map((chunk, index) => ({
+    phase,
+    id: checkpointId(phase, index),
+    operationIds: chunk.map(idOf),
+  }));
+}
+
+function maximumProductChunkWrites(productCount) {
+  return (productCount * MAX_PRODUCT_WRITES_WITH_LEGACY_CODE) + 1;
+}
+
+function chunkPayload({plan, phase, id, operationIds, clock}) {
+  const ids = uniqueSortedIds(operationIds);
+  return compact({
+    schema_version: 1,
+    execution_version: IMPORT_EXECUTION_VERSION,
+    id,
+    run_id: plan.run_id,
+    plan_checksum: plan.plan_checksum,
+    phase,
+    operation_ids: ids,
+    operation_count: ids.length,
+    operation_checksum: checksum(ids),
+    completed_at: clock(),
   });
 }
 
-async function ensureProduct({firestore, plan, entry, clock}) {
-  const product = entry.product;
-  const productRef = firestore.collection(COLLECTIONS.products).doc(product.id);
-  const auditRef = firestore.collection(COLLECTIONS.audits).doc(entry.auditId);
-  const nameKeyRef = firestore.collection(COLLECTIONS.uniqueKeys).doc(entry.nameKeyId);
-  const codeKeyRef = entry.codeKeyId ?
-    firestore.collection(COLLECTIONS.uniqueKeys).doc(entry.codeKeyId) : undefined;
-  await firestore.runTransaction(async (transaction) => {
-    const [brand, group, existingProduct, audit, nameKey, codeKey] = await Promise.all([
-      transaction.get(firestore.collection(COLLECTIONS.brands).doc(plan.brand_id)),
-      transaction.get(firestore.collection(COLLECTIONS.groups).doc(product.group_id)),
-      transaction.get(productRef), transaction.get(auditRef),
-      transaction.get(nameKeyRef),
-      codeKeyRef ? transaction.get(codeKeyRef) : Promise.resolve(undefined),
-    ]);
-    if (!brand.exists || brand.data()?.name !== plan.brand_name) {
-      throw codedError("brand-changed-after-plan");
-    }
-    if (!group.exists || group.data()?.brand_id !== plan.brand_id ||
-        group.data()?.active !== true) throw codedError("product-group-not-ready");
-    if (existingProduct.exists) {
-      const current = existingProduct.data();
-      if (current?.source_metadata?.import_id !== plan.run_id ||
-          current?.source_metadata?.source_fingerprint !==
-            product.source_metadata.source_fingerprint) {
-        throw codedError("product-changed-after-plan");
-      }
-    } else {
-      if (audit.exists) throw codedError("orphaned-product-audit");
-      const now = clock();
-      const productData = {
-        ...product,
-        created_by: plan.actor.uid,
-        created_by_name: plan.actor.name,
-        created_at: now,
-        updated_by: plan.actor.uid,
-        updated_by_name: plan.actor.name,
-        updated_at: now,
-      };
-      assertNoPriceFields(productData);
-      transaction.set(productRef, productData);
-      transaction.set(auditRef, auditData({
-        id: entry.auditId, entityType: "product", entityId: product.id,
-        brandId: plan.brand_id, action: "created", after: productData,
-        actor: plan.actor, createdAt: now,
-        reason: `catalog_import:${plan.run_id}`,
-      }));
-    }
-    ensureUniqueKeyWrite({
-      transaction, snapshot: nameKey, reference: nameKeyRef,
-      id: entry.nameKeyId, keyType: "name",
-      normalizedValue: product.normalized_name, productId: product.id,
-      plan, clock,
-    });
-    if (codeKeyRef) {
-      ensureUniqueKeyWrite({
-        transaction, snapshot: codeKey, reference: codeKeyRef,
-        id: entry.codeKeyId, keyType: "legacy_code",
-        normalizedValue: normalizeLegacyCode(product.legacy_code),
-        productId: product.id, plan, clock,
-      });
-    }
+function applyExistingChunkOrThrow(snapshot, expected) {
+  if (!snapshot.exists) return false;
+  const current = snapshot.data();
+  if (current?.schema_version !== expected.schema_version ||
+      current?.execution_version !== expected.execution_version ||
+      current?.id !== expected.id || current?.run_id !== expected.run_id ||
+      current?.plan_checksum !== expected.plan_checksum ||
+      current?.phase !== expected.phase ||
+      current?.operation_count !== expected.operation_count ||
+      current?.operation_checksum !== expected.operation_checksum ||
+      !sameIdSet(current?.operation_ids, expected.operation_ids)) {
+    throw codedError("run-chunk-conflict");
+  }
+  return true;
+}
+
+function uniqueReferences(references) {
+  return [...new Map(references.map((reference) => [reference.path, reference])).values()];
+}
+
+async function snapshotsByPath(transaction, references) {
+  const snapshots = await transaction.getAll(...uniqueReferences(references));
+  return new Map(snapshots.map((snapshot) => [snapshot.ref.path, snapshot]));
+}
+
+function snapshotFor(snapshots, reference) {
+  const snapshot = snapshots.get(reference.path);
+  if (!snapshot) throw codedError("missing-transaction-snapshot");
+  return snapshot;
+}
+
+function assertRunStateApplying(state, plan) {
+  if (!state || state.plan_checksum !== plan.plan_checksum ||
+      state.brand_id !== plan.brand_id || state.status !== "applying" ||
+      state.execution_version !== IMPORT_EXECUTION_VERSION) {
+    throw codedError("run-state-missing-or-changed");
+  }
+}
+
+function assertLiveBrand(snapshot, plan) {
+  if (!snapshot.exists || snapshot.data()?.name !== plan.brand_name) {
+    throw codedError("brand-changed-after-plan");
+  }
+}
+
+function assertMatchingManifest(manifest, plan) {
+  if (!manifest || manifest.plan_checksum !== plan.plan_checksum ||
+      manifest.source_sha256 !== plan.source_sha256 ||
+      manifest.brand_id !== plan.brand_id) {
+    throw codedError("immutable-manifest-conflict");
+  }
+}
+
+function checkpointStateBytes({groupIds, productIds}) {
+  return Buffer.byteLength(JSON.stringify({
+    completed_group_ids: [...new Set(groupIds)].sort(),
+    completed_product_ids: [...new Set(productIds)].sort(),
+  }), "utf8");
+}
+
+function assertCheckpointStateCapacity(plan) {
+  const bytes = checkpointStateBytes({
+    groupIds: expectedAllGroupIds(plan), productIds: expectedProductIds(plan),
   });
+  if (bytes > MAX_CHECKPOINT_STATE_BYTES) {
+    throw codedError("run-state-capacity-exceeded");
+  }
+  return bytes;
+}
+
+function hasOnlyNonBlockingReviewRows(reviewRows) {
+  if (!Array.isArray(reviewRows)) return false;
+  return reviewRows.every((row) => row &&
+      Number.isInteger(row.source_row) && row.source_row > 0 &&
+      row.reason === NON_BLOCKING_REVIEW_REASON);
 }
 
 function ensureUniqueKeyWrite({transaction, snapshot, reference, id, keyType,
@@ -594,19 +944,20 @@ function ensureUniqueKeyWrite({transaction, snapshot, reference, id, keyType,
   });
 }
 
-async function checkpoint({firestore, plan, clock, field, id}) {
-  const reference = firestore.collection(COLLECTIONS.runState).doc(plan.run_id);
-  await firestore.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(reference);
-    if (!snapshot.exists || snapshot.data()?.plan_checksum !== plan.plan_checksum) {
-      throw codedError("run-state-missing");
+async function retryAbortedFirestoreOperation(operation, {
+  maxAttempts = 4,
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const isAborted = String(error?.code || "") === String(FIRESTORE_ABORTED_CODE);
+      if (!isAborted || attempt + 1 === maxAttempts) throw error;
+      await wait(1000 * (2 ** attempt));
     }
-    const completed = new Set(snapshot.data()[field] || []);
-    completed.add(id);
-    transaction.set(reference, {
-      ...snapshot.data(), [field]: [...completed].sort(), updated_at: clock(),
-    });
-  });
+  }
+  throw codedError("checkpoint-retry-exhausted");
 }
 
 function manifestData(plan, runState, completedAt) {
@@ -626,11 +977,11 @@ function manifestData(plan, runState, completedAt) {
     actor_name: plan.actor.name,
     planned_counts: clone(plan.counts),
     applied_counts: {
-      groups: (runState?.completed_group_ids || []).length,
-      products: (runState?.completed_product_ids || []).length,
+      groups: (runState?.initial_created_group_ids || []).length,
+      products: (runState?.initial_created_product_ids || []).length,
     },
-    created_group_ids: [...plan.groups_to_create],
-    created_product_ids: [...plan.products_to_create],
+    created_group_ids: [...(runState?.initial_created_group_ids || [])],
+    created_product_ids: [...(runState?.initial_created_product_ids || [])],
     skipped_rows: clone(plan.skipped_rows),
     review_rows: clone(plan.review_rows),
     started_at: runState?.started_at,
@@ -958,6 +1309,8 @@ module.exports = {
   COLLECTIONS,
   PROFILES,
   UNCATEGORIZED_NAME,
+  CHECKPOINT_BATCH_SIZE,
+  MAX_CHECKPOINT_STATE_BYTES,
   applyCatalogImport,
   applyRollback,
   buildCatalogImportPlan,
@@ -967,7 +1320,10 @@ module.exports = {
   expectedRollbackConfirmation,
   normalizeCatalogText,
   normalizeLegacyCode,
+  assertCheckpointStateCapacity,
+  checkpointStateBytes,
   readProductionContext,
+  retryAbortedFirestoreOperation,
   runLegacyPreview,
   uniqueKeyId,
 };

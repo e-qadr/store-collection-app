@@ -110,6 +110,11 @@ class FakeTransaction {
     throw new Error("Unsupported fake Firestore read.");
   }
 
+  async getAll(...references) {
+    this.firestore.transactionReadBatches.push(references.length);
+    return Promise.all(references.map((reference) => this.get(reference)));
+  }
+
   set(reference, value, options) {
     this.operations.push({type: "set", reference, value: clone(value), options});
   }
@@ -141,6 +146,10 @@ class FakeFirestore {
     this.collections = new Map();
     this.autoId = 0;
     this.transactionTail = Promise.resolve();
+    this.transactionCalls = 0;
+    this.transactionReadBatches = [];
+    this.maxTransactionWrites = 0;
+    this.getAllCalls = 0;
     for (const [collectionName, documents] of Object.entries(seed)) {
       const collection = this._collection(collectionName);
       for (const [id, value] of Object.entries(documents)) {
@@ -159,13 +168,20 @@ class FakeFirestore {
 
   runTransaction(callback) {
     const run = this.transactionTail.then(async () => {
+      this.transactionCalls += 1;
       const transaction = new FakeTransaction(this);
       const result = await callback(transaction);
+      this.maxTransactionWrites = Math.max(this.maxTransactionWrites, transaction.operations.length);
       transaction.commit();
       return result;
     });
     this.transactionTail = run.catch(() => undefined);
     return run;
+  }
+
+  getAll(...references) {
+    this.getAllCalls += 1;
+    return Promise.resolve(references.map((reference) => this._snapshot(reference)));
   }
 
   document(collectionName, id) {
