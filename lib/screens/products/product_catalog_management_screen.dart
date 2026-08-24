@@ -5,7 +5,6 @@ import 'package:intl/intl.dart' show DateFormat;
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
-import 'package:store_collection_app/utils/catalog_normalization.dart';
 
 ({CatalogUnit? unit2, CatalogUnit? unit3}) catalogEditorSecondaryUnitSlots(
   ProductCatalogModel? product,
@@ -1106,22 +1105,6 @@ class _ProductList extends StatelessWidget {
       },
     );
   }
-}
-
-List<ProductCatalogModel> filterCatalogProducts(
-  Iterable<ProductCatalogModel> products,
-  String searchText,
-) {
-  final normalizedSearch = normalizeCatalogText(searchText);
-  if (normalizedSearch.isEmpty) return products.toList(growable: false);
-  return products
-      .where((product) {
-        return product.normalizedName.contains(normalizedSearch) ||
-            normalizeCatalogText(
-              product.legacyCode ?? '',
-            ).contains(normalizedSearch);
-      })
-      .toList(growable: false);
 }
 
 class _ProductDraft {

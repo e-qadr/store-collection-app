@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
+import 'package:store_collection_app/services/product_catalog_service.dart';
 
 void main() {
   ProductCatalogModel product({
@@ -48,6 +49,48 @@ void main() {
     expect(filterCatalogProducts(products, '09-580').single.id, 'p1');
     expect(filterCatalogProducts(products, 'غير موجود'), isEmpty);
   });
+
+  test(
+    'catalog search matches Arabic text anywhere and ranks exact then prefix',
+    () {
+      final products = [
+        product(id: 'exact', name: 'كحيلان', normalizedName: 'كحيلان'),
+        product(
+          id: 'prefix',
+          name: 'كحيلان فاخر',
+          normalizedName: 'كحيلان فاخر',
+        ),
+        product(
+          id: 'middle',
+          name: 'عطر كحيلان فاخر',
+          normalizedName: 'عطر كحيلان فاخر',
+        ),
+        product(
+          id: 'end',
+          name: 'مجموعة عطر كحيلان',
+          normalizedName: 'مجموعة عطر كحيلان',
+        ),
+        product(id: 'other', name: 'بخور فاخر', normalizedName: 'بخور فاخر'),
+      ];
+
+      expect(
+        filterCatalogProducts(
+          products,
+          ' كُحيلان ',
+        ).map((entry) => entry.id).toList(),
+        ['exact', 'prefix', 'middle', 'end'],
+      );
+      expect(
+        filterCatalogProducts(
+          products,
+          'فاخر',
+        ).map((entry) => entry.id).toSet(),
+        {'prefix', 'middle', 'other'},
+      );
+      expect(filterCatalogProducts(products, 'غير موجود'), isEmpty);
+      expect(filterCatalogProducts(products, '').length, products.length);
+    },
+  );
 
   test('catalog editor preserves mixed and sparse secondary unit slots', () {
     final mixed = product(

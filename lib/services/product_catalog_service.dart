@@ -4,18 +4,63 @@ import 'package:store_collection_app/utils/catalog_normalization.dart';
 
 class ProductCatalogPage {
   final List<ProductCatalogModel> products;
-  final DocumentSnapshot<Map<String, dynamic>>? cursor;
+  final int nextOffset;
   final bool hasMore;
 
   const ProductCatalogPage({
     required this.products,
-    required this.cursor,
+    required this.nextOffset,
     required this.hasMore,
   });
 }
 
+/// Applies the same Arabic-aware normalized search everywhere the catalog is
+/// presented.  Firestore can efficiently search a prefix, but not an arbitrary
+/// substring, so callers use this after loading a brand's active catalog.
+List<ProductCatalogModel> filterCatalogProducts(
+  Iterable<ProductCatalogModel> products,
+  String searchText,
+) {
+  final normalizedSearch = normalizeCatalogText(searchText);
+  final source = products.toList(growable: false);
+  if (normalizedSearch.isEmpty) return source;
+
+  String normalizedProductName(ProductCatalogModel product) {
+    final stored = product.normalizedName.trim();
+    return stored.isEmpty ? normalizeCatalogText(product.name) : stored;
+  }
+
+  final matches = source
+      .where((product) {
+        final name = normalizedProductName(product);
+        final legacyCode = normalizeCatalogText(product.legacyCode ?? '');
+        return name.contains(normalizedSearch) ||
+            legacyCode.contains(normalizedSearch);
+      })
+      .toList(growable: false);
+  matches.sort((left, right) {
+    int rank(ProductCatalogModel product) {
+      final name = normalizedProductName(product);
+      if (name == normalizedSearch) return 0;
+      if (name.startsWith(normalizedSearch)) return 1;
+      if (name.contains(normalizedSearch)) return 2;
+      return 3; // A legacy-code-only match.
+    }
+
+    final rankComparison = rank(left).compareTo(rank(right));
+    if (rankComparison != 0) return rankComparison;
+    final nameComparison = normalizedProductName(
+      left,
+    ).compareTo(normalizedProductName(right));
+    return nameComparison != 0 ? nameComparison : left.id.compareTo(right.id);
+  });
+  return matches;
+}
+
 class ProductCatalogService {
   final FirebaseFirestore _firestore;
+  final Map<String, Future<List<ProductCatalogModel>>> _activeCatalogCache =
+      <String, Future<List<ProductCatalogModel>>>{};
 
   ProductCatalogService({FirebaseFirestore? firestore})
     : _firestore = firestore ?? FirebaseFirestore.instance;
@@ -88,38 +133,45 @@ class ProductCatalogService {
     required String brandId,
     String? groupId,
     String search = '',
-    DocumentSnapshot<Map<String, dynamic>>? after,
+    int offset = 0,
     int pageSize = 30,
   }) async {
     final cleanBrandId = _required(brandId, 'Brand ID');
-    Query<Map<String, dynamic>> query = _products
-        .where(ProductCatalogFields.brandId, isEqualTo: cleanBrandId)
-        .where(ProductCatalogFields.active, isEqualTo: true);
+    if (pageSize < 1) throw ArgumentError.value(pageSize, 'pageSize');
+    final activeProducts = await _activeProductsForBrand(cleanBrandId);
     final cleanGroupId = groupId?.trim() ?? '';
-    if (cleanGroupId.isNotEmpty) {
-      query = query.where(
-        ProductCatalogFields.groupId,
-        isEqualTo: cleanGroupId,
-      );
-    }
-    query = query.orderBy(ProductCatalogFields.normalizedName);
-    final normalizedSearch = normalizeCatalogText(search);
-    if (after != null) {
-      query = query.startAfterDocument(after);
-    } else if (normalizedSearch.isNotEmpty) {
-      query = query.startAt([normalizedSearch]);
-    }
-    if (normalizedSearch.isNotEmpty) {
-      query = query.endAt(['$normalizedSearch\uf8ff']);
-    }
-    final snapshot = await query.limit(pageSize).get();
+    final groupProducts = cleanGroupId.isEmpty
+        ? activeProducts
+        : activeProducts
+              .where((product) => product.groupId == cleanGroupId)
+              .toList(growable: false);
+    final matches = filterCatalogProducts(groupProducts, search);
+    final safeOffset = offset < 0
+        ? 0
+        : offset > matches.length
+        ? matches.length
+        : offset;
+    final nextOffset = (safeOffset + pageSize).clamp(0, matches.length);
     return ProductCatalogPage(
-      products: snapshot.docs
-          .map((doc) => ProductCatalogModel.fromMap(doc.id, doc.data()))
-          .toList(growable: false),
-      cursor: snapshot.docs.isEmpty ? null : snapshot.docs.last,
-      hasMore: snapshot.docs.length == pageSize,
+      products: matches.sublist(safeOffset, nextOffset),
+      nextOffset: nextOffset,
+      hasMore: nextOffset < matches.length,
     );
+  }
+
+  Future<List<ProductCatalogModel>> _activeProductsForBrand(String brandId) {
+    return _activeCatalogCache.putIfAbsent(brandId, () async {
+      final snapshot = await _products
+          .where(ProductCatalogFields.brandId, isEqualTo: brandId)
+          .where(ProductCatalogFields.active, isEqualTo: true)
+          .orderBy(ProductCatalogFields.normalizedName)
+          .get();
+      return List.unmodifiable(
+        snapshot.docs
+            .map((doc) => ProductCatalogModel.fromMap(doc.id, doc.data()))
+            .toList(growable: false),
+      );
+    });
   }
 
   Stream<List<ProductAuditEvent>> watchProductAudit({

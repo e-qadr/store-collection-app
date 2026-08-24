@@ -96,11 +96,11 @@ class PurchaseInvoicePdfService {
             style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
           ),
           pw.SizedBox(height: 12),
-          pw.Text('الرقم الداخلي: ${header['purchase_number']}'),
+          pw.Text('رقم الفاتورة (النظام): ${header['purchase_number']}'),
           pw.Text('الفرع المستلم: ${header['receiving_branch_name']}'),
           pw.Text('المورد: ${_fallback(header['supplier_name'])}'),
           pw.Text(
-            'رقم فاتورة المورد: ${_fallback(header['supplier_invoice_number'])}',
+            'رقم فاتورة المورد / الورقية: ${_fallback(header['supplier_invoice_number'])}',
           ),
           pw.Text(
             'تاريخ فاتورة المورد: ${_fallback(header['supplier_invoice_date'])}',

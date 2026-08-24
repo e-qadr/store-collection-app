@@ -80,7 +80,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
               TextFormField(
                 controller: _supplierNumber,
                 decoration: const InputDecoration(
-                  labelText: 'رقم فاتورة المورد (اختياري)',
+                  labelText: 'رقم فاتورة المورد / الورقية (اختياري)',
                   prefixIcon: Icon(Icons.numbers_rounded),
                 ),
               ),

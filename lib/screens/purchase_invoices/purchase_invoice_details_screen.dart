@@ -164,9 +164,10 @@ class _PurchaseInvoiceDetailsScreenState
               ],
             ),
             const Divider(),
+            _line('رقم الفاتورة (النظام)', invoice.purchaseNumber),
             _line('الفرع المستلم', invoice.receivingBranchName),
             _line('المورد', invoice.supplierName),
-            _line('رقم فاتورة المورد', invoice.supplierInvoiceNumber),
+            _line('رقم فاتورة المورد / الورقية', invoice.supplierInvoiceNumber),
             _line('تاريخ فاتورة المورد', invoice.supplierInvoiceDate),
             if (invoice.generalManagerNotes.isNotEmpty)
               _line('ملاحظات المدير العام', invoice.generalManagerNotes),

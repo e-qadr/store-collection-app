@@ -167,6 +167,19 @@ test("collector creates an atomic scalable purchase invoice and unmatched task w
   const task = findTask(firestore, invoiceId);
 
   assert.equal(result.statusCode, 201);
+  assert.equal(result.responseData.purchase_number, "PUR-0001");
+  assert.equal(invoice.purchase_number, "PUR-0001");
+  assert.deepEqual(
+      firestore.document(COLLECTIONS.counters, "global"),
+      {
+        id: "global",
+        scope: "global",
+        next_number: 2,
+        last_purchase_number: "PUR-0001",
+        last_invoice_id: invoiceId,
+        last_updated: now,
+      },
+  );
   assert.equal(invoice.status, "pendingReceiverReview");
   assert.equal(invoice.item_count, 2);
   assert.equal(invoice.items, undefined);
@@ -181,6 +194,70 @@ test("collector creates an atomic scalable purchase invoice and unmatched task w
   }
   const notificationText = JSON.stringify(firestore.documents(COLLECTIONS.notifications));
   assert.doesNotMatch(notificationText, /unit_price|line_total|invoice_total|accounting_reference|\b9\b/);
+});
+
+test("purchase numbers are atomic, sequential, and independent of optional supplier references", async () => {
+  const firestore = new FakeFirestore(seed());
+  const first = await createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload: createPayload(),
+    idempotencyKey: "purchase-number-1",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  const secondPayload = createPayload();
+  delete secondPayload.supplier_name;
+  delete secondPayload.supplier_invoice_number;
+  delete secondPayload.supplier_invoice_date;
+  const second = await createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload: secondPayload,
+    idempotencyKey: "purchase-number-2",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  const thirdPayload = createPayload();
+  thirdPayload.supplier_invoice_number = "PAPER-3";
+  const third = await createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload: thirdPayload,
+    idempotencyKey: "purchase-number-3",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+
+  assert.deepEqual(
+      [first, second, third].map((result) => result.responseData.purchase_number),
+      ["PUR-0001", "PUR-0002", "PUR-0003"],
+  );
+  const thirdInvoice = firestore.document(COLLECTIONS.invoices, third.responseData.invoice_id);
+  assert.equal(thirdInvoice.supplier_invoice_number, "PAPER-3");
+  assert.equal(firestore.document(COLLECTIONS.counters, "global").next_number, 4);
+});
+
+test("concurrent purchase creation allocates distinct sequential system numbers", async () => {
+  const firestore = new FakeFirestore(seed());
+  const results = await Promise.all(Array.from({length: 4}, (_, index) => {
+    const payload = createPayload();
+    payload.supplier_invoice_number = `CONCURRENT-${index}`;
+    return createPurchaseInvoice({
+      firestore,
+      actorUid: "collector",
+      payload,
+      idempotencyKey: `concurrent-purchase-${index}`,
+      timestamp: now,
+      randomUUID: uuidFactory(),
+    });
+  }));
+
+  assert.deepEqual(
+      results.map((result) => result.responseData.purchase_number).sort(),
+      ["PUR-0001", "PUR-0002", "PUR-0003", "PUR-0004"],
+  );
+  assert.equal(firestore.document(COLLECTIONS.counters, "global").next_number, 5);
 });
 
 test("creation validates collector role, receiving brand ownership, duplicates, and idempotency", async () => {

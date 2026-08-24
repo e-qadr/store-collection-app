@@ -37,6 +37,7 @@ const COLLECTIONS = Object.freeze({
   prices: "purchase_invoice_prices",
   reviewTasks: "product_review_tasks",
   commands: "purchase_invoice_commands",
+  counters: "purchase_invoice_counters",
   supplierKeys: "purchase_invoice_unique_keys",
   priceLatest: "product_price_latest",
   priceHistory: "product_price_history",
@@ -62,6 +63,8 @@ const REVIEW_STATUS = Object.freeze({
 const PURCHASE_JSON_LIMIT = "64kb";
 const ITEMS_SUBCOLLECTION = "items";
 const OPERATIONAL_ROLES = new Set(["manager", "collector", "accountant", "admin"]);
+const PURCHASE_COUNTER_DOCUMENT_ID = "global";
+const PURCHASE_NUMBER_PREFIX = "PUR";
 
 const HEADER_KEYS = new Set([
   "id", "schema_version", "workflow_version", "workflow_identity", "status", "revision",
@@ -447,6 +450,16 @@ function responseFor(invoiceId, status, revision, purchaseNumber) {
   return compact({invoice_id: invoiceId, purchase_number: purchaseNumber, status, revision});
 }
 
+function nextPurchaseNumber(counterSnapshot) {
+  const stored = counterSnapshot.exists ? counterSnapshot.data()?.next_number : 1;
+  if (!Number.isSafeInteger(stored) || stored < 1 || stored >= Number.MAX_SAFE_INTEGER) {
+    throw new PurchaseCommandError(
+        "purchase-counter-invalid", 409, "The purchase invoice counter is invalid.",
+    );
+  }
+  return {nextNumber: stored, purchaseNumber: `${PURCHASE_NUMBER_PREFIX}-${String(stored).padStart(4, "0")}`};
+}
+
 function supplierUniqueKey(payload) {
   if (!payload.supplier_name || !payload.supplier_invoice_number) return null;
   return deterministicDocumentId(
@@ -566,7 +579,9 @@ async function createPurchaseInvoice({
         };
       });
       const itemDigest = purchaseItemDigest(items);
-      const purchaseNumber = `PUR-${invoiceRef.id.slice(0, 8).toUpperCase()}`;
+      const counterRef = firestore.collection(COLLECTIONS.counters).doc(PURCHASE_COUNTER_DOCUMENT_ID);
+      const counterSnapshot = await transaction.get(counterRef);
+      const {nextNumber, purchaseNumber} = nextPurchaseNumber(counterSnapshot);
       const createdEvent = eventData(
           "purchase_invoice_created",
           "تم إنشاء فاتورة المشتريات وإرسالها إلى الفرع المستلم.",
@@ -607,6 +622,14 @@ async function createPurchaseInvoice({
           item_id: itemIds[index], unit_price: input.provisional_unit_price,
         }).filter(Boolean);
       transaction.set(invoiceRef, invoice);
+      transaction.set(counterRef, {
+        id: PURCHASE_COUNTER_DOCUMENT_ID,
+        scope: "global",
+        next_number: nextNumber + 1,
+        last_purchase_number: purchaseNumber,
+        last_invoice_id: invoiceRef.id,
+        last_updated: timestamp,
+      }, {merge: true});
       items.forEach((item) => transaction.set(itemsCollection(invoiceRef).doc(item.item_id), item));
       transaction.set(firestore.collection(COLLECTIONS.prices).doc(invoiceRef.id), {
         id: invoiceRef.id,
@@ -1744,6 +1767,7 @@ function createPurchaseInvoiceCommandRouter({
 module.exports = {
   COLLECTIONS,
   PURCHASE_JSON_LIMIT,
+  PURCHASE_COUNTER_DOCUMENT_ID,
   REVIEW_STATUS,
   STATUS,
   assertProtectedPrice,

@@ -56,6 +56,12 @@ test("purchase creation validates closed source-specific schemas and duplicate s
   assert.throws(() => validateCreatePayload({
     receiving_branch_id: "branch-r",
     currency: "YER",
+    purchase_number: "PUR-9999",
+    items: [{source_type: "catalog", product_id: "product-1", unit_id: "primary", ordered_quantity: 1}],
+  }), (error) => error instanceof PurchaseCommandError && error.code === "invalid-argument");
+  assert.throws(() => validateCreatePayload({
+    receiving_branch_id: "branch-r",
+    currency: "YER",
     items: [{
       source_type: "catalog",
       product_id: "product-1",

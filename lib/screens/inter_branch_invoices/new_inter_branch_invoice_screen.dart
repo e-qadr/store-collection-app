@@ -77,7 +77,6 @@ class _NewInterBranchInvoiceScreenState
   Timer? _searchDebounce;
   List<ProductCatalogModel> _products = const [];
   List<DirectInvoiceBranchOption> _branches = const [];
-  DocumentSnapshot<Map<String, dynamic>>? _productCursor;
   DocumentSnapshot<Map<String, dynamic>>? _branchCursor;
   bool _hasMoreProducts = false;
   bool _hasMoreBranches = false;
@@ -203,13 +202,12 @@ class _NewInterBranchInvoiceScreenState
           .fetchActiveProductsPage(
             brandId: _brandId,
             search: _searchController.text,
-            after: reset ? null : _productCursor,
+            offset: reset ? 0 : _products.length,
             pageSize: 30,
           );
       if (!mounted) return;
       setState(() {
         _products = reset ? page.products : [..._products, ...page.products];
-        _productCursor = page.cursor;
         _hasMoreProducts = page.hasMore;
         if (reset &&
             !_products.any((product) => product.id == _selectedProductId)) {

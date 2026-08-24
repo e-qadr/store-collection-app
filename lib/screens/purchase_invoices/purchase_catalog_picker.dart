@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
@@ -49,7 +48,6 @@ class _PurchaseCatalogPickerDialogState
   final _search = TextEditingController();
   Timer? _debounce;
   List<ProductCatalogModel> _products = const [];
-  DocumentSnapshot<Map<String, dynamic>>? _cursor;
   String? _productId;
   String? _unitId;
   bool _loading = false;
@@ -92,13 +90,12 @@ class _PurchaseCatalogPickerDialogState
       final page = await widget.service.fetchActiveProductsPage(
         brandId: widget.brandId,
         search: _search.text,
-        after: reset ? null : _cursor,
+        offset: reset ? 0 : _products.length,
         pageSize: 30,
       );
       if (!mounted) return;
       setState(() {
         _products = reset ? page.products : [..._products, ...page.products];
-        _cursor = page.cursor;
         _hasMore = page.hasMore;
         if (reset && !_products.any((entry) => entry.id == _productId)) {
           _productId = null;
