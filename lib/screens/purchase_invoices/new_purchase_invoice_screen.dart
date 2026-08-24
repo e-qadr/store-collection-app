@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_item_editor_dialog.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
@@ -261,169 +262,40 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
     if (!mounted || selection == null) return;
     final product = selection.product;
     final unit = selection.unit;
-    final quantity = TextEditingController(text: '1');
-    final provisional = TextEditingController();
-    final accepted = await showDialog<bool>(
+    final draft = await showDialog<PurchaseItemEditorResult>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('${product.name} — ${unit.displayValue}'),
-        content: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: quantity,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(labelText: 'الكمية'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: provisional,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'سعر المورد الأولي (اختياري وسري)',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('إضافة'),
-          ),
-        ],
+      builder: (_) => PurchaseItemEditorDialog.catalog(
+        productName: product.name,
+        unitValue: unit.displayValue,
       ),
     );
-    final value = double.tryParse(quantity.text.trim());
-    final price = provisional.text.trim().isEmpty
-        ? null
-        : double.tryParse(provisional.text.trim());
-    quantity.dispose();
-    provisional.dispose();
-    if (accepted != true ||
-        value == null ||
-        value <= 0 ||
-        (price != null && price < 0)) {
-      return;
-    }
+    if (!mounted || draft == null) return;
     setState(
       () => _items.add(
         _PurchaseDraftItem.catalog(
           product: product,
           unit: unit,
-          quantity: value,
-          provisionalPrice: price,
+          quantity: draft.quantity,
+          provisionalPrice: draft.provisionalPrice,
         ),
       ),
     );
   }
 
   Future<void> _addUnmatchedItem() async {
-    final name = TextEditingController();
-    final group = TextEditingController();
-    final unit = TextEditingController();
-    final quantity = TextEditingController(text: '1');
-    final provisional = TextEditingController();
-    final accepted = await showDialog<bool>(
+    final draft = await showDialog<PurchaseItemEditorResult>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('مادة غير موجودة في الكتالوج'),
-        content: SizedBox(
-          width: 460,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'اسم المادة'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: group,
-                  decoration: const InputDecoration(
-                    labelText: 'المجموعة (اختيارية)',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: unit,
-                  decoration: const InputDecoration(
-                    labelText: 'الوحدة كما وردت',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: quantity,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(labelText: 'الكمية'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: provisional,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(
-                    labelText: 'سعر المورد الأولي (اختياري وسري)',
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('إضافة'),
-          ),
-        ],
-      ),
+      builder: (_) => const PurchaseItemEditorDialog.unmatched(),
     );
-    final itemName = name.text.trim();
-    final unitValue = unit.text.trim();
-    final itemQuantity = double.tryParse(quantity.text.trim());
-    final price = provisional.text.trim().isEmpty
-        ? null
-        : double.tryParse(provisional.text.trim());
-    final groupValue = group.text.trim();
-    name.dispose();
-    group.dispose();
-    unit.dispose();
-    quantity.dispose();
-    provisional.dispose();
-    if (accepted != true ||
-        itemName.isEmpty ||
-        unitValue.isEmpty ||
-        itemQuantity == null ||
-        itemQuantity <= 0 ||
-        (price != null && price < 0)) {
-      return;
-    }
+    if (!mounted || draft == null) return;
     setState(
       () => _items.add(
         _PurchaseDraftItem.unmatched(
-          name: itemName,
-          group: groupValue,
-          unit: unitValue,
-          quantity: itemQuantity,
-          provisionalPrice: price,
+          name: draft.materialName,
+          group: draft.groupText,
+          unit: draft.unitText,
+          quantity: draft.quantity,
+          provisionalPrice: draft.provisionalPrice,
         ),
       ),
     );
