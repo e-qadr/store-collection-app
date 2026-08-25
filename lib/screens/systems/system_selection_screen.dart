@@ -98,7 +98,8 @@ class SystemSelectionScreen extends StatelessWidget {
                       color: AppTheme.collectorColor,
                       onTap: () => _openCollectionSystem(context),
                     ),
-                    if (role == UserRole.collector || role == UserRole.accountant) ...[
+                    if (role == UserRole.collector ||
+                        role == UserRole.accountant) ...[
                       const SizedBox(height: 12),
                       ActionCard(
                         title: 'إدارة المواد',
@@ -110,7 +111,7 @@ class SystemSelectionScreen extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const ProductCatalogManagementScreen(),
+                                ProductCatalogManagementScreen(role: role),
                           ),
                         ),
                       ),

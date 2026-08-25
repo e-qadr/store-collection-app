@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:store_collection_app/models/enums.dart';
-import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
 import 'package:store_collection_app/screens/transactions/new_transaction_screen.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/screens/transactions/collector_edit_requests_screen.dart';
@@ -49,26 +47,6 @@ class CollectorDashboard extends StatelessWidget {
                     children: [
                       // ── Summary Stats ──────────────────────────────────
                       _buildCollectorStats(collectorId),
-                      const SizedBox(height: 12),
-                      ActionCard(
-                        title: 'فواتير التحويل بين الفروع',
-                        subtitle:
-                            'قائمة عامة بالفواتير التي تنتظر تسعير المدير العام',
-                        icon: Icons.swap_horiz_rounded,
-                        color: AppTheme.collectorColor,
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  InterBranchInvoicesDashboard(
-                                    role: UserRole.collector,
-                                    branchName: 'جميع الفروع',
-                                  ),
-                            ),
-                          );
-                        },
-                      ),
                       const SizedBox(height: 28),
 
                       // ── Quick Actions ──────────────────────────────────

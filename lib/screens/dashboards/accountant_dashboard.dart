@@ -298,7 +298,9 @@ class AccountantDashboard extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                const ProductCatalogManagementScreen(),
+                                const ProductCatalogManagementScreen(
+                                  role: UserRole.accountant,
+                                ),
                           ),
                         ),
                       ),

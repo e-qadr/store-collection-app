@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/purchase_invoices/product_review_queue_screen.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/material_management_access.dart';
 
 ({CatalogUnit? unit2, CatalogUnit? unit3}) catalogEditorSecondaryUnitSlots(
   ProductCatalogModel? product,
@@ -72,18 +74,69 @@ CatalogUnit catalogEditorUpdatedUnit({
   );
 }
 
-class ProductCatalogManagementScreen extends StatefulWidget {
+class ProductCatalogManagementScreen extends StatelessWidget {
+  final UserRole? role;
+  final bool hasKnownRole;
   final ProductCatalogService? service;
 
-  const ProductCatalogManagementScreen({super.key, this.service});
+  const ProductCatalogManagementScreen({
+    super.key,
+    required this.role,
+    this.hasKnownRole = true,
+    this.service,
+  });
 
   @override
-  State<ProductCatalogManagementScreen> createState() =>
-      _ProductCatalogManagementScreenState();
+  Widget build(BuildContext context) {
+    if (!MaterialManagementAccess.canAccess(role, hasKnownRole: hasKnownRole)) {
+      return const _MaterialManagementAccessDeniedScreen();
+    }
+    return _ProductCatalogManagementContent(service: service);
+  }
 }
 
-class _ProductCatalogManagementScreenState
-    extends State<ProductCatalogManagementScreen> {
+class _MaterialManagementAccessDeniedScreen extends StatelessWidget {
+  const _MaterialManagementAccessDeniedScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_rounded, size: 56, color: AppTheme.errorColor),
+                SizedBox(height: 16),
+                Text(
+                  'غير مصرح لك بالوصول إلى إدارة المواد',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductCatalogManagementContent extends StatefulWidget {
+  final ProductCatalogService? service;
+
+  const _ProductCatalogManagementContent({this.service});
+
+  @override
+  State<_ProductCatalogManagementContent> createState() =>
+      _ProductCatalogManagementContentState();
+}
+
+class _ProductCatalogManagementContentState
+    extends State<_ProductCatalogManagementContent> {
   late final ProductCatalogService _service;
   late final ProductPriceService _prices;
   final _searchController = TextEditingController();
