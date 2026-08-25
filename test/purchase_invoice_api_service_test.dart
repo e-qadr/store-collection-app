@@ -82,6 +82,68 @@ void main() {
                 (error) => error.message,
                 'message',
                 isNot(contains('12345')),
+              )
+              .having((error) => error.httpStatus, 'HTTP status', 409)
+              .having(
+                (error) => error.sanitizedBackendMessage,
+                'sanitized backend message',
+                isNot(contains('SECRET INTERNAL PRICE 12345')),
+              ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'creation rejection exposes its safe backend code and status for diagnosis',
+    () async {
+      final service = PurchaseInvoiceApiService(
+        baseUrl: 'https://api.example.test',
+        tokenProvider: () async => 'id-token',
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'error': {
+                'code': 'receiving-manager-not-configured',
+                'message': 'The receiving branch has no active manager.',
+              },
+            }),
+            409,
+          ),
+        ),
+      );
+
+      await expectLater(
+        service.createInvoice(
+          receivingBranchId: 'branch-r',
+          currency: 'YER',
+          idempotencyKey: 'purchase-request-2',
+          items: const [
+            PurchaseInvoiceCreateItem.catalog(
+              productId: 'product-1',
+              unitId: 'unit-1',
+              orderedQuantity: 1,
+              provisionalUnitPrice: 3,
+            ),
+          ],
+        ),
+        throwsA(
+          isA<PurchaseInvoiceApiException>()
+              .having(
+                (error) => error.code,
+                'backend code',
+                'receiving-manager-not-configured',
+              )
+              .having((error) => error.httpStatus, 'HTTP status', 409)
+              .having(
+                (error) => error.message,
+                'safe localized message',
+                contains('مدير نشط'),
+              )
+              .having(
+                (error) => error.sanitizedBackendMessage,
+                'sanitized backend message',
+                'The receiving branch has no active manager.',
               ),
         ),
       );

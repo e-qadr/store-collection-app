@@ -66,6 +66,76 @@ void main() {
     expect(groupedBranchPreviewLimit, 5);
   });
 
+  test('catalog group display resolves names and never falls back to IDs', () {
+    const product = ProductCatalogModel(
+      id: 'product-1',
+      brandId: 'brand-1',
+      groupId: 'group-internal-id',
+      name: 'مادة',
+      normalizedName: 'مادة',
+      units: [CatalogUnit(id: 'u1', displayValue: 'حبة', rawValue: 'حبه')],
+      primaryUnitId: 'u1',
+      nameUniqueKeyId: 'key',
+    );
+    expect(
+      catalogGroupDisplayName(product, const {
+        'group-internal-id': 'مواد عامة',
+      }),
+      'مواد عامة',
+    );
+    expect(catalogGroupDisplayName(product, const {}), isNull);
+  });
+
+  testWidgets('grouped overview renders records after a successful query', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _groupedOverview(
+        (kind, branchId) => Stream.value([
+          GroupedBranchOverviewRecord(
+            id: 'expense-1',
+            data: {
+              'request_number': 'EXP-1',
+              'title': 'تشغيل',
+              'status': 'pendingManagerApproval',
+              'created_at': DateTime(2026, 8, 25),
+            },
+          ),
+        ]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('EXP-1'), findsOneWidget);
+    expect(find.text('تعذر تحميل سجلات الفرع.'), findsNothing);
+  });
+
+  testWidgets(
+    'grouped overview renders an empty state after a successful query',
+    (tester) async {
+      await tester.pumpWidget(
+        _groupedOverview((kind, branchId) => Stream.value([])),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('لا توجد سجلات لهذا الفرع بعد.'), findsOneWidget);
+      expect(find.text('تعذر تحميل سجلات الفرع.'), findsNothing);
+    },
+  );
+
+  testWidgets('grouped overview renders an error only when its query fails', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _groupedOverview(
+        (kind, branchId) => Stream<List<GroupedBranchOverviewRecord>>.error(
+          StateError('query failed'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('تعذر تحميل سجلات الفرع.'), findsOneWidget);
+    expect(find.text('لا توجد سجلات لهذا الفرع بعد.'), findsNothing);
+  });
+
   test('new consumption item stores identity and snapshots', () {
     const item = ConsumableRequestItem(
       productId: 'product-1',
@@ -104,6 +174,30 @@ void main() {
       );
       expect(find.byKey(const Key('shared-catalog-search')), findsOneWidget);
     });
+
+    testWidgets(
+      '${mode.name} uses readable selected and unselected unit chips',
+      (tester) async {
+        await tester.pumpWidget(_PickerHarness(mode: mode));
+        await tester.tap(find.text('open'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('shared-catalog-product-p1')));
+        await tester.pumpAndSettle();
+
+        final selected = tester.widget<ChoiceChip>(
+          find.byKey(const Key('shared-catalog-unit-p1-u1')),
+        );
+        final unselected = tester.widget<ChoiceChip>(
+          find.byKey(const Key('shared-catalog-unit-p1-u2')),
+        );
+        expect(selected.selected, isTrue);
+        expect(unselected.selected, isFalse);
+        expect(selected.labelStyle?.color, isNotNull);
+        expect(unselected.labelStyle?.color, isNotNull);
+        expect(selected.backgroundColor, isNotNull);
+        expect(unselected.backgroundColor, isNotNull);
+      },
+    );
   }
 
   for (final mode in [
@@ -188,6 +282,7 @@ class _PickerHarness extends StatelessWidget {
               normalizedName: 'كحيلان',
               units: [
                 CatalogUnit(id: 'u1', displayValue: 'حبة', rawValue: 'حبه'),
+                CatalogUnit(id: 'u2', displayValue: 'علبة', rawValue: 'علبه'),
               ],
               primaryUnitId: 'u1',
               nameUniqueKeyId: 'key',
@@ -199,3 +294,16 @@ class _PickerHarness extends StatelessWidget {
     ),
   );
 }
+
+Widget _groupedOverview(GroupedBranchRecordsStream recordsStream) =>
+    MaterialApp(
+      home: GroupedBranchOverview(
+        role: UserRole.collector,
+        kind: GroupedBranchOverviewKind.expenses,
+        onViewAll: (_, _, _) {},
+        branchStream: Stream.value(const [
+          GroupedBranchOverviewBranch(id: 'branch-1', name: 'فرع الاختبار'),
+        ]),
+        recordsStream: recordsStream,
+      ),
+    );

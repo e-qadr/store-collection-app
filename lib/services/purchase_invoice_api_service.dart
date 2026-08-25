@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
@@ -10,8 +11,17 @@ import 'package:store_collection_app/services/auth_api_service.dart';
 class PurchaseInvoiceApiException implements Exception {
   final String code;
   final String message;
+  final int? httpStatus;
+  final String? sanitizedBackendMessage;
+  final String? firstClientFrame;
 
-  const PurchaseInvoiceApiException(this.code, this.message);
+  const PurchaseInvoiceApiException(
+    this.code,
+    this.message, {
+    this.httpStatus,
+    this.sanitizedBackendMessage,
+    this.firstClientFrame,
+  });
 
   @override
   String toString() => message;
@@ -364,7 +374,15 @@ class PurchaseInvoiceApiService {
           ? Map<String, dynamic>.from(rawError)
           : const <String, dynamic>{};
       final code = error['code']?.toString() ?? 'request-failed';
-      throw PurchaseInvoiceApiException(code, safeMessageForCode(code));
+      final exception = PurchaseInvoiceApiException(
+        code,
+        safeMessageForCode(code),
+        httpStatus: response.statusCode,
+        sanitizedBackendMessage: _sanitizeBackendMessage(error['message']),
+        firstClientFrame: _firstClientFrame(StackTrace.current),
+      );
+      _debugCommandFailure(exception);
+      throw exception;
     }
     final result = PurchaseInvoiceCommandResult.fromJson(decoded);
     if (result.invoiceId.isEmpty || result.revision < 1) {
@@ -394,8 +412,67 @@ class PurchaseInvoiceApiService {
     'payload-too-large' => 'حجم الفاتورة أكبر من الحد الآمن المسموح.',
     'forbidden' => 'لا تملك صلاحية تنفيذ هذا الإجراء.',
     'unauthenticated' => 'انتهت جلسة الدخول. سجل الدخول مجددًا.',
+    'invalid-argument' =>
+      'بيانات فاتورة المشتريات غير صالحة. راجع الفرع والمادة والوحدة والسعر.',
+    'duplicate-item' => 'لا يمكن تكرار المادة والوحدة نفسها في الفاتورة.',
+    'branch-not-found' => 'الفرع المستلم غير متاح.',
+    'branch-brand-missing' ||
+    'branch-brand-invalid' => 'بيانات العلامة التجارية للفرع غير مكتملة.',
+    'receiving-manager-not-configured' =>
+      'لا يوجد مدير نشط ومُعيَّن للفرع المستلم.',
+    'accountant-not-configured' =>
+      'لا يوجد محاسب نشط لمراجعة المادة غير المطابقة.',
+    'product-brand-mismatch' =>
+      'المادة المختارة لا تتبع للعلامة التجارية الخاصة بالفرع.',
+    'catalog-snapshot-invalid' =>
+      'بيانات المادة أو المجموعة أو الوحدة المختارة لم تعد صالحة. أعد اختيارها.',
+    'idempotency-conflict' =>
+      'تم استخدام مفتاح الإرسال لطلب مختلف. أعد فتح الفاتورة وحاول مجددًا.',
     _ => 'تعذر إتمام العملية بأمان. حاول مجددًا أو تواصل مع الإدارة.',
   };
+
+  static String _sanitizeBackendMessage(dynamic value) {
+    final message = value?.toString().trim() ?? '';
+    if (message.isEmpty) return '';
+    final sanitized = message
+        .replaceAll(
+          RegExp(r'bearer\s+[^\s]+', caseSensitive: false),
+          'Bearer [redacted]',
+        )
+        .replaceAll(
+          RegExp(
+            r'\b(secret|internal|token|password|authorization)\b[^,;]*',
+            caseSensitive: false,
+          ),
+          '[redacted]',
+        )
+        .replaceAll(
+          RegExp(
+            r'(token|password|authorization)\s*[:=]\s*[^\s,;]+',
+            caseSensitive: false,
+          ),
+          r'$1=[redacted]',
+        )
+        .replaceAll(RegExp(r'[\r\n]+'), ' ');
+    return sanitized.substring(0, sanitized.length.clamp(0, 240));
+  }
+
+  static String _firstClientFrame(StackTrace trace) {
+    final lines = trace.toString().split('\n');
+    return lines.firstWhere(
+      (line) => line.contains('purchase_invoice_api_service.dart'),
+      orElse: () => lines.isEmpty ? '' : lines.first,
+    );
+  }
+
+  static void _debugCommandFailure(PurchaseInvoiceApiException error) {
+    if (!kDebugMode) return;
+    debugPrint(
+      'Purchase invoice command rejected: http=${error.httpStatus ?? '-'} '
+      'code=${error.code} message=${error.sanitizedBackendMessage ?? ''} '
+      'frame=${error.firstClientFrame ?? ''}',
+    );
+  }
 
   Map<String, dynamic> _decode(String source) {
     try {

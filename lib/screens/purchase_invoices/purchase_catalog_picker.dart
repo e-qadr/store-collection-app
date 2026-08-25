@@ -15,6 +15,16 @@ class CatalogSelection {
 
 typedef PurchaseCatalogSelection = CatalogSelection;
 
+/// Returns a human-readable group name only. Product group IDs are internal
+/// catalog identities and must never be rendered as a fallback label.
+String? catalogGroupDisplayName(
+  ProductCatalogModel product,
+  Map<String, String> groupNames,
+) {
+  final name = groupNames[product.groupId]?.trim() ?? '';
+  return name.isEmpty || name == product.groupId ? null : name;
+}
+
 /// Local, brand-scoped material search. The service caches catalog pages, so
 /// typing filters the loaded catalog rather than querying Firestore per key.
 Future<PurchaseCatalogSelection?> showPurchaseCatalogPicker(
@@ -79,7 +89,9 @@ class _PurchaseCatalogPickerDialogState
   final _search = TextEditingController();
   Timer? _debounce;
   List<ProductCatalogModel> _products = const [];
+  Map<String, String> _groupNames = const {};
   String? _expandedProductId;
+  String? _expandedUnitId;
   bool _loading = false;
   bool _hasMore = false;
   bool _pendingReset = false;
@@ -113,23 +125,37 @@ class _PurchaseCatalogPickerDialogState
         if (!mounted) return;
         setState(() {
           _products = filtered;
+          _groupNames = const {};
           _hasMore = false;
         });
         return;
       }
-      final page = await (widget.service ?? ProductCatalogService())
-          .fetchActiveProductsPage(
-            brandId: widget.brandId,
-            search: _search.text,
-            offset: reset ? 0 : _products.length,
-            pageSize: 40,
-          );
+      final service = widget.service ?? ProductCatalogService();
+      final pageFuture = service.fetchActiveProductsPage(
+        brandId: widget.brandId,
+        search: _search.text,
+        offset: reset ? 0 : _products.length,
+        pageSize: 40,
+      );
+      final groupNamesFuture = service.fetchActiveGroupNames(
+        brandId: widget.brandId,
+      );
+      final page = await pageFuture;
+      Map<String, String> groupNames = const {};
+      try {
+        groupNames = await groupNamesFuture;
+      } catch (_) {
+        // Group names are presentation-only. The product list remains usable
+        // and unresolved groups stay hidden instead of exposing raw IDs.
+      }
       if (!mounted) return;
       setState(() {
         _products = reset ? page.products : [..._products, ...page.products];
+        _groupNames = groupNames;
         _hasMore = page.hasMore;
         if (!_products.any((entry) => entry.id == _expandedProductId)) {
           _expandedProductId = null;
+          _expandedUnitId = null;
         }
       });
     } catch (_) {
@@ -214,6 +240,10 @@ class _PurchaseCatalogPickerDialogState
                       final product = _products[index];
                       final expanded = product.id == _expandedProductId;
                       final code = product.legacyCode?.trim() ?? '';
+                      final groupName = catalogGroupDisplayName(
+                        product,
+                        _groupNames,
+                      );
                       return Material(
                         color: Colors.transparent,
                         child: InkWell(
@@ -222,11 +252,17 @@ class _PurchaseCatalogPickerDialogState
                             if (product.units.length == 1) {
                               _select(product, product.units.single);
                             } else {
-                              setState(
-                                () => _expandedProductId = expanded
+                              setState(() {
+                                _expandedProductId = expanded
                                     ? null
-                                    : product.id,
-                              );
+                                    : product.id;
+                                _expandedUnitId = expanded
+                                    ? null
+                                    : product
+                                              .unitById(product.primaryUnitId)
+                                              ?.id ??
+                                          product.units.first.id;
+                              });
                             }
                           },
                           child: Padding(
@@ -257,8 +293,7 @@ class _PurchaseCatalogPickerDialogState
                                       ),
                                   ],
                                 ),
-                                if (code.isNotEmpty ||
-                                    product.groupId.isNotEmpty)
+                                if (code.isNotEmpty || groupName != null)
                                   Padding(
                                     padding: const EdgeInsets.only(
                                       top: 3,
@@ -267,7 +302,8 @@ class _PurchaseCatalogPickerDialogState
                                     child: Text(
                                       [
                                         if (code.isNotEmpty) code,
-                                        'المجموعة: ${product.groupId}',
+                                        if (groupName != null)
+                                          'المجموعة: $groupName',
                                       ].join(' • '),
                                       style: Theme.of(
                                         context,
@@ -284,20 +320,46 @@ class _PurchaseCatalogPickerDialogState
                                       spacing: 8,
                                       runSpacing: 6,
                                       children: product.units
-                                          .map(
-                                            (unit) => ActionChip(
+                                          .map((unit) {
+                                            final selected =
+                                                unit.id == _expandedUnitId;
+                                            final colors = Theme.of(
+                                              context,
+                                            ).colorScheme;
+                                            return ChoiceChip(
                                               key: Key(
                                                 'shared-catalog-unit-${product.id}-${unit.id}',
                                               ),
+                                              selected: selected,
                                               label: Text(unit.displayValue),
-                                              avatar: const Icon(
+                                              labelStyle: TextStyle(
+                                                color: selected
+                                                    ? colors.onPrimaryContainer
+                                                    : colors.onSurface,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                              backgroundColor: colors
+                                                  .surfaceContainerHighest,
+                                              selectedColor:
+                                                  colors.primaryContainer,
+                                              side: BorderSide(
+                                                color: selected
+                                                    ? colors.primary
+                                                    : colors.outlineVariant,
+                                              ),
+                                              checkmarkColor:
+                                                  colors.onPrimaryContainer,
+                                              avatar: Icon(
                                                 Icons.straighten_rounded,
                                                 size: 18,
+                                                color: selected
+                                                    ? colors.onPrimaryContainer
+                                                    : colors.onSurface,
                                               ),
-                                              onPressed: () =>
+                                              onSelected: (_) =>
                                                   _select(product, unit),
-                                            ),
-                                          )
+                                            );
+                                          })
                                           .toList(growable: false),
                                     ),
                                   ),

@@ -61,6 +61,8 @@ class ProductCatalogService {
   final FirebaseFirestore _firestore;
   final Map<String, Future<List<ProductCatalogModel>>> _activeCatalogCache =
       <String, Future<List<ProductCatalogModel>>>{};
+  final Map<String, Future<Map<String, String>>> _activeGroupNamesCache =
+      <String, Future<Map<String, String>>>{};
 
   ProductCatalogService({FirebaseFirestore? firestore})
     : _firestore = firestore ?? FirebaseFirestore.instance;
@@ -157,6 +159,28 @@ class ProductCatalogService {
       nextOffset: nextOffset,
       hasMore: nextOffset < matches.length,
     );
+  }
+
+  /// Resolves catalog group IDs to display names without copying names into
+  /// product identities. Callers must hide an unresolved group rather than
+  /// falling back to the opaque document ID.
+  Future<Map<String, String>> fetchActiveGroupNames({required String brandId}) {
+    final cleanBrandId = _required(brandId, 'Brand ID');
+    return _activeGroupNamesCache.putIfAbsent(cleanBrandId, () async {
+      final snapshot = await _groups
+          .where(ProductCatalogFields.brandId, isEqualTo: cleanBrandId)
+          .where(ProductCatalogFields.active, isEqualTo: true)
+          .get();
+      final names = <String, String>{};
+      for (final doc in snapshot.docs) {
+        final group = ProductGroupModel.fromMap(doc.id, doc.data());
+        final name = group.name.trim();
+        if (name.isEmpty) continue;
+        names[doc.id] = name;
+        if (group.id.isNotEmpty) names[group.id] = name;
+      }
+      return Map.unmodifiable(names);
+    });
   }
 
   Future<List<ProductCatalogModel>> _activeProductsForBrand(String brandId) {

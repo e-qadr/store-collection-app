@@ -15,18 +15,92 @@ bool usesGroupedBranchOverview(UserRole role, String? branchId) {
       (branchId == null || branchId.trim().isEmpty);
 }
 
+class GroupedBranchOverviewBranch {
+  final String id;
+  final String name;
+
+  const GroupedBranchOverviewBranch({required this.id, required this.name});
+}
+
+class GroupedBranchOverviewRecord {
+  final String id;
+  final Map<String, dynamic> data;
+
+  const GroupedBranchOverviewRecord({required this.id, required this.data});
+}
+
+typedef GroupedBranchRecordsStream =
+    Stream<List<GroupedBranchOverviewRecord>> Function(
+      GroupedBranchOverviewKind kind,
+      String branchId,
+    );
+
 class GroupedBranchOverview extends StatelessWidget {
   final UserRole role;
   final GroupedBranchOverviewKind kind;
   final void Function(BuildContext context, String branchId, String branchName)
   onViewAll;
+  final FirebaseFirestore? firestore;
+  final Stream<List<GroupedBranchOverviewBranch>>? branchStream;
+  final GroupedBranchRecordsStream? recordsStream;
 
   const GroupedBranchOverview({
     super.key,
     required this.role,
     required this.kind,
     required this.onViewAll,
+    this.firestore,
+    this.branchStream,
+    this.recordsStream,
   });
+
+  Stream<List<GroupedBranchOverviewBranch>> _branches() {
+    final database = firestore ?? FirebaseFirestore.instance;
+    return database
+        .collection('branches')
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map(
+                (doc) => GroupedBranchOverviewBranch(
+                  id: doc.id,
+                  name: doc.data()['name']?.toString() ?? 'فرع غير مسمى',
+                ),
+              )
+              .toList(growable: false),
+        );
+  }
+
+  Stream<List<GroupedBranchOverviewRecord>> _recordsFor(
+    GroupedBranchOverviewKind kind,
+    String branchId,
+  ) {
+    final isExpense = kind == GroupedBranchOverviewKind.expenses;
+    final collection = isExpense
+        ? CashExpenseFields.collection
+        : ConsumableRequestFields.collection;
+    final branchField = isExpense
+        ? CashExpenseFields.branchId
+        : ConsumableRequestFields.branchId;
+    final createdField = isExpense
+        ? CashExpenseFields.createdAt
+        : ConsumableRequestFields.createdAt;
+    final database = firestore ?? FirebaseFirestore.instance;
+    return database
+        .collection(collection)
+        .where(branchField, isEqualTo: branchId)
+        .orderBy(createdField, descending: true)
+        .limit(groupedBranchPreviewLimit)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map(
+                (doc) =>
+                    GroupedBranchOverviewRecord(id: doc.id, data: doc.data()),
+              )
+              .toList(growable: false),
+        );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,8 +113,8 @@ class GroupedBranchOverview extends StatelessWidget {
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(title: Text(title)),
-        body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance.collection('branches').snapshots(),
+        body: StreamBuilder<List<GroupedBranchOverviewBranch>>(
+          stream: branchStream ?? _branches(),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -48,12 +122,11 @@ class GroupedBranchOverview extends StatelessWidget {
             if (snapshot.hasError) {
               return const Center(child: Text('تعذر تحميل الفروع.'));
             }
-            final branches = [...?snapshot.data?.docs]
-              ..sort(
-                (a, b) => (a.data()['name'] ?? '').toString().compareTo(
-                  (b.data()['name'] ?? '').toString(),
-                ),
-              );
+            final branches = [...?snapshot.data]
+              ..sort((a, b) => a.name.compareTo(b.name));
+            if (branches.isEmpty) {
+              return const Center(child: Text('لا توجد فروع متاحة.'));
+            }
             return ListView.separated(
               key: Key('grouped-${kind.name}-branches'),
               padding: const EdgeInsets.all(16),
@@ -61,13 +134,15 @@ class GroupedBranchOverview extends StatelessWidget {
               separatorBuilder: (_, __) => const SizedBox(height: 14),
               itemBuilder: (context, index) {
                 final branch = branches[index];
-                final name =
-                    branch.data()['name']?.toString() ?? 'فرع غير مسمى';
                 return _BranchSection(
                   branchId: branch.id,
-                  branchName: name,
+                  branchName: branch.name,
                   kind: kind,
-                  onViewAll: () => onViewAll(context, branch.id, name),
+                  recordsStream: (recordsStream ?? _recordsFor)(
+                    kind,
+                    branch.id,
+                  ),
+                  onViewAll: () => onViewAll(context, branch.id, branch.name),
                 );
               },
             );
@@ -82,32 +157,20 @@ class _BranchSection extends StatelessWidget {
   final String branchId;
   final String branchName;
   final GroupedBranchOverviewKind kind;
+  final Stream<List<GroupedBranchOverviewRecord>> recordsStream;
   final VoidCallback onViewAll;
 
   const _BranchSection({
     required this.branchId,
     required this.branchName,
     required this.kind,
+    required this.recordsStream,
     required this.onViewAll,
   });
 
   @override
   Widget build(BuildContext context) {
     final isExpense = kind == GroupedBranchOverviewKind.expenses;
-    final collection = isExpense
-        ? CashExpenseFields.collection
-        : ConsumableRequestFields.collection;
-    final branchField = isExpense
-        ? CashExpenseFields.branchId
-        : ConsumableRequestFields.branchId;
-    final createdField = isExpense
-        ? CashExpenseFields.createdAt
-        : ConsumableRequestFields.createdAt;
-    final query = FirebaseFirestore.instance
-        .collection(collection)
-        .where(branchField, isEqualTo: branchId)
-        .orderBy(createdField, descending: true)
-        .limit(groupedBranchPreviewLimit);
     return Card(
       key: Key('grouped-${kind.name}-branch-$branchId'),
       child: Padding(
@@ -136,8 +199,8 @@ class _BranchSection extends StatelessWidget {
               style: TextStyle(color: AppTheme.textSecondary),
             ),
             const Divider(height: 20),
-            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: query.snapshots(),
+            StreamBuilder<List<GroupedBranchOverviewRecord>>(
+              stream: recordsStream,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -145,19 +208,24 @@ class _BranchSection extends StatelessWidget {
                 if (snapshot.hasError) {
                   return const Text('تعذر تحميل سجلات الفرع.');
                 }
-                final docs = snapshot.data?.docs ?? const [];
-                if (docs.isEmpty) return const Text('لا توجد سجلات.');
+                final records = snapshot.data ?? const [];
+                if (records.isEmpty) {
+                  return const Text('لا توجد سجلات لهذا الفرع بعد.');
+                }
                 return Column(
-                  children: docs
+                  children: records
                       .map(
-                        (doc) => isExpense
+                        (record) => isExpense
                             ? _expenseRow(
-                                CashExpenseRead(id: doc.id, data: doc.data()),
+                                CashExpenseRead(
+                                  id: record.id,
+                                  data: record.data,
+                                ),
                               )
                             : _consumptionRow(
                                 ConsumableRequestRead(
-                                  id: doc.id,
-                                  data: doc.data(),
+                                  id: record.id,
+                                  data: record.data,
                                 ),
                               ),
                       )

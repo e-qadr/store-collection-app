@@ -118,6 +118,22 @@
       ]
     },
     {
+      "collectionGroup": "cash_expense_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "branch_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "consumable_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "branch_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "items",
       "queryScope": "COLLECTION",
       "fields": [
