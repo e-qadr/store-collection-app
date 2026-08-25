@@ -164,7 +164,7 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
             'تفاصيل السند',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
           ),
-          backgroundColor: Colors.blueGrey.shade800,
+          backgroundColor: AppTheme.darkOlive,
           elevation: 0,
           actions: [
             PopupMenuButton<String>(
@@ -217,7 +217,7 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
               decoration: BoxDecoration(
-                color: Colors.blueGrey.shade800,
+                color: AppTheme.darkOlive,
                 borderRadius: const BorderRadius.only(
                   bottomLeft: Radius.circular(24),
                   bottomRight: Radius.circular(24),
@@ -579,7 +579,7 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
     switch (action) {
       case 'created':
         icon = Icons.add_circle_rounded;
-        color = Colors.blue;
+        color = AppTheme.primaryOlive;
         break;
       case 'status_update':
         icon = Icons.sync_rounded;
@@ -587,7 +587,7 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
         break;
       case 'edit_requested':
         icon = Icons.edit_note_rounded;
-        color = Colors.purple;
+        color = AppTheme.brandGold;
         break;
       case 'edit_approved':
         icon = Icons.check_circle_rounded;

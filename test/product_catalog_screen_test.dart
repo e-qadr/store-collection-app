@@ -92,6 +92,96 @@ void main() {
     },
   );
 
+  test(
+    'catalog search requires every normalized token and ranks phrase matches',
+    () {
+      final products = [
+        product(
+          id: 'exact-phrase',
+          name: 'دخون شرائح',
+          normalizedName: 'دخون شرائح',
+        ),
+        product(
+          id: 'phrase-prefix',
+          name: 'دخون شرائح طبيعي',
+          normalizedName: 'دخون شرائح طبيعي',
+        ),
+        product(
+          id: 'same-order',
+          name: 'دخون طبيعي فاخر شرائح',
+          normalizedName: 'دخون طبيعي فاخر شرائح',
+        ),
+        product(
+          id: 'reversed',
+          name: 'شرائح دخون طبيعي',
+          normalizedName: 'شرائح دخون طبيعي',
+        ),
+        product(
+          id: 'incense-only',
+          name: 'دخون فقط',
+          normalizedName: 'دخون فقط',
+        ),
+        product(
+          id: 'slices-only',
+          name: 'شرائح فقط',
+          normalizedName: 'شرائح فقط',
+        ),
+        product(
+          id: 'three-words',
+          name: 'دخون ممتاز شرائح عود',
+          normalizedName: 'دخون ممتاز شرائح عود',
+        ),
+        product(
+          id: 'arabic-normalized',
+          name: 'إصدار دخون شرائح',
+          normalizedName: 'اصدار دخون شرائح',
+        ),
+      ];
+
+      expect(
+        filterCatalogProducts(
+          products,
+          '  دُخون   شرائح  ',
+        ).map((entry) => entry.id).toList(),
+        [
+          'exact-phrase',
+          'phrase-prefix',
+          'arabic-normalized',
+          'same-order',
+          'three-words',
+          'reversed',
+        ],
+      );
+      expect(
+        filterCatalogProducts(
+          products,
+          'شرائح دخون',
+        ).map((entry) => entry.id).toSet(),
+        {
+          'exact-phrase',
+          'phrase-prefix',
+          'arabic-normalized',
+          'same-order',
+          'reversed',
+          'three-words',
+        },
+      );
+      expect(
+        filterCatalogProducts(products, 'اصدار دخون').single.id,
+        'arabic-normalized',
+      );
+      expect(
+        filterCatalogProducts(
+          products,
+          'دخون ممتاز عود',
+        ).map((entry) => entry.id),
+        ['three-words'],
+      );
+      expect(filterCatalogProducts(products, 'دخون ورد شرائح'), isEmpty);
+      expect(filterCatalogProducts(products, '   '), products);
+    },
+  );
+
   test('catalog editor preserves mixed and sparse secondary unit slots', () {
     final mixed = product(
       id: 'mixed',

@@ -7,10 +7,20 @@ class AppTheme {
   AppTheme._();
 
   // ── Role Brand Colors ──────────────────────────────────────────────
-  static const Color managerColor = Color(0xFF1565C0);
-  static const Color collectorColor = Color(0xFF00695C);
-  static const Color accountantColor = Color(0xFF4527A0);
-  static const Color adminColor = Color(0xFF6A1B9A);
+  // Al-Asalah palette, taken from the live brand site:
+  // primary #BCAE93, secondary #2B4D4D, success #627D47.
+  static const Color brandGold = Color(0xFFBCAE93);
+  static const Color lightGold = Color(0xFFC0BEA9);
+  static const Color primaryOlive = Color(0xFF2B4D4D);
+  static const Color darkOlive = Color(0xFF1A4D4A);
+  static const Color oliveGreen = Color(0xFF627D47);
+  static const Color oliveSurface = Color(0xFFE3EBE0);
+  static const Color goldSurface = Color(0xFFFFF9F0);
+
+  static const Color managerColor = primaryOlive;
+  static const Color collectorColor = oliveGreen;
+  static const Color accountantColor = darkOlive;
+  static const Color adminColor = Color(0xFF405E45);
 
   // ── Semantic Colors ────────────────────────────────────────────────
   static const Color successColor = Color(0xFF2E7D32);
@@ -19,35 +29,35 @@ class AppTheme {
   static const Color pendingColor = Color(0xFFF57C00);
 
   // ── Surface & Background ──────────────────────────────────────────
-  static const Color surfaceColor = Color(0xFFF0F4FF);
+  static const Color surfaceColor = goldSurface;
   static const Color cardColor = Color(0xFFFFFFFF);
-  static const Color dividerColor = Color(0xFFEEF2FF);
+  static const Color dividerColor = lightGold;
 
   // ── Text Colors ───────────────────────────────────────────────────
-  static const Color textPrimary = Color(0xFF0D1117);
-  static const Color textSecondary = Color(0xFF64748B);
-  static const Color textHint = Color(0xFF94A3B8);
+  static const Color textPrimary = Color(0xFF1F1F1F);
+  static const Color textSecondary = Color(0xFF666666);
+  static const Color textHint = Color(0xFF71716E);
 
   // ── Role Gradients ─────────────────────────────────────────────────
   static const List<Color> managerGradient = [
-    Color(0xFF0D47A1),
-    Color(0xFF1565C0),
-    Color(0xFF1E88E5),
+    darkOlive,
+    primaryOlive,
+    Color(0xFF3D6261),
   ];
   static const List<Color> collectorGradient = [
-    Color(0xFF004D40),
-    Color(0xFF00695C),
-    Color(0xFF00897B),
+    Color(0xFF4D6537),
+    oliveGreen,
+    Color(0xFF718C55),
   ];
   static const List<Color> accountantGradient = [
-    Color(0xFF311B92),
-    Color(0xFF4527A0),
-    Color(0xFF5E35B1),
+    Color(0xFF133B39),
+    darkOlive,
+    primaryOlive,
   ];
   static const List<Color> adminGradient = [
-    Color(0xFF4A148C),
-    Color(0xFF6A1B9A),
-    Color(0xFF7B1FA2),
+    Color(0xFF304834),
+    adminColor,
+    oliveGreen,
   ];
 
   // ── Status Helpers ────────────────────────────────────────────────
@@ -121,14 +131,34 @@ class AppTheme {
 
   // ── Global Light Theme ────────────────────────────────────────────
   static ThemeData get lightTheme {
-    const seed = managerColor;
+    const seed = primaryOlive;
+    final colorScheme =
+        ColorScheme.fromSeed(
+          seedColor: seed,
+          brightness: Brightness.light,
+          surface: surfaceColor,
+        ).copyWith(
+          primary: primaryOlive,
+          onPrimary: Colors.white,
+          primaryContainer: oliveSurface,
+          onPrimaryContainer: darkOlive,
+          secondary: brandGold,
+          onSecondary: textPrimary,
+          secondaryContainer: Color(0xFFE9E3D2),
+          onSecondaryContainer: textPrimary,
+          tertiary: oliveGreen,
+          onTertiary: Colors.white,
+          surface: surfaceColor,
+          onSurface: textPrimary,
+          surfaceContainerHighest: Color(0xFFF1EEE5),
+          outline: dividerColor,
+          outlineVariant: dividerColor,
+          error: errorColor,
+          onError: Colors.white,
+        );
     return ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: seed,
-        brightness: Brightness.light,
-        surface: surfaceColor,
-      ),
+      colorScheme: colorScheme,
       scaffoldBackgroundColor: surfaceColor,
       appBarTheme: const AppBarTheme(
         elevation: 0,
@@ -152,6 +182,7 @@ class AppTheme {
       cardTheme: CardThemeData(
         elevation: 0,
         color: cardColor,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         margin: EdgeInsets.zero,
       ),
@@ -195,6 +226,9 @@ class AppTheme {
           textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
       ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(foregroundColor: primaryOlive),
+      ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: cardColor,
@@ -204,11 +238,11 @@ class AppTheme {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          borderSide: const BorderSide(color: dividerColor),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          borderSide: const BorderSide(color: dividerColor),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
@@ -234,6 +268,10 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(16)),
         ),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: primaryOlive,
+        linearTrackColor: Color(0xFFE9E3D2),
       ),
       listTileTheme: const ListTileThemeData(
         iconColor: textSecondary,
@@ -272,9 +310,50 @@ class AppTheme {
         space: 1,
       ),
       chipTheme: ChipThemeData(
+        backgroundColor: cardColor,
+        selectedColor: oliveSurface,
+        disabledColor: Color(0xFFE8E5DD),
+        checkmarkColor: darkOlive,
+        side: const BorderSide(color: dividerColor),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        labelStyle: const TextStyle(
+          color: textPrimary,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+        secondaryLabelStyle: const TextStyle(
+          color: darkOlive,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: cardColor,
+        indicatorColor: Color(0xFFE9E3D2),
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            color: states.contains(WidgetState.selected)
+                ? primaryOlive
+                : textSecondary,
+          ),
+        ),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            color: states.contains(WidgetState.selected)
+                ? primaryOlive
+                : textSecondary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+        backgroundColor: cardColor,
+        selectedItemColor: primaryOlive,
+        unselectedItemColor: textSecondary,
+      ),
+      dropdownMenuTheme: const DropdownMenuThemeData(
+        textStyle: TextStyle(color: textPrimary),
       ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(

@@ -3,6 +3,7 @@ import 'package:store_collection_app/models/branch_model.dart';
 // استيراد الشاشتين اللتين تم إنشاؤهما
 import 'package:store_collection_app/screens/transactions/new_transaction_screen.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 
 class BranchDetailsScreen extends StatelessWidget {
   final BranchModel branch;
@@ -16,7 +17,7 @@ class BranchDetailsScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: Text('فرع: ${branch.name}'),
-          backgroundColor: Colors.blue,
+          backgroundColor: AppTheme.primaryOlive,
         ),
         body: Padding(
           padding: const EdgeInsets.all(20.0),
@@ -24,7 +25,7 @@ class BranchDetailsScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Card(
-                color: Colors.blue.shade50,
+                color: AppTheme.oliveSurface,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(15),
@@ -36,7 +37,7 @@ class BranchDetailsScreen extends StatelessWidget {
                       const Icon(
                         Icons.storefront,
                         size: 50,
-                        color: Colors.blue,
+                        color: AppTheme.primaryOlive,
                       ),
                       const SizedBox(height: 10),
                       Text(
@@ -44,12 +45,12 @@ class BranchDetailsScreen extends StatelessWidget {
                         style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
-                          color: Colors.blue,
+                          color: AppTheme.primaryOlive,
                         ),
                       ),
                       const Text(
-                        'إدارة العمليات المالية الفورية',
-                        style: TextStyle(color: Colors.grey),
+                        'منظومة الأصالة لإدارة العمليات',
+                        style: TextStyle(color: AppTheme.textSecondary),
                       ),
                     ],
                   ),

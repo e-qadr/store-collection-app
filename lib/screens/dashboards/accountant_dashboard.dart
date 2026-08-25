@@ -318,7 +318,7 @@ class AccountantDashboard extends StatelessWidget {
                         subtitle:
                             'مراجعة السندات، واعتمادها نهائياً أو طلب تعديلها',
                         icon: Icons.fact_check_rounded,
-                        color: const Color(0xFF00695C),
+                        color: AppTheme.accountantColor,
                         onTap: () {
                           Navigator.push(
                             context,

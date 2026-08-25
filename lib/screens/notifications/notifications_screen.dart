@@ -148,13 +148,15 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                         return Card(
                           color: isRead
                               ? AppTheme.cardColor
-                              : Colors.blue.shade50,
+                              : AppTheme.oliveSurface,
                           child: ListTile(
                             leading: Icon(
                               isRead
                                   ? Icons.notifications_none_rounded
                                   : Icons.notifications_active_rounded,
-                              color: isRead ? AppTheme.textHint : Colors.blue,
+                              color: isRead
+                                  ? AppTheme.textHint
+                                  : AppTheme.primaryOlive,
                             ),
                             title: Text(
                               data['title'] ?? 'إشعار',

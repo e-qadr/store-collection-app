@@ -25,7 +25,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'إدارة العمليات',
+      title: 'إدارة الأصالة',
       debugShowCheckedModeBanner: false,
       navigatorKey: AppNavigationService.navigatorKey,
       theme: AppTheme.lightTheme,

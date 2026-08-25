@@ -77,7 +77,7 @@ extension InterBranchInvoiceStatusX on InterBranchInvoiceStatus {
       case InterBranchInvoiceStatus.invoiceCreated:
       case InterBranchInvoiceStatus.receivedByReceivingManager:
       case InterBranchInvoiceStatus.pricesEnteredByCollector:
-        return const Color(0xFF1565C0);
+        return const Color(0xFF2B4D4D);
       case InterBranchInvoiceStatus.requestRejectedBySupplier:
       case InterBranchInvoiceStatus.cancelled:
       case InterBranchInvoiceStatus.editRejected:
@@ -90,7 +90,7 @@ extension InterBranchInvoiceStatusX on InterBranchInvoiceStatus {
       case InterBranchInvoiceStatus.cancellationPendingApprovals:
       case InterBranchInvoiceStatus.editRequested:
       case InterBranchInvoiceStatus.editPendingApprovals:
-        return const Color(0xFF6A1B9A);
+        return const Color(0xFF627D47);
     }
   }
 

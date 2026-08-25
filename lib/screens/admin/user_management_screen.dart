@@ -771,9 +771,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                       vertical: 4,
                                                     ),
                                                 decoration: BoxDecoration(
-                                                  color: Colors.blue.withValues(
-                                                    alpha: 0.1,
-                                                  ),
+                                                  color: AppTheme.primaryOlive
+                                                      .withValues(alpha: 0.1),
                                                   borderRadius:
                                                       BorderRadius.circular(8),
                                                 ),
@@ -784,7 +783,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                       ? 'محاسب'
                                                       : 'مدير عام',
                                                   style: const TextStyle(
-                                                    color: Colors.blue,
+                                                    color:
+                                                        AppTheme.primaryOlive,
                                                     fontSize: 11,
                                                     fontWeight: FontWeight.bold,
                                                   ),
@@ -963,13 +963,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                                 Icon(
                                                   Icons.swap_horiz,
                                                   size: 18,
-                                                  color: Colors.blue,
+                                                  color: AppTheme.primaryOlive,
                                                 ),
                                                 SizedBox(width: 8),
                                                 Text(
                                                   'نقل/تعيين فرع',
                                                   style: TextStyle(
-                                                    color: Colors.blue,
+                                                    color:
+                                                        AppTheme.primaryOlive,
                                                   ),
                                                 ),
                                               ],

@@ -132,7 +132,7 @@ class SystemSelectionScreen extends StatelessWidget {
                         subtitle:
                             'إنشاء فاتورة شراء، تأكيد الاستلام، ثم المراجعة والترحيل المحاسبي',
                         icon: Icons.shopping_cart_checkout_rounded,
-                        color: const Color(0xFF00695C),
+                        color: AppTheme.primaryOlive,
                         onTap: () => _openPurchaseInvoicesSystem(context),
                       ),
                     ],

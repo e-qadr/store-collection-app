@@ -73,24 +73,13 @@ flutter:
   assets:
     - assets/fonts/Cairo-Regular.ttf
     - assets/fonts/Cairo-Bold.ttf
-    - assets/icon/app_icon.png
 
 flutter_launcher_icons:
   android: true
-  ios: true
-  image_path: assets/icon/app_icon.png
-  adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: assets/icon/app_icon.png
-  remove_alpha_ios: true
-  web:
-    generate: true
-    image_path: assets/icon/app_icon.png
-    background_color: "#FFFFFF"
-    theme_color: "#4527A0"
-  windows:
-    generate: true
-    image_path: assets/icon/app_icon.png
-    icon_size: 256
+  ios: false
+  image_path: assets/icon/alasalh_launcher_icon.png
+  adaptive_icon_background: "#4C6971"
+  adaptive_icon_foreground: assets/icon/alasalh_launcher_foreground.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

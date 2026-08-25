@@ -5,6 +5,7 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_item_editor_dialog.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
 import 'package:store_collection_app/widgets/grouped_branch_overview.dart';
 
@@ -192,8 +193,9 @@ void main() {
         );
         expect(selected.selected, isTrue);
         expect(unselected.selected, isFalse);
-        expect(selected.labelStyle?.color, isNotNull);
-        expect(unselected.labelStyle?.color, isNotNull);
+        expect(selected.labelStyle?.color, AppTheme.darkOlive);
+        expect(unselected.labelStyle?.color, AppTheme.textPrimary);
+        expect(selected.selectedColor, AppTheme.oliveSurface);
         expect(selected.backgroundColor, isNotNull);
         expect(unselected.backgroundColor, isNotNull);
       },
@@ -267,6 +269,7 @@ class _PickerHarness extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
+    theme: AppTheme.lightTheme,
     home: Builder(
       builder: (context) => TextButton(
         onPressed: () => showCatalogPicker(

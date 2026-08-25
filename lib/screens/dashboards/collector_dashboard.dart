@@ -228,7 +228,7 @@ class CollectorDashboard extends StatelessWidget {
                 label: 'سنداتي',
                 value: '$total',
                 icon: Icons.receipt_long_rounded,
-                color: const Color(0xFF00695C),
+                color: AppTheme.collectorColor,
                 bgColor: const Color(0xFFE0F2F1),
               ),
             ),

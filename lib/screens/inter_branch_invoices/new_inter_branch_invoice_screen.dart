@@ -182,13 +182,10 @@ class _NewInterBranchInvoiceScreenState
     try {
       final fixture = widget.fixture;
       if (fixture != null) {
-        final search = _searchController.text.trim().toLowerCase();
-        final loaded = fixture.products
-            .where(
-              (product) =>
-                  search.isEmpty || product.name.toLowerCase().contains(search),
-            )
-            .toList(growable: false);
+        final loaded = filterCatalogProducts(
+          fixture.products,
+          _searchController.text,
+        );
         if (!mounted) return;
         setState(() {
           _products = loaded;

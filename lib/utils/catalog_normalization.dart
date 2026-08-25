@@ -46,6 +46,18 @@ String normalizeCatalogText(String value) {
       .replaceAll(RegExp(r'\s+'), ' ');
 }
 
+/// Normalizes a catalog search expression and returns its meaningful words.
+/// Keeping tokenization beside Arabic normalization ensures every local catalog
+/// search uses the same spelling and whitespace behaviour.
+List<String> tokenizeCatalogSearch(String value) {
+  final normalized = normalizeCatalogText(value);
+  if (normalized.isEmpty) return const [];
+  return normalized
+      .split(' ')
+      .where((token) => token.isNotEmpty)
+      .toList(growable: false);
+}
+
 String normalizeLegacyCode(String? value) {
   if (value == null) return '';
   return value.trim().toUpperCase().replaceAll(RegExp(r'\s+'), '');

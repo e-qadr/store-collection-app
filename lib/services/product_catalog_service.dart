@@ -22,8 +22,9 @@ List<ProductCatalogModel> filterCatalogProducts(
   String searchText,
 ) {
   final normalizedSearch = normalizeCatalogText(searchText);
+  final searchTokens = tokenizeCatalogSearch(searchText);
   final source = products.toList(growable: false);
-  if (normalizedSearch.isEmpty) return source;
+  if (searchTokens.isEmpty) return source;
 
   String normalizedProductName(ProductCatalogModel product) {
     final stored = product.normalizedName.trim();
@@ -34,8 +35,8 @@ List<ProductCatalogModel> filterCatalogProducts(
       .where((product) {
         final name = normalizedProductName(product);
         final legacyCode = normalizeCatalogText(product.legacyCode ?? '');
-        return name.contains(normalizedSearch) ||
-            legacyCode.contains(normalizedSearch);
+        return searchTokens.every(name.contains) ||
+            (searchTokens.length == 1 && legacyCode.contains(normalizedSearch));
       })
       .toList(growable: false);
   matches.sort((left, right) {
@@ -43,8 +44,12 @@ List<ProductCatalogModel> filterCatalogProducts(
       final name = normalizedProductName(product);
       if (name == normalizedSearch) return 0;
       if (name.startsWith(normalizedSearch)) return 1;
-      if (name.contains(normalizedSearch)) return 2;
-      return 3; // A legacy-code-only match.
+      if (searchTokens.length > 1 &&
+          _catalogTokensAppearInOrder(name, searchTokens)) {
+        return 2;
+      }
+      if (searchTokens.every(name.contains)) return 3;
+      return 4; // A legacy-code-only match.
     }
 
     final rankComparison = rank(left).compareTo(rank(right));
@@ -55,6 +60,16 @@ List<ProductCatalogModel> filterCatalogProducts(
     return nameComparison != 0 ? nameComparison : left.id.compareTo(right.id);
   });
   return matches;
+}
+
+bool _catalogTokensAppearInOrder(String name, List<String> tokens) {
+  var searchStart = 0;
+  for (final token in tokens) {
+    final tokenIndex = name.indexOf(token, searchStart);
+    if (tokenIndex < 0) return false;
+    searchStart = tokenIndex + token.length;
+  }
+  return true;
 }
 
 class ProductCatalogService {
