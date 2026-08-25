@@ -29,6 +29,11 @@ service cloud.firestore {
       return operationalUser() && role() == 'accountant';
     }
 
+    function catalogEditorUser() {
+      return operationalUser() &&
+        (role() == 'collector' || role() == 'accountant');
+    }
+
     function catalogSupervisor() {
       return operationalUser() &&
         (role() == 'collector' || role() == 'accountant' || role() == 'admin');
@@ -402,7 +407,7 @@ service cloud.firestore {
               data.after is map && data.after.keys().size() > 0)) &&
         data.actor_uid == request.auth.uid &&
         data.actor_name is string &&
-        data.actor_role == 'accountant' &&
+        (data.actor_role == 'collector' || data.actor_role == 'accountant') &&
         data.created_at == request.time;
     }
 
@@ -422,7 +427,7 @@ service cloud.firestore {
         audit.brand_id == brandId &&
         audit.action == action &&
         audit.actor_uid == request.auth.uid &&
-        audit.actor_role == 'accountant' &&
+        (audit.actor_role == 'collector' || audit.actor_role == 'accountant') &&
         audit.created_at == request.time;
     }
 
@@ -566,6 +571,7 @@ service cloud.firestore {
           'unit_value',
           'currency',
           'price',
+          'source_type',
           'source_invoice_id',
           'changed_by',
           'changed_by_name',
@@ -598,7 +604,7 @@ service cloud.firestore {
         data.unit_value is string && data.unit_value.size() > 0 &&
         validCurrency(data.currency) &&
         data.price is number && data.price >= 0 &&
-        data.source_invoice_id is string && data.source_invoice_id.size() > 0 &&
+        validPriceSource(data) &&
         data.changed_by == request.auth.uid &&
         data.changed_by_name is string &&
         data.changed_by_role == role() &&
@@ -610,6 +616,15 @@ service cloud.firestore {
     function priceUnitMatches(unit, unitId, unitValue) {
       return unit is map &&
         unit.unit_id == unitId && unit.display_value == unitValue;
+    }
+
+    function validPriceSource(data) {
+      return !data.keys().hasAny(['source_type'])
+        ? (data.source_invoice_id is string && data.source_invoice_id.size() > 0)
+        : ((data.source_type == 'purchase_invoice' &&
+            data.source_invoice_id is string && data.source_invoice_id.size() > 0) ||
+          (data.source_type == 'catalog_manual' &&
+            data.source_invoice_id is string && data.source_invoice_id == ''));
     }
 
     function priceProductUnitMatches(data) {
@@ -657,6 +672,7 @@ service cloud.firestore {
           'price',
           'previous_price',
           'previous_source_invoice_id',
+          'source_type',
           'source_invoice_id',
           'changed_by',
           'changed_by_name',
@@ -692,7 +708,7 @@ service cloud.firestore {
           (data.previous_price is number && data.previous_price >= 0)) &&
         (!data.keys().hasAny(['previous_source_invoice_id']) ||
           data.previous_source_invoice_id is string) &&
-        data.source_invoice_id is string && data.source_invoice_id.size() > 0 &&
+        validPriceSource(data) &&
         data.changed_by == request.auth.uid &&
         data.changed_by_name is string &&
         data.changed_by_role == role() &&
@@ -1754,7 +1770,8 @@ service cloud.firestore {
     // Phase 1 catalog: product and group documents are deliberately price-free.
     match /product_groups/{groupId} {
       allow get, list: if mayReadCatalogDocument(resource.data);
-      allow create: if accountantUser() &&
+      allow create: if catalogEditorUser() &&
+        (request.resource.data.get('is_system_group', false) != true || accountantUser()) &&
         validProductGroup(groupId, request.resource.data) &&
         request.resource.data.active == true &&
         request.resource.data.created_by == request.auth.uid &&
@@ -1768,7 +1785,8 @@ service cloud.firestore {
           request.resource.data.brand_id,
           groupCreateAuditAction(request.resource.data)
         );
-      allow update: if accountantUser() &&
+      allow update: if catalogEditorUser() &&
+        (resource.data.get('is_system_group', false) != true || accountantUser()) &&
         validProductGroup(groupId, request.resource.data) &&
         validProductGroupIdentityTransition() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -1798,7 +1816,7 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow get, list: if mayReadCatalogDocument(resource.data);
-      allow create: if accountantUser() &&
+      allow create: if catalogEditorUser() &&
         validFallbackSystemGroupCreateAssignment(request.resource.data) &&
         validProduct(productId, request.resource.data) &&
         request.resource.data.active == true &&
@@ -1814,7 +1832,7 @@ service cloud.firestore {
           request.resource.data.brand_id,
           'created'
         );
-      allow update: if accountantUser() &&
+      allow update: if catalogEditorUser() &&
         validProductSourceProvenanceTransition() &&
         validProduct(productId, request.resource.data) &&
         validRecategorizationAuditSnapshot() &&
@@ -1858,15 +1876,15 @@ service cloud.firestore {
     // under concurrent catalog writes. Product and key writes must share a batch
     // or transaction, as checked with getAfter().
     match /product_unique_keys/{keyId} {
-      allow read: if accountantUser();
-      allow create: if accountantUser() &&
+      allow read: if catalogEditorUser();
+      allow create: if catalogEditorUser() &&
         validUniqueKey(keyId, request.resource.data) &&
         request.resource.data.created_by == request.auth.uid &&
         request.resource.data.updated_by == request.auth.uid &&
         request.resource.data.created_at == request.time &&
         request.resource.data.updated_at == request.time &&
         uniqueKeyReferencesProduct(keyId, request.resource.data);
-      allow update: if accountantUser() &&
+      allow update: if catalogEditorUser() &&
         validUniqueKey(keyId, request.resource.data) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'active',
@@ -1881,15 +1899,15 @@ service cloud.firestore {
 
     match /product_audit_events/{eventId} {
       allow read: if catalogSupervisor();
-      allow create: if accountantUser() &&
+      allow create: if catalogEditorUser() &&
         validAuditEvent(eventId, request.resource.data) &&
         auditTargetPointsBack(eventId, request.resource.data);
       allow update, delete: if false;
     }
 
     match /product_accounting_profiles/{profileId} {
-      allow read: if accountantUser() || adminUser();
-      allow create: if accountantUser() &&
+      allow read: if catalogEditorUser() || adminUser();
+      allow create: if catalogEditorUser() &&
         validAccountingProfile(profileId, request.resource.data) &&
         request.resource.data.created_by == request.auth.uid &&
         request.resource.data.updated_by == request.auth.uid &&
@@ -1902,7 +1920,7 @@ service cloud.firestore {
           request.resource.data.brand_id,
           'created'
         );
-      allow update: if accountantUser() &&
+      allow update: if catalogEditorUser() &&
         validAccountingProfile(profileId, request.resource.data) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'accounting_reference',
@@ -1930,7 +1948,7 @@ service cloud.firestore {
     // Every latest-price write must atomically append its immutable history row.
     match /product_price_latest/{latestId} {
       allow get, list: if protectedPriceUser();
-      // Phase 2 price writes are performed only by authenticated Admin SDK
+      // Protected price writes are performed only by authenticated Admin SDK
       // commands. Admin SDK bypasses rules, so every client write is denied.
       allow create, update, delete: if false;
     }
@@ -2074,7 +2092,7 @@ service cloud.firestore {
     // The accountant review record contains clarification and accounting-only
     // metadata. Managers see only the bounded public review_status on items.
     match /product_review_tasks/{taskId} {
-      allow get, list: if accountantUser();
+      allow get, list: if catalogEditorUser();
       allow create, update, delete: if false;
     }
 

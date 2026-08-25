@@ -16,6 +16,7 @@ const {
   purchaseItemDigest,
   uncategorizedGroupId,
   validateCreatePayload,
+  validateCatalogPricePayload,
   validateIdempotencyKey,
   validatePostingPayload,
   validatePricingPayload,
@@ -65,6 +66,11 @@ const ITEMS_SUBCOLLECTION = "items";
 const OPERATIONAL_ROLES = new Set(["manager", "collector", "accountant", "admin"]);
 const PURCHASE_COUNTER_DOCUMENT_ID = "global";
 const PURCHASE_NUMBER_PREFIX = "PUR";
+const INITIAL_PRICING_MODE = "initial_purchase";
+const PRICE_SOURCE = Object.freeze({
+  purchaseInvoice: "purchase_invoice",
+  catalogManual: "catalog_manual",
+});
 
 const HEADER_KEYS = new Set([
   "id", "schema_version", "workflow_version", "workflow_identity", "status", "revision",
@@ -93,7 +99,7 @@ const HISTORY_KEYS = new Set([
 
 const PROTECTED_PRICE_KEYS = new Set([
   "id", "invoice_id", "invoice_revision", "pricing_revision", "pricing_state", "item_count",
-  "item_digest", "currency", "provisional_items", "items", "invoice_total", "pricing_notes",
+  "item_digest", "currency", "pricing_mode", "provisional_items", "items", "invoice_total", "pricing_notes",
   "confirmed_by", "confirmed_by_name", "confirmed_by_role", "confirmed_at", "locked",
   "locked_by", "locked_by_name", "locked_at", "locked_invoice_revision",
   "accounting_reference", "accountant_notes", "posting_override",
@@ -310,7 +316,8 @@ async function readActor(transaction, firestore, uid, expectedRole) {
     throw new PurchaseCommandError("forbidden", 403, "The account cannot perform this operation.");
   }
   const actor = actorFromProfile(uid, profile);
-  if (actor.role !== expectedRole) {
+  const expectedRoles = Array.isArray(expectedRole) ? expectedRole : [expectedRole];
+  if (!expectedRoles.includes(actor.role)) {
     throw new PurchaseCommandError("forbidden", 403, "The role cannot perform this operation.");
   }
   return actor;
@@ -348,7 +355,8 @@ async function runIdempotent({
       command,
       actor_uid: actorUid,
       request_hash: requestHash,
-      invoice_id: result.responseData.invoice_id,
+      ...(result.responseData.invoice_id ?
+        {invoice_id: result.responseData.invoice_id} : {}),
       status_code: result.statusCode,
       response_data: result.responseData,
       created_at: timestamp,
@@ -621,6 +629,7 @@ async function createPurchaseInvoice({
         input.provisional_unit_price === undefined ? null : {
           item_id: itemIds[index], unit_price: input.provisional_unit_price,
         }).filter(Boolean);
+      const allInitialPricesProvided = provisionalItems.length === items.length;
       transaction.set(invoiceRef, invoice);
       transaction.set(counterRef, {
         id: PURCHASE_COUNTER_DOCUMENT_ID,
@@ -636,7 +645,10 @@ async function createPurchaseInvoice({
         invoice_id: invoiceRef.id,
         invoice_revision: 1,
         pricing_revision: 0,
-        pricing_state: "provisional",
+        // New invoices collect prices at creation. They become a final
+        // invoice-price snapshot after receiving quantities are confirmed.
+        pricing_state: allInitialPricesProvided ? "initial" : "provisional",
+        pricing_mode: INITIAL_PRICING_MODE,
         item_count: items.length,
         item_digest: itemDigest,
         currency: payload.currency,
@@ -766,6 +778,114 @@ async function confirmReceipt({firestore, actorUid, invoiceId, payload, idempote
       const invoice = requireInvoice(rawSnapshot, invoiceId);
       requireState(invoice, STATUS.pendingReceiverReview, payload.expected_revision);
       const stored = await readItems(transaction, invoiceRef, invoice);
+      const priceRef = firestore.collection(COLLECTIONS.prices).doc(invoiceId);
+      const priceSnapshot = await transaction.get(priceRef);
+      const price = priceSnapshot.data();
+      if (!priceSnapshot.exists || price?.locked !== false ||
+          price?.invoice_revision !== invoice.revision ||
+          price?.item_digest !== invoice.item_digest || price?.currency !== invoice.currency) {
+        throw new PurchaseCommandError("price-snapshot-invalid", 409, "The protected price draft is invalid.");
+      }
+
+      // New invoices always proceed from the receiving manager to accounting.
+      // Historical documents omit pricing_mode and continue below unchanged.
+      if (price.pricing_mode === INITIAL_PRICING_MODE) {
+        const accountants = await activeUsersByRole(transaction, firestore, "accountant");
+        if (accountants.length === 0) {
+          throw new PurchaseCommandError("accountant-not-configured", 409, "No active accountant exists.");
+        }
+        const revision = invoice.revision + 1;
+        const items = receiptItems(stored, payload.items, revision);
+        const digest = purchaseItemDigest(items);
+        const provisionalByItemId = new Map(
+            (Array.isArray(price.provisional_items) ? price.provisional_items : [])
+                .filter((entry) => entry && typeof entry.item_id === "string" &&
+                    typeof entry.unit_price === "number")
+                .map((entry) => [entry.item_id, entry.unit_price]),
+        );
+        const completeInitialPrice = price.pricing_state === "initial" &&
+            provisionalByItemId.size === items.length &&
+            items.every((item) => provisionalByItemId.has(item.item_id));
+        let nextPrice = {...price, invoice_revision: revision, item_digest: digest};
+        let eventAction = "purchase_receipt_sent_to_accounting";
+        let eventMessage = "Purchase receipt was confirmed and sent directly to accounting.";
+        if (completeInitialPrice) {
+          const finalItems = finalPriceItems(items, items.map((item) => ({
+            item_id: item.item_id,
+            unit_price: provisionalByItemId.get(item.item_id),
+          })));
+          const memory = priceMemoryEntries(firestore, invoiceId, finalItems, invoice.currency);
+          const latestSnapshots = await Promise.all(memory.map((entry) => transaction.get(entry.latestRef)));
+          latestSnapshots.forEach((snapshot, index) => validateLatest(snapshot, memory[index], invoice.currency));
+          const historySnapshots = await Promise.all(memory.map((entry) => transaction.get(entry.historyRef)));
+          if (historySnapshots.some((snapshot) => snapshot.exists)) {
+            throw new PurchaseCommandError("price-history-conflict", 409, "A price history event exists.");
+          }
+          const total = finalItems.reduce((sum, item) => sum + item.line_total, 0);
+          if (!Number.isFinite(total)) {
+            throw new PurchaseCommandError("invalid-argument", 400, "The invoice total is invalid.");
+          }
+          const initialPricer = {
+            uid: String(price.confirmed_by || invoice.created_by),
+            name: String(price.confirmed_by_name || invoice.created_by_name),
+            role: String(price.confirmed_by_role || invoice.created_by_role),
+          };
+          if (initialPricer.role !== "collector") {
+            throw new PurchaseCommandError("price-snapshot-invalid", 409, "The initial price author is invalid.");
+          }
+          nextPrice = compact({
+            ...nextPrice,
+            pricing_revision: 1,
+            pricing_state: "confirmed",
+            item_count: invoice.item_count,
+            provisional_items: Array.isArray(price.provisional_items) ? price.provisional_items : [],
+            items: finalItems,
+            invoice_total: total,
+            confirmed_by: initialPricer.uid,
+            confirmed_by_name: initialPricer.name,
+            confirmed_by_role: initialPricer.role,
+            confirmed_at: timestamp,
+            locked: false,
+          });
+          writePriceMemory(
+              transaction, memory, latestSnapshots, invoice.currency, invoiceId, initialPricer, timestamp,
+          );
+          eventAction = "purchase_initial_prices_confirmed";
+          eventMessage = "Initial purchase prices were confirmed using received quantities.";
+        }
+        if (!hasOnlyKeys(nextPrice, PROTECTED_PRICE_KEYS)) {
+          throw new PurchaseCommandError("internal", 500, "The protected price schema is invalid.");
+        }
+        const event = eventData(eventAction, eventMessage, actor, timestamp);
+        transaction.update(invoiceRef, compact({
+          status: STATUS.pendingAccountingEntry,
+          revision,
+          item_digest: digest,
+          receiver_notes: payload.receiver_notes,
+          receipt_confirmed_by: actor.uid,
+          receipt_confirmed_by_name: actor.name,
+          receipt_confirmed_at: timestamp,
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        }));
+        items.forEach((item) => transaction.set(itemsCollection(invoiceRef).doc(item.item_id), item));
+        transaction.set(priceRef, nextPrice);
+        writeEvent(transaction, firestore, {invoice, event, revision});
+        writeNotifications(transaction, firestore, {
+          recipients: accountants,
+          invoice,
+          type: "purchase_receipt_sent_to_accounting",
+          title: "Purchase invoice awaiting accounting",
+          message: `Purchase invoice ${invoice.purchase_number} was received.`,
+          revision,
+          timestamp,
+          excludeUid: actor.uid,
+        });
+        return {
+          statusCode: 200,
+          responseData: responseFor(invoiceId, STATUS.pendingAccountingEntry, revision),
+        };
+      }
       const collectors = await activeUsersByRole(transaction, firestore, "collector");
       if (collectors.length === 0) {
         throw new PurchaseCommandError("general-manager-not-configured", 409, "No general manager exists.");
@@ -891,6 +1011,7 @@ function writePriceMemory(transaction, entries, latestSnapshots, currency, invoi
       unit_value: entry.item.canonical_unit_value,
       currency,
       price: entry.item.unit_price,
+      source_type: PRICE_SOURCE.purchaseInvoice,
       source_invoice_id: invoiceId,
       changed_by: actor.uid,
       changed_by_name: actor.name,
@@ -914,6 +1035,124 @@ function writePriceMemory(transaction, entries, latestSnapshots, currency, invoi
   });
 }
 
+function priceSelectionFromProduct(snapshot, productId, unitId) {
+  if (!snapshot.exists || !activeDocument(snapshot.data())) {
+    throw new PurchaseCommandError("product-not-found", 404, "The catalog product is unavailable.");
+  }
+  const product = snapshot.data();
+  const brandId = String(product.brand_id || "").trim();
+  const unit = catalogUnit(product, unitId);
+  if (!brandId || !unit || unit.active === false ||
+      typeof unit.display_value !== "string" || !unit.display_value.trim() ||
+      typeof unit.raw_value !== "string" || !unit.raw_value.trim()) {
+    throw new PurchaseCommandError("catalog-snapshot-invalid", 409, "A catalog price selection is invalid.");
+  }
+  return {
+    brandId,
+    productId,
+    unitId,
+    unitValue: unit.display_value.trim(),
+  };
+}
+
+function validateStoredPriceMemory(snapshot, latestKey, selection, currency) {
+  if (!snapshot.exists) return null;
+  const data = snapshot.data();
+  if (data.id !== latestKey || data.latest_key !== latestKey ||
+      data.brand_id !== selection.brandId || data.product_id !== selection.productId ||
+      data.unit_id !== selection.unitId || data.unit_value !== selection.unitValue ||
+      data.currency !== currency || typeof data.price !== "number" ||
+      !Number.isFinite(data.price) || data.price < 0 ||
+      !Number.isSafeInteger(data.version) || data.version < 1 ||
+      (data.source_type !== undefined &&
+        data.source_type !== PRICE_SOURCE.purchaseInvoice &&
+        data.source_type !== PRICE_SOURCE.catalogManual)) {
+    throw new PurchaseCommandError("price-memory-conflict", 409, "Price memory is inconsistent.");
+  }
+  return data;
+}
+
+async function updateCatalogPrice({
+  firestore, actorUid, payload, idempotencyKey, timestamp,
+}) {
+  const requestHash = canonicalRequestHash(payload);
+  return runIdempotent({
+    firestore,
+    command: "upsert_catalog_price",
+    actorUid,
+    expectedRole: ["collector", "accountant"],
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const productRef = firestore.collection(COLLECTIONS.products).doc(payload.product_id);
+      const productSnapshot = await transaction.get(productRef);
+      const selection = priceSelectionFromProduct(
+          productSnapshot, payload.product_id, payload.unit_id,
+      );
+      const latestKey = productPriceLatestKey({
+        brandId: selection.brandId,
+        productId: selection.productId,
+        unitId: selection.unitId,
+        currency: payload.currency,
+      });
+      const latestRef = firestore.collection(COLLECTIONS.priceLatest).doc(latestKey);
+      const historyRef = firestore.collection(COLLECTIONS.priceHistory).doc(
+          deterministicDocumentId(
+              "catalog-manual-price-v1", latestKey, actor.uid, idempotencyKey,
+          ),
+      );
+      const [latestSnapshot, historySnapshot] = await Promise.all([
+        transaction.get(latestRef), transaction.get(historyRef),
+      ]);
+      if (historySnapshot.exists) {
+        throw new PurchaseCommandError("price-history-conflict", 409, "A price history event exists.");
+      }
+      const previous = validateStoredPriceMemory(
+          latestSnapshot, latestKey, selection, payload.currency,
+      );
+      const version = (previous?.version || 0) + 1;
+      const common = {
+        brand_id: selection.brandId,
+        product_id: selection.productId,
+        unit_id: selection.unitId,
+        unit_value: selection.unitValue,
+        currency: payload.currency,
+        price: payload.price,
+        source_type: PRICE_SOURCE.catalogManual,
+        source_invoice_id: "",
+        changed_by: actor.uid,
+        changed_by_name: actor.name,
+        changed_by_role: actor.role,
+        changed_at: timestamp,
+        version,
+      };
+      transaction.set(latestRef, {
+        id: latestKey,
+        latest_key: latestKey,
+        history_event_id: historyRef.id,
+        ...common,
+      });
+      transaction.set(historyRef, compact({
+        id: historyRef.id,
+        latest_key: latestKey,
+        ...common,
+        previous_price: typeof previous?.price === "number" ? previous.price : undefined,
+        previous_source_invoice_id: optionalStored(previous?.source_invoice_id),
+      }));
+      return {
+        statusCode: 200,
+        responseData: {
+          product_id: selection.productId,
+          unit_id: selection.unitId,
+          currency: payload.currency,
+          version,
+        },
+      };
+    },
+  });
+}
+
 async function confirmPrices({firestore, actorUid, invoiceId, payload, idempotencyKey, timestamp}) {
   const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
   const priceRef = firestore.collection(COLLECTIONS.prices).doc(invoiceId);
@@ -922,7 +1161,7 @@ async function confirmPrices({firestore, actorUid, invoiceId, payload, idempoten
     firestore,
     command: "confirm_purchase_prices",
     actorUid,
-    expectedRole: "collector",
+    expectedRole: ["collector", "accountant"],
     idempotencyKey,
     requestHash,
     timestamp,
@@ -931,9 +1170,18 @@ async function confirmPrices({firestore, actorUid, invoiceId, payload, idempoten
         transaction.get(invoiceRef), transaction.get(priceRef),
       ]);
       const invoice = requireInvoice(invoiceSnapshot, invoiceId);
-      requireState(invoice, STATUS.pendingPriceEntry, payload.expected_revision);
       const storedItems = await readItems(transaction, invoiceRef, invoice);
       const currentPrice = priceSnapshot.data();
+      const legacyPricing = invoice.status === STATUS.pendingPriceEntry &&
+          actor.role === "collector" && currentPrice?.pricing_mode !== INITIAL_PRICING_MODE;
+      const accountantPricing = invoice.status === STATUS.pendingAccountingEntry &&
+          actor.role === "accountant" && currentPrice?.pricing_mode === INITIAL_PRICING_MODE;
+      if (!legacyPricing && !accountantPricing) {
+        throw new PurchaseCommandError("invalid-state", 409, "Price confirmation is unavailable in the current workflow state.");
+      }
+      if (invoice.revision !== payload.expected_revision) {
+        throw new PurchaseCommandError("stale-revision", 409, "The invoice revision has changed.");
+      }
       if (!priceSnapshot.exists || currentPrice?.locked !== false ||
           currentPrice?.pricing_state !== "provisional" ||
           currentPrice?.item_digest !== invoice.item_digest ||
@@ -950,7 +1198,7 @@ async function confirmPrices({firestore, actorUid, invoiceId, payload, idempoten
         throw new PurchaseCommandError("price-history-conflict", 409, "A price history event exists.");
       }
       const accountants = await activeUsersByRole(transaction, firestore, "accountant");
-      if (accountants.length === 0) {
+      if (legacyPricing && accountants.length === 0) {
         throw new PurchaseCommandError("accountant-not-configured", 409, "No active accountant exists.");
       }
       const revision = invoice.revision + 1;
@@ -967,6 +1215,7 @@ async function confirmPrices({firestore, actorUid, invoiceId, payload, idempoten
         item_count: invoice.item_count,
         item_digest: invoice.item_digest,
         currency: invoice.currency,
+        pricing_mode: currentPrice.pricing_mode,
         provisional_items: Array.isArray(currentPrice.provisional_items) ?
           currentPrice.provisional_items : [],
         items,
@@ -1113,7 +1362,7 @@ async function reviewProductTask({
     firestore,
     command: `review_product_${payload.action}`,
     actorUid,
-    expectedRole: "accountant",
+    expectedRole: ["collector", "accountant"],
     idempotencyKey,
     requestHash,
     timestamp,
@@ -1486,7 +1735,7 @@ async function reviewProductTask({
         const priceActor = {
           uid: String(price.confirmed_by || invoice.created_by),
           name: String(price.confirmed_by_name || invoice.created_by_name),
-          role: "collector",
+          role: String(price.confirmed_by_role || invoice.created_by_role),
         };
         writePriceMemory(
             transaction, lateMemory, lateLatestSnapshots, invoice.currency,
@@ -1546,7 +1795,7 @@ function assertProtectedPrice(invoice, items, price) {
       price.invoice_revision !== invoice.revision || price.pricing_revision !== 1 ||
       price.pricing_state !== "confirmed" || price.item_count !== invoice.item_count ||
       price.item_digest !== invoice.item_digest || price.currency !== invoice.currency ||
-      price.confirmed_by_role !== "collector" || !Array.isArray(price.items) ||
+      !["collector", "accountant"].includes(price.confirmed_by_role) || !Array.isArray(price.items) ||
       price.items.length !== items.length || typeof price.invoice_total !== "number" ||
       !Number.isFinite(price.invoice_total) || price.invoice_total < 0) {
     throw new PurchaseCommandError("price-snapshot-invalid", 409, "The protected prices are invalid.");
@@ -1757,6 +2006,10 @@ function createPurchaseInvoiceCommandRouter({
     firestore, admin, now, randomUUID, validator: validatePostingPayload,
     execute: postToAccounting,
   }));
+  router.post("/product-prices", commandRoute({
+    firestore, admin, now, randomUUID, validator: validateCatalogPricePayload,
+    execute: updateCatalogPrice,
+  }));
   router.post("/product-review-tasks/:taskId/decide", commandRoute({
     firestore, admin, now, randomUUID, validator: validateReviewPayload,
     execute: reviewProductTask, taskRoute: true,
@@ -1779,4 +2032,5 @@ module.exports = {
   isOperationalProfile,
   postToAccounting,
   reviewProductTask,
+  updateCatalogPrice,
 };

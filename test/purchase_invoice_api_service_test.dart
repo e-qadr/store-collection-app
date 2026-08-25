@@ -37,6 +37,7 @@ void main() {
             unitText: 'حبة',
             orderedQuantity: 2,
             provisionalUnitPrice: 7,
+            lineNotes: 'line note',
           ),
         ],
       );
@@ -44,6 +45,7 @@ void main() {
       expect(captured.url.path, '/v1/purchase-invoices');
       expect(captured.headers['authorization'], 'Bearer id-token');
       expect(body['items'][0]['provisional_unit_price'], 7);
+      expect(body['items'][0]['line_notes'], 'line note');
       expect(result.invoiceId, 'purchase-1');
     },
   );

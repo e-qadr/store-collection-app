@@ -17,6 +17,7 @@ class ProductPriceLatest {
   final String unitValue;
   final String currency;
   final double price;
+  final String sourceType;
   final String sourceInvoiceId;
   final String changedBy;
   final String changedByName;
@@ -34,6 +35,7 @@ class ProductPriceLatest {
     required this.unitValue,
     required this.currency,
     required this.price,
+    this.sourceType = 'purchase_invoice',
     required this.sourceInvoiceId,
     required this.changedBy,
     required this.changedByName,
@@ -56,6 +58,7 @@ class ProductPriceLatest {
       unitValue: data['unit_value']?.toString() ?? '',
       currency: data['currency']?.toString() ?? '',
       price: (data['price'] as num?)?.toDouble() ?? 0,
+      sourceType: data['source_type']?.toString() ?? 'purchase_invoice',
       sourceInvoiceId: data['source_invoice_id']?.toString() ?? '',
       changedBy: data['changed_by']?.toString() ?? '',
       changedByName: data['changed_by_name']?.toString() ?? '',
@@ -77,6 +80,7 @@ class ProductPriceHistoryEntry {
   final double price;
   final double? previousPrice;
   final String? previousSourceInvoiceId;
+  final String sourceType;
   final String sourceInvoiceId;
   final String changedBy;
   final String changedByName;
@@ -93,6 +97,7 @@ class ProductPriceHistoryEntry {
     required this.unitValue,
     required this.currency,
     required this.price,
+    this.sourceType = 'purchase_invoice',
     required this.sourceInvoiceId,
     required this.changedBy,
     required this.changedByName,
@@ -118,6 +123,7 @@ class ProductPriceHistoryEntry {
       price: (data['price'] as num?)?.toDouble() ?? 0,
       previousPrice: (data['previous_price'] as num?)?.toDouble(),
       previousSourceInvoiceId: _nonEmpty(data['previous_source_invoice_id']),
+      sourceType: data['source_type']?.toString() ?? 'purchase_invoice',
       sourceInvoiceId: data['source_invoice_id']?.toString() ?? '',
       changedBy: data['changed_by']?.toString() ?? '',
       changedByName: data['changed_by_name']?.toString() ?? '',

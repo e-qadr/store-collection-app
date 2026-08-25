@@ -272,6 +272,18 @@ class _PurchaseInvoiceDetailsScreenState
       );
     }
     if (widget.role == UserRole.accountant &&
+        invoice.status == PurchaseInvoiceStatus.pendingAccountingEntry &&
+        prices?.pricingState != 'confirmed') {
+      return FilledButton.icon(
+        key: const Key('confirm-purchase-prices'),
+        onPressed: () => _confirmPrices(invoice, prices),
+        icon: const Icon(Icons.price_check_rounded),
+        label: const Text(
+          '\u0645\u0631\u0627\u062c\u0639\u0629 \u0648\u0627\u0639\u062a\u0645\u0627\u062f \u0627\u0644\u0623\u0633\u0639\u0627\u0631',
+        ),
+      );
+    }
+    if (widget.role == UserRole.accountant &&
         invoice.status == PurchaseInvoiceStatus.pendingAccountingEntry) {
       return FilledButton.icon(
         key: const Key('post-purchase-accounting'),
@@ -448,6 +460,8 @@ class _PurchaseInvoiceDetailsScreenState
                       labelText: '${item.displayName} — ${item.displayUnit}',
                       helperText: suggestion == null
                           ? 'لا يوجد سعر محفوظ؛ يلزم إدخال صريح.'
+                          : suggestion.sourceType == 'catalog_manual'
+                          ? 'آخر سعر مقترح من تسعير دليل المواد '
                           : 'آخر سعر مقترح من ${suggestion.sourceInvoiceId} '
                                 '${suggestion.changedAt == null ? '' : DateFormat('yyyy/MM/dd').format(suggestion.changedAt!)}',
                     ),

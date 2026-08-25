@@ -65,7 +65,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('فواتير المشتريات'), findsOneWidget);
       expect(find.byKey(const Key('new-purchase-invoice')), findsOneWidget);
-      expect(find.text('بانتظار اعتماد الأسعار'), findsWidgets);
+      expect(find.text('فواتير الشراء الجديدة والقديمة'), findsOneWidget);
       expect(
         tester
             .widgetList<Directionality>(find.byType(Directionality))
@@ -128,6 +128,39 @@ void main() {
       expect(find.byKey(const Key('protected-price-item-1')), findsNothing);
     },
   );
+
+  testWidgets('accountant completes missing initial prices before posting', (
+    tester,
+  ) async {
+    final invoice = fixtureInvoice(
+      status: 'pendingAccountingEntry',
+      revision: 2,
+    );
+    final prices = PurchaseInvoicePriceSnapshot.fromMap({
+      'invoice_id': invoice.id,
+      'invoice_revision': invoice.revision,
+      'pricing_revision': 0,
+      'pricing_state': 'provisional',
+      'item_count': 1,
+      'item_digest': invoice.itemDigest,
+      'currency': 'YER',
+      'provisional_items': const [],
+      'locked': false,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PurchaseInvoiceDetailsScreen(
+          invoiceId: invoice.id,
+          role: UserRole.accountant,
+          fixtureInvoice: invoice,
+          fixturePrices: prices,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('confirm-purchase-prices')), findsOneWidget);
+    expect(find.byKey(const Key('post-purchase-accounting')), findsNothing);
+  });
 
   testWidgets(
     'authorized details may merge a matched protected price snapshot',

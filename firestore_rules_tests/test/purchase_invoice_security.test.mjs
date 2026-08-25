@@ -250,7 +250,12 @@ test('purchase prices, accounting data, and review tasks are denied to managers 
     where('status', '==', 'pending_review'),
     orderBy('updated_at', 'desc'),
   )));
-  await assertFails(getDoc(doc(db('collector-user'), 'product_review_tasks', 'task-1')));
+  await assertSucceeds(getDoc(doc(db('collector-user'), 'product_review_tasks', 'task-1')));
+  await assertSucceeds(getDocs(query(
+    collection(db('collector-user'), 'product_review_tasks'),
+    where('status', '==', 'pending_review'),
+    orderBy('updated_at', 'desc'),
+  )));
 });
 
 test('all purchase workflow documents are backend-only for writes', async () => {

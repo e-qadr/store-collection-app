@@ -1864,6 +1864,8 @@ class _InterBranchInvoiceDetailsScreenState
                 : _dateFormat.format(suggestion!.changedAt!);
             final source = suggestion == null
                 ? 'لا يوجد سعر سابق لهذه الوحدة'
+                : suggestion.sourceType == 'catalog_manual'
+                ? 'اقتراح من تسعير دليل المواد'
                 : 'اقتراح من فاتورة ${suggestion.sourceInvoiceId}'
                       '${sourceDate.isEmpty ? '' : ' - $sourceDate'}';
             return TextField(

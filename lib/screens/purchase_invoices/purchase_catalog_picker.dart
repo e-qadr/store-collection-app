@@ -11,6 +11,8 @@ class PurchaseCatalogSelection {
   const PurchaseCatalogSelection({required this.product, required this.unit});
 }
 
+/// Local, brand-scoped material search. The service caches catalog pages, so
+/// typing filters the loaded catalog rather than querying Firestore per key.
 Future<PurchaseCatalogSelection?> showPurchaseCatalogPicker(
   BuildContext context, {
   required String brandId,
@@ -48,8 +50,7 @@ class _PurchaseCatalogPickerDialogState
   final _search = TextEditingController();
   Timer? _debounce;
   List<ProductCatalogModel> _products = const [];
-  String? _productId;
-  String? _unitId;
+  String? _expandedProductId;
   bool _loading = false;
   bool _hasMore = false;
   bool _pendingReset = false;
@@ -68,15 +69,6 @@ class _PurchaseCatalogPickerDialogState
     super.dispose();
   }
 
-  ProductCatalogModel? get _product {
-    for (final product in _products) {
-      if (product.id == _productId) return product;
-    }
-    return null;
-  }
-
-  CatalogUnit? get _unit => _product?.unitById(_unitId ?? '');
-
   Future<void> _load({required bool reset}) async {
     if (_loading) {
       if (reset) _pendingReset = true;
@@ -91,15 +83,14 @@ class _PurchaseCatalogPickerDialogState
         brandId: widget.brandId,
         search: _search.text,
         offset: reset ? 0 : _products.length,
-        pageSize: 30,
+        pageSize: 40,
       );
       if (!mounted) return;
       setState(() {
         _products = reset ? page.products : [..._products, ...page.products];
         _hasMore = page.hasMore;
-        if (reset && !_products.any((entry) => entry.id == _productId)) {
-          _productId = null;
-          _unitId = null;
+        if (!_products.any((entry) => entry.id == _expandedProductId)) {
+          _expandedProductId = null;
         }
       });
     } catch (_) {
@@ -116,118 +107,138 @@ class _PurchaseCatalogPickerDialogState
 
   void _searchChanged(String _) {
     _debounce?.cancel();
-    _debounce = Timer(
-      const Duration(milliseconds: 350),
-      () => _load(reset: true),
-    );
+    _debounce = Timer(const Duration(milliseconds: 220), () {
+      _load(reset: true);
+    });
+  }
+
+  void _select(ProductCatalogModel product, CatalogUnit unit) {
+    Navigator.pop(context, PurchaseCatalogSelection(product: product, unit: unit));
   }
 
   @override
   Widget build(BuildContext context) {
-    final product = _product;
-    final unit = _unit;
     return Directionality(
       textDirection: TextDirection.rtl,
       child: AlertDialog(
         title: Text(widget.title),
         content: SizedBox(
-          width: 500,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: _search,
-                  onChanged: _searchChanged,
-                  decoration: const InputDecoration(
-                    labelText: 'بحث باسم المادة',
-                    prefixIcon: Icon(Icons.search_rounded),
-                  ),
+          width: 560,
+          height: 520,
+          child: Column(
+            children: [
+              TextField(
+                key: const Key('purchase-catalog-search'),
+                controller: _search,
+                autofocus: true,
+                onChanged: _searchChanged,
+                decoration: const InputDecoration(
+                  labelText: 'ابحث باسم المادة أو رمزها',
+                  hintText: 'بحث مطابق، ثم بادئ، ثم يحتوي',
+                  prefixIcon: Icon(Icons.search_rounded),
                 ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  key: ValueKey(
-                    'purchase-product-${_products.length}-$_productId',
+              ),
+              const SizedBox(height: 10),
+              if (_loading && _products.isEmpty)
+                const Expanded(child: Center(child: CircularProgressIndicator()))
+              else if (_error != null)
+                Expanded(
+                  child: Center(
+                    child: Text(_error!, style: const TextStyle(color: Colors.red)),
                   ),
-                  initialValue: _productId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'المادة'),
-                  items: _products
-                      .map(
-                        (entry) => DropdownMenuItem(
-                          value: entry.id,
-                          child: Text(
-                            entry.name,
-                            overflow: TextOverflow.ellipsis,
+                )
+              else if (_products.isEmpty)
+                const Expanded(child: Center(child: Text('لا توجد مواد مطابقة للبحث.')))
+              else
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: _products.length + (_hasMore ? 1 : 0),
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      if (index == _products.length) {
+                        return TextButton.icon(
+                          onPressed: _loading ? null : () => _load(reset: false),
+                          icon: const Icon(Icons.expand_more_rounded),
+                          label: const Text('تحميل نتائج إضافية'),
+                        );
+                      }
+                      final product = _products[index];
+                      final expanded = product.id == _expandedProductId;
+                      final code = product.legacyCode?.trim() ?? '';
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          key: Key('purchase-catalog-product-${product.id}'),
+                          onTap: () {
+                            if (product.units.length == 1) {
+                              _select(product, product.units.single);
+                            } else {
+                              setState(() => _expandedProductId = expanded ? null : product.id);
+                            }
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.inventory_2_outlined),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        product.name,
+                                        style: const TextStyle(fontWeight: FontWeight.w700),
+                                      ),
+                                    ),
+                                    if (product.units.length > 1)
+                                      Icon(expanded ? Icons.expand_less : Icons.expand_more),
+                                  ],
+                                ),
+                                if (code.isNotEmpty || product.groupId.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 3, right: 34),
+                                    child: Text(
+                                      [if (code.isNotEmpty) code, 'المجموعة: ${product.groupId}'].join(' • '),
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                  ),
+                                if (expanded)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8, right: 34),
+                                    child: Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      children: product.units
+                                          .map((unit) => ActionChip(
+                                                key: Key('purchase-catalog-unit-${product.id}-${unit.id}'),
+                                                label: Text(unit.displayValue),
+                                                avatar: const Icon(Icons.straighten_rounded, size: 18),
+                                                onPressed: () => _select(product, unit),
+                                              ))
+                                          .toList(growable: false),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
-                      )
-                      .toList(),
-                  onChanged: _loading
-                      ? null
-                      : (value) => setState(() {
-                          _productId = value;
-                          _unitId = null;
-                        }),
+                      );
+                    },
+                  ),
                 ),
-                if (_hasMore)
-                  TextButton.icon(
-                    onPressed: _loading ? null : () => _load(reset: false),
-                    icon: const Icon(Icons.expand_more_rounded),
-                    label: const Text('تحميل منتجات أخرى'),
-                  ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  key: ValueKey('purchase-unit-${product?.id ?? 'none'}'),
-                  initialValue: _unitId,
-                  decoration: const InputDecoration(labelText: 'الوحدة'),
-                  items: (product?.units ?? const <CatalogUnit>[])
-                      .map(
-                        (entry) => DropdownMenuItem(
-                          value: entry.id,
-                          child: Text(entry.displayValue),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: product == null
-                      ? null
-                      : (value) => setState(() => _unitId = value),
+              if (_loading && _products.isNotEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: LinearProgressIndicator(),
                 ),
-                if (_loading)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 12),
-                    child: LinearProgressIndicator(),
-                  ),
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Text(
-                      _error!,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                if (!_loading && _products.isEmpty && _error == null)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 12),
-                    child: Text('لا توجد مواد مطابقة للبحث.'),
-                  ),
-              ],
-            ),
+            ],
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: product == null || unit == null
-                ? null
-                : () => Navigator.pop(
-                    context,
-                    PurchaseCatalogSelection(product: product, unit: unit),
-                  ),
-            child: const Text('اختيار'),
           ),
         ],
       ),

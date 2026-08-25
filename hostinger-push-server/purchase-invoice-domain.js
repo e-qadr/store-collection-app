@@ -14,6 +14,11 @@ const MAX_REFERENCE_BYTES = 200;
 const MAX_ACCOUNTING_REFERENCE_BYTES = 200;
 const MAX_PRICE = 1_000_000_000_000_000;
 const MAX_QUANTITY = 1_000_000_000_000_000;
+// Catalog data is no longer constrained by the three unit columns used by
+// the legacy spreadsheet export. The three-unit limit is retained because the
+// audit-linked Firestore Rules have no list iteration and a fourth unit
+// exceeds their platform expression limit.
+const MAX_CATALOG_UNITS = 3;
 const DOCUMENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -221,6 +226,19 @@ function validateCreatePayload(body) {
   });
 }
 
+function validateCatalogPricePayload(body) {
+  const input = object(body);
+  onlyKeys(input, new Set([
+    "product_id", "unit_id", "currency", "price",
+  ]), "body");
+  return {
+    product_id: documentId(input.product_id, "product_id"),
+    unit_id: documentId(input.unit_id, "unit_id", MAX_UNIT_ID_BYTES),
+    currency: currency(input.currency),
+    price: number(input.price, "price", {maximum: MAX_PRICE}),
+  };
+}
+
 function validateReceiptPayload(body) {
   const input = object(body);
   onlyKeys(input, new Set(["expected_revision", "items", "receiver_notes"]), "body");
@@ -370,7 +388,7 @@ function validateReviewPayload(body) {
         raw_value: requiredString(unit.raw_value, `units[${index}].raw_value`, MAX_UNIT_BYTES),
       };
     });
-    if (units.length < 1 || units.length > 3 ||
+    if (units.length < 1 || units.length > MAX_CATALOG_UNITS ||
         new Set(units.map((unit) => unit.unit_id)).size !== units.length ||
         !units.some((unit) => unit.unit_id === result.primary_unit_id)) {
       throw new PurchaseCommandError("invalid-argument", 400, "Product units are invalid.");
@@ -491,6 +509,7 @@ function publicError(error) {
 
 module.exports = {
   MAX_ITEMS,
+  MAX_CATALOG_UNITS,
   ACCOUNTING_SYNC_STATES,
   PurchaseCommandError,
   SUPPORTED_CURRENCIES,
@@ -506,6 +525,7 @@ module.exports = {
   purchaseItemDigest,
   uncategorizedGroupId,
   validateCreatePayload,
+  validateCatalogPricePayload,
   validateIdempotencyKey,
   validatePostingPayload,
   validatePricingPayload,

@@ -3,7 +3,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:store_collection_app/models/product_catalog_model.dart';
+import 'package:store_collection_app/models/product_price_model.dart';
+import 'package:store_collection_app/screens/purchase_invoices/product_review_queue_screen.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
+import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
 ({CatalogUnit? unit2, CatalogUnit? unit3}) catalogEditorSecondaryUnitSlots(
@@ -82,6 +85,7 @@ class ProductCatalogManagementScreen extends StatefulWidget {
 class _ProductCatalogManagementScreenState
     extends State<ProductCatalogManagementScreen> {
   late final ProductCatalogService _service;
+  late final ProductPriceService _prices;
   final _searchController = TextEditingController();
   String? _selectedBrandId;
   String? _selectedGroupId;
@@ -92,6 +96,7 @@ class _ProductCatalogManagementScreenState
   void initState() {
     super.initState();
     _service = widget.service ?? ProductCatalogService();
+    _prices = ProductPriceService();
     _searchController.addListener(_refreshSearch);
   }
 
@@ -113,15 +118,16 @@ class _ProductCatalogManagementScreenState
         .doc(user.uid)
         .get();
     final data = profile.data();
-    if (data == null || data['role'] != 'accountant') {
-      throw Exception('إدارة دليل المواد متاحة للمحاسب فقط.');
+    final role = data?['role']?.toString();
+    if (data == null || (role != 'collector' && role != 'accountant')) {
+      throw Exception('إدارة المواد متاحة للمدير العام والمحاسب فقط.');
     }
     return CatalogActor(
       uid: user.uid,
       name: data['name']?.toString().trim().isNotEmpty == true
           ? data['name'].toString().trim()
-          : 'المحاسب',
-      role: data['role'].toString(),
+          : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
+      role: role!,
       active: data['isActive'] != false,
     );
   }
@@ -133,9 +139,19 @@ class _ProductCatalogManagementScreenState
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: const Text('دليل المواد والمنتجات'),
+          title: const Text('إدارة المواد'),
           backgroundColor: AppTheme.accountantColor,
           actions: [
+            IconButton(
+              tooltip: 'مواد تحتاج مراجعة',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ProductReviewQueueScreen(),
+                ),
+              ),
+              icon: const Icon(Icons.rule_folder_rounded),
+            ),
             IconButton(
               tooltip: 'إضافة مجموعة',
               onPressed: _selectedBrandId == null || _mutating
@@ -247,6 +263,7 @@ class _ProductCatalogManagementScreenState
                   groups: groups,
                   onEdit: (product) => _editProduct(product, groups),
                   onAccounting: _editAccountingProfile,
+                  onPricing: _showPriceDialog,
                   onHistory: _showHistory,
                   onArchive: _archiveProduct,
                   onReactivate: _reactivateProduct,
@@ -477,16 +494,19 @@ class _ProductCatalogManagementScreenState
     final codeController = TextEditingController(
       text: product?.legacyCode ?? '',
     );
-    final primaryController = TextEditingController(
-      text: product?.unitById(product.primaryUnitId)?.rawValue ?? '',
-    );
-    final secondaryUnitSlots = catalogEditorSecondaryUnitSlots(product);
-    final unit2Controller = TextEditingController(
-      text: secondaryUnitSlots.unit2?.rawValue ?? '',
-    );
-    final unit3Controller = TextEditingController(
-      text: secondaryUnitSlots.unit3?.rawValue ?? '',
-    );
+    final originalUnits = product == null
+        ? const <CatalogUnit>[]
+        : [
+            if (product.unitById(product.primaryUnitId) != null)
+              product.unitById(product.primaryUnitId)!,
+            ...product.units.where((unit) => unit.id != product.primaryUnitId),
+          ];
+    final unitDrafts = originalUnits
+        .map(_CatalogUnitDraft.fromExisting)
+        .toList(growable: true);
+    if (unitDrafts.isEmpty) {
+      unitDrafts.add(_CatalogUnitDraft.newPrimary());
+    }
     String? groupId = activeGroups.any((group) => group.id == product?.groupId)
         ? product!.groupId
         : activeGroups.isEmpty
@@ -534,27 +554,56 @@ class _ProductCatalogManagementScreenState
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: primaryController,
-                    decoration: const InputDecoration(
-                      labelText: 'الوحدة الأساسية *',
-                      helperText: 'تُحفظ الكتابة الأصلية كما أدخلها المحاسب.',
+                  ...unitDrafts.indexed.expand((entry) {
+                    final index = entry.$1;
+                    final draft = entry.$2;
+                    return [
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: draft.controller,
+                              decoration: InputDecoration(
+                                labelText: index == 0
+                                    ? 'الوحدة الأساسية *'
+                                    : 'الوحدة ${index + 1}',
+                                helperText: index == 0
+                                    ? 'تُحفظ الكتابة الأصلية كما أدخلها المحاسب.'
+                                    : null,
+                              ),
+                            ),
+                          ),
+                          if (index > 0)
+                            IconButton(
+                              tooltip: 'إزالة الوحدة',
+                              onPressed: () => setDialogState(() {
+                                final removed = unitDrafts.removeAt(index);
+                                removed.dispose();
+                              }),
+                              icon: const Icon(Icons.remove_circle_outline),
+                            ),
+                        ],
+                      ),
+                    ];
+                  }),
+                  if (unitDrafts.length < maxCatalogUnits) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: OutlinedButton.icon(
+                        onPressed: () => setDialogState(() {
+                          unitDrafts.add(
+                            _CatalogUnitDraft.newAdditional(
+                              _nextCatalogUnitId(unitDrafts),
+                            ),
+                          );
+                        }),
+                        icon: const Icon(Icons.add_rounded),
+                        label: const Text('إضافة وحدة'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: unit2Controller,
-                    decoration: const InputDecoration(
-                      labelText: 'الوحدة 2 (اختياري)',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: unit3Controller,
-                    decoration: const InputDecoration(
-                      labelText: 'الوحدة 3 (اختياري)',
-                    ),
-                  ),
+                  ],
                   if (validationError != null) ...[
                     const SizedBox(height: 12),
                     Text(
@@ -585,7 +634,7 @@ class _ProductCatalogManagementScreenState
             FilledButton.icon(
               onPressed: () {
                 final name = nameController.text.trim();
-                final primary = primaryController.text.trim();
+                final primary = unitDrafts.first.controller.text.trim();
                 if (groupId == null || name.isEmpty || primary.isEmpty) {
                   setDialogState(() {
                     validationError =
@@ -593,25 +642,20 @@ class _ProductCatalogManagementScreenState
                   });
                   return;
                 }
-                final units = <CatalogUnit>[
-                  catalogEditorUpdatedUnit(
-                    existing: product?.unitById(product.primaryUnitId),
-                    fallbackId: 'primary',
-                    rawValue: primary,
-                  ),
-                  if (unit2Controller.text.trim().isNotEmpty)
-                    catalogEditorUpdatedUnit(
-                      existing: secondaryUnitSlots.unit2,
-                      fallbackId: 'unit_2',
-                      rawValue: unit2Controller.text.trim(),
-                    ),
-                  if (unit3Controller.text.trim().isNotEmpty)
-                    catalogEditorUpdatedUnit(
-                      existing: secondaryUnitSlots.unit3,
-                      fallbackId: 'unit_3',
-                      rawValue: unit3Controller.text.trim(),
-                    ),
-                ];
+                final units = unitDrafts
+                    .where(
+                      (draft) =>
+                          draft == unitDrafts.first ||
+                          draft.controller.text.trim().isNotEmpty,
+                    )
+                    .map(
+                      (draft) => catalogEditorUpdatedUnit(
+                        existing: draft.existing,
+                        fallbackId: draft.id,
+                        rawValue: draft.controller.text.trim(),
+                      ),
+                    )
+                    .toList(growable: false);
                 Navigator.pop(
                   context,
                   _ProductDraft(
@@ -635,10 +679,213 @@ class _ProductCatalogManagementScreenState
 
     nameController.dispose();
     codeController.dispose();
-    primaryController.dispose();
-    unit2Controller.dispose();
-    unit3Controller.dispose();
+    for (final unitDraft in unitDrafts) {
+      unitDraft.dispose();
+    }
     return draft;
+  }
+
+  Future<void> _showPriceDialog(ProductCatalogModel product) async {
+    if (_mutating || product.units.isEmpty) return;
+    final priceController = TextEditingController();
+    var unitId = product.primaryUnitId;
+    var currency = 'YER';
+    var saving = false;
+    String? validationError;
+    Future<ProductPriceLatest?> latestForCurrentSelection() =>
+        _prices.fetchLatest(
+          brandId: product.brandId,
+          productId: product.id,
+          unitId: unitId,
+          currency: currency,
+        );
+
+    var latestFuture = latestForCurrentSelection();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('إضافة / تعديل سعر محمي'),
+          content: SizedBox(
+            width: 460,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    product.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  if (product.legacyCode != null) ...[
+                    const SizedBox(height: 4),
+                    Text('الرمز: ${product.legacyCode}'),
+                  ],
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: unitId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'الوحدة'),
+                    items: product.units
+                        .map(
+                          (unit) => DropdownMenuItem(
+                            value: unit.id,
+                            child: Text(unit.displayValue),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: saving
+                        ? null
+                        : (value) {
+                            if (value == null || value == unitId) return;
+                            setDialogState(() {
+                              unitId = value;
+                              priceController.clear();
+                              validationError = null;
+                              latestFuture = latestForCurrentSelection();
+                            });
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: currency,
+                    decoration: const InputDecoration(labelText: 'العملة'),
+                    items: const ['YER', 'SAR', 'USD']
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: saving
+                        ? null
+                        : (value) {
+                            if (value == null || value == currency) return;
+                            setDialogState(() {
+                              currency = value;
+                              priceController.clear();
+                              validationError = null;
+                              latestFuture = latestForCurrentSelection();
+                            });
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  FutureBuilder<ProductPriceLatest?>(
+                    future: latestFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const LinearProgressIndicator();
+                      }
+                      if (snapshot.hasError) {
+                        return const Text(
+                          'تعذر تحميل السعر المحمي الحالي.',
+                          style: TextStyle(color: AppTheme.errorColor),
+                        );
+                      }
+                      final latest = snapshot.data;
+                      if (latest == null) {
+                        return const Text(
+                          'لا يوجد سعر محفوظ لهذه الوحدة والعملة.',
+                        );
+                      }
+                      final changedAt = latest.changedAt == null
+                          ? ''
+                          : ' — ${DateFormat('yyyy/MM/dd HH:mm').format(latest.changedAt!)}';
+                      return Text(
+                        'السعر الحالي: ${latest.price} ${latest.currency}$changedAt',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: priceController,
+                    enabled: !saving,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'السعر الجديد *',
+                      helperText: 'يحفظ في سجل الأسعار المحمي فقط.',
+                    ),
+                  ),
+                  if (validationError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      validationError!,
+                      style: const TextStyle(color: AppTheme.errorColor),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(dialogContext),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton.icon(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      final price = double.tryParse(
+                        priceController.text.trim().replaceAll(',', ''),
+                      );
+                      if (price == null || !price.isFinite || price < 0) {
+                        setDialogState(() {
+                          validationError =
+                              'أدخل سعراً صحيحاً يساوي صفراً أو أكثر.';
+                        });
+                        return;
+                      }
+                      setDialogState(() {
+                        saving = true;
+                        validationError = null;
+                      });
+                      try {
+                        await _prices.updateCatalogPrice(
+                          productId: product.id,
+                          unitId: unitId,
+                          currency: currency,
+                          price: price,
+                          idempotencyKey:
+                              ProductPriceService.generateIdempotencyKey(),
+                        );
+                        if (!dialogContext.mounted) return;
+                        Navigator.pop(dialogContext);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('تم حفظ السعر المحمي وسجل تدقيقه.'),
+                            ),
+                          );
+                        }
+                      } on ProductPriceCommandException catch (error) {
+                        if (dialogContext.mounted) {
+                          setDialogState(() {
+                            saving = false;
+                            validationError = error.message;
+                          });
+                        }
+                      } catch (_) {
+                        if (dialogContext.mounted) {
+                          setDialogState(() {
+                            saving = false;
+                            validationError = 'تعذر حفظ السعر بأمان.';
+                          });
+                        }
+                      }
+                    },
+              icon: const Icon(Icons.save_rounded),
+              label: const Text('حفظ السعر'),
+            ),
+          ],
+        ),
+      ),
+    );
+    priceController.dispose();
   }
 
   Future<void> _archiveProduct(ProductCatalogModel product) async {
@@ -981,6 +1228,7 @@ class _ProductList extends StatelessWidget {
   final List<ProductGroupModel> groups;
   final ValueChanged<ProductCatalogModel> onEdit;
   final ValueChanged<ProductCatalogModel> onAccounting;
+  final ValueChanged<ProductCatalogModel> onPricing;
   final ValueChanged<ProductCatalogModel> onHistory;
   final ValueChanged<ProductCatalogModel> onArchive;
   final ValueChanged<ProductCatalogModel> onReactivate;
@@ -991,6 +1239,7 @@ class _ProductList extends StatelessWidget {
     required this.groups,
     required this.onEdit,
     required this.onAccounting,
+    required this.onPricing,
     required this.onHistory,
     required this.onArchive,
     required this.onReactivate,
@@ -1067,6 +1316,8 @@ class _ProductList extends StatelessWidget {
                         onEdit(product);
                       case 'accounting':
                         onAccounting(product);
+                      case 'pricing':
+                        onPricing(product);
                       case 'history':
                         onHistory(product);
                       case 'archive':
@@ -1082,6 +1333,11 @@ class _ProductList extends StatelessWidget {
                       value: 'accounting',
                       child: Text('المرجع المحاسبي'),
                     ),
+                    if (product.active)
+                      const PopupMenuItem(
+                        value: 'pricing',
+                        child: Text('إضافة / تعديل سعر محمي'),
+                      ),
                     const PopupMenuItem(
                       value: 'history',
                       child: Text('سجل التغييرات'),
@@ -1121,6 +1377,37 @@ class _ProductDraft {
     required this.units,
     required this.primaryUnitId,
   });
+}
+
+class _CatalogUnitDraft {
+  final String id;
+  final CatalogUnit? existing;
+  final TextEditingController controller;
+
+  _CatalogUnitDraft({
+    required this.id,
+    required this.existing,
+    required String rawValue,
+  }) : controller = TextEditingController(text: rawValue);
+
+  factory _CatalogUnitDraft.fromExisting(CatalogUnit unit) =>
+      _CatalogUnitDraft(id: unit.id, existing: unit, rawValue: unit.rawValue);
+
+  factory _CatalogUnitDraft.newPrimary() =>
+      _CatalogUnitDraft(id: 'primary', existing: null, rawValue: '');
+
+  factory _CatalogUnitDraft.newAdditional(String id) =>
+      _CatalogUnitDraft(id: id, existing: null, rawValue: '');
+
+  void dispose() => controller.dispose();
+}
+
+String _nextCatalogUnitId(Iterable<_CatalogUnitDraft> units) {
+  final existing = units.map((unit) => unit.id).toSet();
+  for (var index = 2; ; index++) {
+    final candidate = 'unit_$index';
+    if (!existing.contains(candidate)) return candidate;
+  }
 }
 
 class _CatalogMessage extends StatelessWidget {

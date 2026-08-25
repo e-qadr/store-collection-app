@@ -1,6 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/utils/catalog_normalization.dart';
 
+/// A bounded dynamic limit replaces the three fixed columns of the legacy
+/// spreadsheet format. The three-unit limit is retained because every catalog
+/// write is audit-linked and Firestore Rules have no list iteration: evaluating
+/// a fourth unit exceeds the platform expression limit for these transactions.
+const maxCatalogUnits = 3;
+
 class ProductCatalogCollections {
   ProductCatalogCollections._();
 
@@ -66,11 +72,17 @@ class CatalogActor {
 
   bool get isAccountant => active && role == 'accountant';
 
+  /// The stored `collector` role is the General Manager. Both that role and
+  /// the accountant may manage price-free catalog records.
+  bool get canManageCatalog =>
+      active && (role == 'collector' || role == 'accountant');
+
   bool get canReadProtectedPrices =>
       active &&
       (role == 'collector' || role == 'accountant' || role == 'admin');
 
-  bool get canWriteProtectedPrices => active && role == 'collector';
+  bool get canWriteProtectedPrices =>
+      active && (role == 'collector' || role == 'accountant');
 }
 
 class UncategorizedProductGroupContract {

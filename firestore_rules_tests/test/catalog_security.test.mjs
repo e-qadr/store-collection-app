@@ -236,6 +236,8 @@ function newProduct({
   uniqueKeyId = 'new-name-key',
   auditId = 'new-product-audit',
   units,
+  actorUid = 'accountant-user',
+  actorName = 'Accountant',
   extra = {},
 } = {}) {
   return {
@@ -257,11 +259,11 @@ function newProduct({
     name_unique_key_id: uniqueKeyId,
     last_audit_event_id: auditId,
     source_metadata: {},
-    created_by: 'accountant-user',
-    created_by_name: 'Accountant',
+    created_by: actorUid,
+    created_by_name: actorName,
     created_at: serverTimestamp(),
-    updated_by: 'accountant-user',
-    updated_by_name: 'Accountant',
+    updated_by: actorUid,
+    updated_by_name: actorName,
     updated_at: serverTimestamp(),
     ...extra,
   };
@@ -271,6 +273,7 @@ function newUniqueKey({
   id = 'new-name-key',
   productId = 'new-product',
   keyType = 'name',
+  actorUid = 'accountant-user',
   normalizedValue = 'منتج جديد',
 } = {}) {
   return {
@@ -280,9 +283,9 @@ function newUniqueKey({
     normalized_value: normalizedValue,
     product_id: productId,
     active: true,
-    created_by: 'accountant-user',
+    created_by: actorUid,
     created_at: serverTimestamp(),
-    updated_by: 'accountant-user',
+    updated_by: actorUid,
     updated_at: serverTimestamp(),
   };
 }
@@ -292,6 +295,9 @@ async function createProductAndKey(database, options = {}) {
   const uniqueKeyId = options.uniqueKeyId ?? 'new-name-key';
   const legacyKeyId = options.legacyKeyId;
   const auditId = options.auditId ?? `${id}-audit`;
+  const actorUid = options.actorUid ?? 'accountant-user';
+  const actorName = options.actorName ?? 'Accountant';
+  const actorRole = options.actorRole ?? 'accountant';
   const productExtra = {
     ...(options.extra ?? {}),
     ...(legacyKeyId
@@ -304,7 +310,9 @@ async function createProductAndKey(database, options = {}) {
   const batch = writeBatch(database);
   batch.set(
     doc(database, 'products', id),
-    newProduct({ ...options, id, uniqueKeyId, auditId, extra: productExtra }),
+    newProduct({
+      ...options, id, uniqueKeyId, auditId, extra: productExtra, actorUid, actorName,
+    }),
   );
   if (legacyKeyId) {
     batch.set(
@@ -313,6 +321,7 @@ async function createProductAndKey(database, options = {}) {
         id: legacyKeyId,
         productId: id,
         keyType: 'legacy_code',
+        actorUid,
         normalizedValue: options.legacyCode,
       }),
     );
@@ -322,6 +331,7 @@ async function createProductAndKey(database, options = {}) {
     newUniqueKey({
       id: uniqueKeyId,
       productId: id,
+      actorUid,
       normalizedValue: options.name ?? 'منتج جديد',
     }),
   );
@@ -332,9 +342,9 @@ async function createProductAndKey(database, options = {}) {
     brand_id: brandA,
     action: 'created',
     after: { id, name: options.name ?? 'منتج جديد' },
-    actor_uid: 'accountant-user',
-    actor_name: 'Accountant',
-    actor_role: 'accountant',
+    actor_uid: actorUid,
+    actor_name: actorName,
+    actor_role: actorRole,
     created_at: serverTimestamp(),
   });
   return batch.commit();
@@ -465,7 +475,7 @@ test('branch users can read only catalog documents for their branch brand', asyn
   )));
 });
 
-test('catalog supervisors can read all brands but only accountants can write', async () => {
+test('catalog supervisors can read all brands while collector and accountant can write audited catalog records', async () => {
   const accountant = databaseFor('accountant-user');
   const collector = databaseFor('collector-user');
   const admin = databaseFor('admin-user');
@@ -476,9 +486,12 @@ test('catalog supervisors can read all brands but only accountants can write', a
   await assertSucceeds(getDocs(collection(admin, 'products')));
   await assertSucceeds(createProductAndKey(accountant));
 
-  await assertFails(createProductAndKey(collector, {
+  await assertSucceeds(createProductAndKey(collector, {
     id: 'collector-product',
     uniqueKeyId: 'collector-key',
+    actorUid: 'collector-user',
+    actorName: 'General manager',
+    actorRole: 'collector',
   }));
   await assertFails(createProductAndKey(admin, {
     id: 'admin-product',
@@ -1071,7 +1084,7 @@ test('catalog rules reject top-level and nested protected-price fields', async (
   }));
 });
 
-test('a full three-unit legacy-coded import product stays under the rule limit', async () => {
+test('a full three-unit legacy-coded import product remains compatible', async () => {
   const accountant = databaseFor('accountant-user');
   await assertSucceeds(createProductAndKey(accountant, {
     id: 'full-import-product',
@@ -1113,6 +1126,24 @@ test('a full three-unit legacy-coded import product stays under the rule limit',
         fallback_system_group_assigned: false,
       },
     },
+  }));
+});
+
+test('catalog unit cap remains three to keep audited rules evaluations safe', async () => {
+  const accountant = databaseFor('accountant-user');
+  const units = Array.from({length: 3}, (_, index) => ({
+    unit_id: index === 0 ? 'primary' : `unit_${index + 1}`,
+    display_value: `وحدة ${index + 1}`,
+    raw_value: `وحدة ${index + 1}`,
+  }));
+  await assertFails(createProductAndKey(accountant, {
+    id: 'four-unit-product',
+    name: 'منتج أربع وحدات',
+    uniqueKeyId: 'four-unit-product-key',
+    units: [
+      ...units,
+      {unit_id: 'unit_4', display_value: 'وحدة 4', raw_value: 'وحدة 4'},
+    ],
   }));
 });
 

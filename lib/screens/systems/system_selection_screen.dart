@@ -98,12 +98,12 @@ class SystemSelectionScreen extends StatelessWidget {
                       color: AppTheme.collectorColor,
                       onTap: () => _openCollectionSystem(context),
                     ),
-                    if (role == UserRole.accountant) ...[
+                    if (role == UserRole.collector || role == UserRole.accountant) ...[
                       const SizedBox(height: 12),
                       ActionCard(
-                        title: 'دليل المواد والمنتجات',
+                        title: 'إدارة المواد',
                         subtitle:
-                            'إدارة المنتجات حسب العلامة والمجموعة وأرشفتها ومراجعة سجل التغييرات',
+                            'إدارة المواد والوحدات والأرشفة وقائمة المواد التي تحتاج مراجعة',
                         icon: Icons.inventory_2_rounded,
                         color: AppTheme.accountantColor,
                         onTap: () => Navigator.push(
@@ -129,7 +129,7 @@ class SystemSelectionScreen extends StatelessWidget {
                       ActionCard(
                         title: 'فواتير المشتريات',
                         subtitle:
-                            'إنشاء فاتورة شراء، استلام الكميات، اعتماد الأسعار والترحيل المحاسبي',
+                            'إنشاء فاتورة شراء، تأكيد الاستلام، ثم المراجعة والترحيل المحاسبي',
                         icon: Icons.shopping_cart_checkout_rounded,
                         color: const Color(0xFF00695C),
                         onTap: () => _openPurchaseInvoicesSystem(context),

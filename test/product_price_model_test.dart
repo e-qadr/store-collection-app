@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
@@ -31,7 +35,7 @@ void main() {
     },
   );
 
-  test('actor validator recognizes only an active general manager', () {
+  test('actor validator recognizes active General Manager and accountant', () {
     const collector = CatalogActor(
       uid: 'collector-1',
       name: 'المدير العام',
@@ -56,7 +60,7 @@ void main() {
     );
     expect(
       () => ProductPriceService.validateConfirmedPriceWriter(accountant),
-      throwsStateError,
+      returnsNormally,
     );
     expect(
       () => ProductPriceService.validateConfirmedPriceWriter(admin),
@@ -67,6 +71,36 @@ void main() {
       throwsStateError,
     );
   });
+
+  test(
+    'catalog price updates use only the protected backend command',
+    () async {
+      late http.Request captured;
+      final service = ProductPriceService(
+        baseUrl: 'https://api.example.test',
+        tokenProvider: () async => 'id-token',
+        client: MockClient((request) async {
+          captured = request;
+          return http.Response(jsonEncode({'version': 1}), 200);
+        }),
+      );
+      await service.updateCatalogPrice(
+        productId: 'product-1',
+        unitId: 'unit-2',
+        currency: 'sar',
+        price: 45,
+        idempotencyKey: 'catalog-price-request-1',
+      );
+      expect(captured.url.path, '/v1/product-prices');
+      expect(captured.headers['authorization'], 'Bearer id-token');
+      expect(jsonDecode(captured.body), {
+        'product_id': 'product-1',
+        'unit_id': 'unit-2',
+        'currency': 'SAR',
+        'price': 45.0,
+      });
+    },
+  );
 
   test(
     'client-side direct price-memory writes are disabled for every role',

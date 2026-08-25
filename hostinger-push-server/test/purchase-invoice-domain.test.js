@@ -3,11 +3,13 @@ const test = require("node:test");
 
 const {
   MAX_ITEMS,
+  MAX_CATALOG_UNITS,
   PurchaseCommandError,
   normalizeCatalogText,
   productPriceLatestKey,
   purchaseItemDigest,
   validateCreatePayload,
+  validateCatalogPricePayload,
   validatePostingPayload,
   validatePricingPayload,
   validateReceiptPayload,
@@ -91,6 +93,23 @@ test("purchase creation validates closed source-specific schemas and duplicate s
 });
 
 test("receipt, pricing, posting override, and review payloads are closed", () => {
+  assert.deepEqual(validateCatalogPricePayload({
+    product_id: "product-1",
+    unit_id: "primary",
+    currency: "sar",
+    price: 45,
+  }), {
+    product_id: "product-1",
+    unit_id: "primary",
+    currency: "SAR",
+    price: 45,
+  });
+  assert.throws(() => validateCatalogPricePayload({
+    product_id: "product-1",
+    unit_id: "primary",
+    currency: "SAR",
+    price: -1,
+  }), (error) => error.code === "invalid-argument");
   assert.equal(validateReceiptPayload({
     expected_revision: 1,
     items: [{item_id: "item-1", received_quantity: 1}],
@@ -128,6 +147,32 @@ test("receipt, pricing, posting override, and review payloads are closed", () =>
     expected_invoice_revision: 3,
     action: "mark_synchronized",
     sync_state: "synchronized",
+  }), (error) => error.code === "invalid-argument");
+});
+
+test("review product validation supports the bounded dynamic catalog unit limit", () => {
+  const units = Array.from({length: MAX_CATALOG_UNITS}, (_, index) => ({
+    unit_id: index === 0 ? "primary" : `unit_${index + 1}`,
+    display_value: `Unit ${index + 1}`,
+    raw_value: `Unit ${index + 1}`,
+  }));
+  assert.equal(validateReviewPayload({
+    expected_revision: 1,
+    expected_invoice_revision: 1,
+    action: "create_product",
+    material_name: "New product",
+    primary_unit_id: "primary",
+    units,
+  }).units.length, MAX_CATALOG_UNITS);
+  assert.throws(() => validateReviewPayload({
+    expected_revision: 1,
+    expected_invoice_revision: 1,
+    action: "create_product",
+    material_name: "Too many units",
+    primary_unit_id: "primary",
+    units: [...units, {
+      unit_id: "unit_4", display_value: "Unit 4", raw_value: "Unit 4",
+    }],
   }), (error) => error.code === "invalid-argument");
 });
 

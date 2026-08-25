@@ -12,6 +12,7 @@ const {
   confirmReceipt,
   postToAccounting,
   reviewProductTask,
+  updateCatalogPrice,
 } = require("../purchase-invoice-commands");
 const {safeJsonErrorHandler} = require("../inter-branch-invoice-commands");
 const {FakeFirestore, fakeAdmin} = require("./support/fake-firestore");
@@ -189,11 +190,68 @@ test("collector creates an atomic scalable purchase invoice and unmatched task w
   assert.equal(task.original_material_name, "مادة غير مطابقة");
   assert.equal(task.original_group_text, "");
   assert.deepEqual(protectedPrice.provisional_items, [{item_id: items[0].item_id, unit_price: 9}]);
+  assert.equal(protectedPrice.pricing_mode, "initial_purchase");
   for (const value of [invoice, ...items, ...firestore.documents(COLLECTIONS.events)]) {
     assert.doesNotMatch(JSON.stringify(value), /unit_price|line_total|invoice_total|accounting_reference/);
   }
   const notificationText = JSON.stringify(firestore.documents(COLLECTIONS.notifications));
   assert.doesNotMatch(notificationText, /unit_price|line_total|invoice_total|accounting_reference|\b9\b/);
+});
+
+test("collector and accountant update protected catalog price memory by product, unit, and currency", async () => {
+  const firestore = new FakeFirestore(seed());
+  const first = await updateCatalogPrice({
+    firestore,
+    actorUid: "collector",
+    payload: {product_id: "product-r", unit_id: "primary", currency: "SAR", price: 45},
+    idempotencyKey: "catalog-price-first-1",
+    timestamp: now,
+  });
+  assert.equal(first.statusCode, 200);
+  const latest = firestore.documents(COLLECTIONS.priceLatest)[0];
+  const history = firestore.documents(COLLECTIONS.priceHistory)[0];
+  assert.equal(latest.brand_id, "brand-r");
+  assert.equal(latest.product_id, "product-r");
+  assert.equal(latest.unit_id, "primary");
+  assert.equal(latest.currency, "SAR");
+  assert.equal(latest.price, 45);
+  assert.equal(latest.source_type, "catalog_manual");
+  assert.equal(latest.source_invoice_id, "");
+  assert.equal(history.changed_by_role, "collector");
+  assert.equal(firestore.document(COLLECTIONS.products, "product-r").price, undefined);
+
+  const replay = await updateCatalogPrice({
+    firestore,
+    actorUid: "collector",
+    payload: {product_id: "product-r", unit_id: "primary", currency: "SAR", price: 45},
+    idempotencyKey: "catalog-price-first-1",
+    timestamp: now,
+  });
+  assert.equal(replay.replay, true);
+  assert.equal(firestore.documents(COLLECTIONS.priceHistory).length, 1);
+
+  await updateCatalogPrice({
+    firestore,
+    actorUid: "accountant",
+    payload: {product_id: "product-r", unit_id: "primary", currency: "SAR", price: 48},
+    idempotencyKey: "catalog-price-second-1",
+    timestamp: now,
+  });
+  const updated = firestore.documents(COLLECTIONS.priceLatest)[0];
+  const updatedHistory = firestore.documents(COLLECTIONS.priceHistory)
+      .find((entry) => entry.version === 2);
+  assert.equal(updated.price, 48);
+  assert.equal(updated.version, 2);
+  assert.equal(updatedHistory.previous_price, 45);
+  assert.equal(updatedHistory.previous_source_invoice_id, undefined);
+
+  await assert.rejects(() => updateCatalogPrice({
+    firestore,
+    actorUid: "manager-r",
+    payload: {product_id: "product-r", unit_id: "primary", currency: "SAR", price: 50},
+    idempotencyKey: "catalog-price-manager-1",
+    timestamp: now,
+  }), (error) => error.code === "forbidden");
 });
 
 test("purchase numbers are atomic, sequential, and independent of optional supplier references", async () => {
@@ -318,7 +376,7 @@ test("creation validates collector role, receiving brand ownership, duplicates, 
   }), (error) => error.code === "duplicate-supplier-invoice");
 });
 
-test("receipt remains non-blocking with unresolved review tasks and rejects cross-branch actors", async () => {
+test("new receipt is non-blocking with unresolved review tasks and goes directly to accounting", async () => {
   const firestore = new FakeFirestore(seed());
   const {result} = await createInvoice(firestore);
   const invoiceId = result.responseData.invoice_id;
@@ -349,8 +407,80 @@ test("receipt remains non-blocking with unresolved review tasks and rejects cros
     idempotencyKey: "receipt-0001",
     timestamp: now,
   });
-  assert.equal(receipt.responseData.status, "pendingPriceEntry");
+  assert.equal(receipt.responseData.status, "pendingAccountingEntry");
+  assert.equal(firestore.document(COLLECTIONS.prices, invoiceId).pricing_state, "provisional");
   assert.equal(findTask(firestore, invoiceId).status, "pending_review");
+});
+
+test("new fully priced purchase confirms protected prices and bypasses the collector pricing step", async () => {
+  const firestore = new FakeFirestore(seed());
+  const payload = createPayload();
+  payload.items = [payload.items[0]];
+  const created = await createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload,
+    idempotencyKey: "initial-price-complete-1",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  const invoiceId = created.responseData.invoice_id;
+  const [item] = publicItems(firestore, invoiceId);
+  const receipt = await confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      items: [{
+        item_id: item.item_id,
+        received_quantity: 4,
+        damaged_quantity: 0,
+        missing_quantity: 1,
+      }],
+    },
+    idempotencyKey: "initial-price-receipt-1",
+    timestamp: now,
+  });
+  const price = firestore.document(COLLECTIONS.prices, invoiceId);
+  assert.equal(receipt.responseData.status, "pendingAccountingEntry");
+  assert.equal(firestore.document(COLLECTIONS.invoices, invoiceId).status, "pendingAccountingEntry");
+  assert.equal(price.pricing_state, "confirmed");
+  assert.equal(price.items[0].received_quantity, 4);
+  assert.equal(price.items[0].line_total, 36);
+  assert.equal(price.confirmed_by_role, "collector");
+  assert.doesNotMatch(
+      JSON.stringify(firestore.document(COLLECTIONS.invoices, invoiceId)),
+      /unit_price|line_total|invoice_total/,
+  );
+});
+
+test("legacy purchase price drafts remain on the collector pricing path", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore, "legacy-price-flow-1");
+  const invoiceId = result.responseData.invoice_id;
+  const prices = firestore._collection(COLLECTIONS.prices);
+  const legacyPrice = prices.get(invoiceId);
+  delete legacyPrice.pricing_mode;
+  prices.set(invoiceId, legacyPrice);
+  const items = publicItems(firestore, invoiceId);
+  const receipt = await confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      items: items.map((item) => ({
+        item_id: item.item_id,
+        received_quantity: item.ordered_quantity,
+        damaged_quantity: 0,
+        missing_quantity: 0,
+      })),
+    },
+    idempotencyKey: "legacy-price-receipt-1",
+    timestamp: now,
+  });
+  assert.equal(receipt.responseData.status, "pendingPriceEntry");
 });
 
 test("each workflow command fails closed for the wrong role or state", async () => {
@@ -400,7 +530,7 @@ test("each workflow command fails closed for the wrong role or state", async () 
   }), (error) => error.code === "invalid-state");
   await assert.rejects(() => reviewProductTask({
     firestore,
-    actorUid: "collector",
+    actorUid: "manager-r",
     taskId: task.id,
     payload: {
       expected_revision: 1,
@@ -448,10 +578,10 @@ test("full workflow blocks unresolved posting, supports audited override, and la
   items = publicItems(firestore, invoiceId);
   await confirmPrices({
     firestore,
-    actorUid: "collector",
+    actorUid: "accountant",
     invoiceId,
     payload: {
-      expected_revision: 2,
+    expected_revision: 2,
       items: items.map((item, index) => ({item_id: item.item_id, unit_price: 10 + index})),
     },
     idempotencyKey: "prices-full-1",

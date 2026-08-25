@@ -80,7 +80,7 @@ void main() {
       expect(accountant.canReadProtectedPrices, isTrue);
       expect(admin.canReadProtectedPrices, isTrue);
       expect(collector.canWriteProtectedPrices, isTrue);
-      expect(accountant.canWriteProtectedPrices, isFalse);
+      expect(accountant.canWriteProtectedPrices, isTrue);
       expect(admin.canWriteProtectedPrices, isFalse);
       expect(inactiveCollector.canReadProtectedPrices, isFalse);
       expect(inactiveCollector.canWriteProtectedPrices, isFalse);

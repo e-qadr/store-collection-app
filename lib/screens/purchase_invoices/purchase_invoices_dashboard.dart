@@ -75,7 +75,8 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 96),
               children: [
-                if (widget.role == UserRole.accountant) ...[
+                if (widget.role == UserRole.collector ||
+                    widget.role == UserRole.accountant) ...[
                   Card(
                     child: ListTile(
                       key: const Key('purchase-review-queue'),
@@ -151,7 +152,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
 
   String _queueTitle(UserRole role) => switch (role) {
     UserRole.manager => 'فواتير فرع ${widget.branchName}',
-    UserRole.collector => 'بانتظار اعتماد الأسعار',
+    UserRole.collector => 'فواتير الشراء الجديدة والقديمة',
     UserRole.accountant => 'بانتظار الترحيل المحاسبي',
     UserRole.admin => 'فواتير المشتريات',
   };

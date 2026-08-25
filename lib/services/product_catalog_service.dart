@@ -221,7 +221,7 @@ class ProductCatalogService {
     required String name,
     String? legacyCode,
   }) async {
-    _requireAccountant(actor);
+    _requireCatalogManager(actor);
     final cleanBrandId = _required(brandId, 'Brand ID');
     final cleanName = _required(name, 'Group name');
     if (UncategorizedProductGroupContract.isReservedIdentity(
@@ -292,7 +292,7 @@ class ProductCatalogService {
     required CatalogActor actor,
     required String brandId,
   }) async {
-    _requireAccountant(actor);
+    _requireCatalogManager(actor);
     final cleanBrandId = _required(brandId, 'Brand ID');
     final groupId = UncategorizedProductGroupContract.documentIdForBrand(
       cleanBrandId,
@@ -366,7 +366,7 @@ class ProductCatalogService {
     required String primaryUnitId,
     Map<String, dynamic>? sourceMetadata,
   }) async {
-    _requireAccountant(actor);
+    _requireCatalogManager(actor);
     final cleanBrandId = _required(brandId, 'Brand ID');
     final cleanGroupId = _required(groupId, 'Group ID');
     final cleanName = _required(name, 'Product name');
@@ -484,7 +484,7 @@ class ProductCatalogService {
     required String primaryUnitId,
     Map<String, dynamic>? sourceMetadata,
   }) async {
-    _requireAccountant(actor);
+    _requireCatalogManager(actor);
     final cleanProductId = _required(productId, 'Product ID');
     final cleanGroupId = _required(groupId, 'Group ID');
     final cleanName = _required(name, 'Product name');
@@ -620,7 +620,7 @@ class ProductCatalogService {
     required String productId,
     required String reason,
   }) async {
-    _requireAccountant(actor);
+    _requireCatalogManager(actor);
     final cleanReason = _required(reason, 'Archive reason');
     final productRef = _products.doc(_required(productId, 'Product ID'));
     final auditRef = _auditEvents.doc();
@@ -672,7 +672,7 @@ class ProductCatalogService {
     required String productId,
     required String reason,
   }) async {
-    _requireAccountant(actor);
+    _requireCatalogManager(actor);
     final cleanReason = _required(reason, 'Reactivation reason');
     final productRef = _products.doc(_required(productId, 'Product ID'));
     final auditRef = _auditEvents.doc();
@@ -743,7 +743,7 @@ class ProductCatalogService {
     required String syncState,
     String? notes,
   }) async {
-    _requireAccountant(actor);
+    _requireCatalogManager(actor);
     final cleanProductId = _required(productId, 'Product ID');
     final cleanSyncState = _required(syncState, 'Synchronization state');
     const allowedStates = {'not_synced', 'pending', 'synced', 'sync_error'};
@@ -954,9 +954,9 @@ class ProductCatalogService {
 
   void _validateUnits(List<CatalogUnit> units, String primaryUnitId) {
     if (units.isEmpty) throw ArgumentError('At least one unit is required.');
-    if (units.length > 3) {
+    if (units.length > maxCatalogUnits) {
       throw ArgumentError(
-        'A product can have at most three independent units.',
+        'A product can have at most $maxCatalogUnits independent units.',
       );
     }
     final ids = <String>{};
@@ -1100,11 +1100,13 @@ class ProductCatalogService {
         left.entries.every((entry) => right[entry.key] == entry.value);
   }
 
-  void _requireAccountant(CatalogActor actor) {
+  void _requireCatalogManager(CatalogActor actor) {
     _requireValue(actor.uid, 'Actor UID');
     _requireValue(actor.name, 'Actor name');
-    if (!actor.isAccountant) {
-      throw StateError('Only the accountant can manage the product catalog.');
+    if (!actor.canManageCatalog) {
+      throw StateError(
+        'Only the General Manager or accountant can manage the product catalog.',
+      );
     }
   }
 
