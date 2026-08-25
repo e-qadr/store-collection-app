@@ -46,6 +46,7 @@ class PurchaseItemEditorDialog extends StatefulWidget {
   final String initialUnitText;
   final String initialLineNotes;
   final String? priceHelperText;
+  final bool showPricing;
   final String confirmLabel;
 
   const PurchaseItemEditorDialog.catalog({
@@ -58,6 +59,7 @@ class PurchaseItemEditorDialog extends StatefulWidget {
     this.initialProvisionalPrice,
     this.initialLineNotes = '',
     this.priceHelperText,
+    this.showPricing = true,
     this.confirmLabel = 'حفظ',
   }) : isUnmatched = false,
        title = '$productName — $unitValue',
@@ -74,6 +76,7 @@ class PurchaseItemEditorDialog extends StatefulWidget {
     this.initialProvisionalPrice,
     this.initialLineNotes = '',
     this.priceHelperText,
+    this.showPricing = true,
     this.confirmLabel = 'حفظ',
   }) : isUnmatched = true,
        title = 'مادة غير موجودة في الكتالوج',
@@ -100,15 +103,20 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     _nameController = TextEditingController(text: widget.initialMaterialName);
     _groupController = TextEditingController(text: widget.initialGroupText);
     _unitController = TextEditingController(text: widget.initialUnitText);
-    _quantityController = TextEditingController(text: _number(widget.initialQuantity));
+    _quantityController = TextEditingController(
+      text: _number(widget.initialQuantity),
+    );
     _provisionalPriceController = TextEditingController(
       text: widget.initialProvisionalPrice == null
           ? ''
           : _number(widget.initialProvisionalPrice!),
     );
     _notesController = TextEditingController(text: widget.initialLineNotes);
-    _catalogUnitId = widget.initialCatalogUnitId ??
-        (widget.catalogUnits.length == 1 ? widget.catalogUnits.single.id : null);
+    _catalogUnitId =
+        widget.initialCatalogUnitId ??
+        (widget.catalogUnits.length == 1
+            ? widget.catalogUnits.single.id
+            : null);
   }
 
   @override
@@ -128,7 +136,8 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     final price = priceText.isEmpty ? null : double.tryParse(priceText);
     final materialName = _nameController.text.trim();
     final unitText = _unitController.text.trim();
-    final validCatalogUnit = widget.isUnmatched ||
+    final validCatalogUnit =
+        widget.isUnmatched ||
         widget.catalogUnits.isEmpty ||
         widget.catalogUnits.any((unit) => unit.id == _catalogUnitId);
     if (quantity == null ||
@@ -178,13 +187,17 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                   TextField(
                     key: const Key('purchase-item-group'),
                     controller: _groupController,
-                    decoration: const InputDecoration(labelText: 'المجموعة (اختيارية)'),
+                    decoration: const InputDecoration(
+                      labelText: 'المجموعة (اختيارية)',
+                    ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     key: const Key('purchase-item-unit'),
                     controller: _unitController,
-                    decoration: const InputDecoration(labelText: 'الوحدة كما وردت'),
+                    decoration: const InputDecoration(
+                      labelText: 'الوحدة كما وردت',
+                    ),
                   ),
                   const SizedBox(height: 10),
                 ] else if (widget.catalogUnits.length > 1) ...[
@@ -193,37 +206,48 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                     initialValue: _catalogUnitId,
                     decoration: const InputDecoration(labelText: 'الوحدة'),
                     items: widget.catalogUnits
-                        .map((unit) => DropdownMenuItem(
-                              value: unit.id,
-                              child: Text(unit.displayValue),
-                            ))
+                        .map(
+                          (unit) => DropdownMenuItem(
+                            value: unit.id,
+                            child: Text(unit.displayValue),
+                          ),
+                        )
                         .toList(growable: false),
-                    onChanged: (value) => setState(() => _catalogUnitId = value),
+                    onChanged: (value) =>
+                        setState(() => _catalogUnitId = value),
                   ),
                   const SizedBox(height: 10),
                 ],
                 TextField(
                   key: const Key('purchase-item-quantity'),
                   controller: _quantityController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(labelText: 'الكمية'),
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  key: const Key('purchase-item-provisional-price'),
-                  controller: _provisionalPriceController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: 'سعر الوحدة (اختياري وسري)',
-                    helperText: widget.priceHelperText,
+                if (widget.showPricing) ...[
+                  TextField(
+                    key: const Key('purchase-item-provisional-price'),
+                    controller: _provisionalPriceController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      labelText: 'سعر الوحدة (اختياري وسري)',
+                      helperText: widget.priceHelperText,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
+                  const SizedBox(height: 10),
+                ],
                 TextField(
                   key: const Key('purchase-item-notes'),
                   controller: _notesController,
                   maxLines: 2,
-                  decoration: const InputDecoration(labelText: 'ملاحظات البند (اختيارية)'),
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات البند (اختيارية)',
+                  ),
                 ),
               ],
             ),

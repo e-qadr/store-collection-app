@@ -4,12 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 
-class PurchaseCatalogSelection {
+enum CatalogPickerMode { purchase, consumption, transfer }
+
+class CatalogSelection {
   final ProductCatalogModel product;
   final CatalogUnit unit;
 
-  const PurchaseCatalogSelection({required this.product, required this.unit});
+  const CatalogSelection({required this.product, required this.unit});
 }
+
+typedef PurchaseCatalogSelection = CatalogSelection;
 
 /// Local, brand-scoped material search. The service caches catalog pages, so
 /// typing filters the loaded catalog rather than querying Firestore per key.
@@ -18,26 +22,51 @@ Future<PurchaseCatalogSelection?> showPurchaseCatalogPicker(
   required String brandId,
   ProductCatalogService? service,
   String title = 'اختيار مادة من الكتالوج',
+  List<ProductCatalogModel>? products,
 }) {
-  return showDialog<PurchaseCatalogSelection>(
+  return showCatalogPicker(
+    context,
+    brandId: brandId,
+    service: service,
+    title: title,
+    mode: CatalogPickerMode.purchase,
+    products: products,
+  );
+}
+
+Future<CatalogSelection?> showCatalogPicker(
+  BuildContext context, {
+  required String brandId,
+  required CatalogPickerMode mode,
+  ProductCatalogService? service,
+  String title = 'اختيار مادة من الكتالوج',
+  List<ProductCatalogModel>? products,
+}) {
+  return showDialog<CatalogSelection>(
     context: context,
     builder: (_) => _PurchaseCatalogPickerDialog(
       brandId: brandId,
-      service: service ?? ProductCatalogService(),
+      service: service,
       title: title,
+      mode: mode,
+      products: products,
     ),
   );
 }
 
 class _PurchaseCatalogPickerDialog extends StatefulWidget {
   final String brandId;
-  final ProductCatalogService service;
+  final ProductCatalogService? service;
   final String title;
+  final CatalogPickerMode mode;
+  final List<ProductCatalogModel>? products;
 
   const _PurchaseCatalogPickerDialog({
     required this.brandId,
     required this.service,
     required this.title,
+    required this.mode,
+    this.products,
   });
 
   @override
@@ -79,12 +108,22 @@ class _PurchaseCatalogPickerDialogState
       _error = null;
     });
     try {
-      final page = await widget.service.fetchActiveProductsPage(
-        brandId: widget.brandId,
-        search: _search.text,
-        offset: reset ? 0 : _products.length,
-        pageSize: 40,
-      );
+      if (widget.products != null) {
+        final filtered = filterCatalogProducts(widget.products!, _search.text);
+        if (!mounted) return;
+        setState(() {
+          _products = filtered;
+          _hasMore = false;
+        });
+        return;
+      }
+      final page = await (widget.service ?? ProductCatalogService())
+          .fetchActiveProductsPage(
+            brandId: widget.brandId,
+            search: _search.text,
+            offset: reset ? 0 : _products.length,
+            pageSize: 40,
+          );
       if (!mounted) return;
       setState(() {
         _products = reset ? page.products : [..._products, ...page.products];
@@ -113,7 +152,7 @@ class _PurchaseCatalogPickerDialogState
   }
 
   void _select(ProductCatalogModel product, CatalogUnit unit) {
-    Navigator.pop(context, PurchaseCatalogSelection(product: product, unit: unit));
+    Navigator.pop(context, CatalogSelection(product: product, unit: unit));
   }
 
   @override
@@ -121,6 +160,7 @@ class _PurchaseCatalogPickerDialogState
     return Directionality(
       textDirection: TextDirection.rtl,
       child: AlertDialog(
+        key: Key('shared-catalog-picker-${widget.mode.name}'),
         title: Text(widget.title),
         content: SizedBox(
           width: 560,
@@ -128,7 +168,7 @@ class _PurchaseCatalogPickerDialogState
           child: Column(
             children: [
               TextField(
-                key: const Key('purchase-catalog-search'),
+                key: const Key('shared-catalog-search'),
                 controller: _search,
                 autofocus: true,
                 onChanged: _searchChanged,
@@ -140,15 +180,22 @@ class _PurchaseCatalogPickerDialogState
               ),
               const SizedBox(height: 10),
               if (_loading && _products.isEmpty)
-                const Expanded(child: Center(child: CircularProgressIndicator()))
+                const Expanded(
+                  child: Center(child: CircularProgressIndicator()),
+                )
               else if (_error != null)
                 Expanded(
                   child: Center(
-                    child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
                   ),
                 )
               else if (_products.isEmpty)
-                const Expanded(child: Center(child: Text('لا توجد مواد مطابقة للبحث.')))
+                const Expanded(
+                  child: Center(child: Text('لا توجد مواد مطابقة للبحث.')),
+                )
               else
                 Expanded(
                   child: ListView.separated(
@@ -157,7 +204,9 @@ class _PurchaseCatalogPickerDialogState
                     itemBuilder: (context, index) {
                       if (index == _products.length) {
                         return TextButton.icon(
-                          onPressed: _loading ? null : () => _load(reset: false),
+                          onPressed: _loading
+                              ? null
+                              : () => _load(reset: false),
                           icon: const Icon(Icons.expand_more_rounded),
                           label: const Text('تحميل نتائج إضافية'),
                         );
@@ -168,16 +217,23 @@ class _PurchaseCatalogPickerDialogState
                       return Material(
                         color: Colors.transparent,
                         child: InkWell(
-                          key: Key('purchase-catalog-product-${product.id}'),
+                          key: Key('shared-catalog-product-${product.id}'),
                           onTap: () {
                             if (product.units.length == 1) {
                               _select(product, product.units.single);
                             } else {
-                              setState(() => _expandedProductId = expanded ? null : product.id);
+                              setState(
+                                () => _expandedProductId = expanded
+                                    ? null
+                                    : product.id,
+                              );
                             }
                           },
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                              horizontal: 4,
+                            ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -188,34 +244,60 @@ class _PurchaseCatalogPickerDialogState
                                     Expanded(
                                       child: Text(
                                         product.name,
-                                        style: const TextStyle(fontWeight: FontWeight.w700),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
                                     ),
                                     if (product.units.length > 1)
-                                      Icon(expanded ? Icons.expand_less : Icons.expand_more),
+                                      Icon(
+                                        expanded
+                                            ? Icons.expand_less
+                                            : Icons.expand_more,
+                                      ),
                                   ],
                                 ),
-                                if (code.isNotEmpty || product.groupId.isNotEmpty)
+                                if (code.isNotEmpty ||
+                                    product.groupId.isNotEmpty)
                                   Padding(
-                                    padding: const EdgeInsets.only(top: 3, right: 34),
+                                    padding: const EdgeInsets.only(
+                                      top: 3,
+                                      right: 34,
+                                    ),
                                     child: Text(
-                                      [if (code.isNotEmpty) code, 'المجموعة: ${product.groupId}'].join(' • '),
-                                      style: Theme.of(context).textTheme.bodySmall,
+                                      [
+                                        if (code.isNotEmpty) code,
+                                        'المجموعة: ${product.groupId}',
+                                      ].join(' • '),
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
                                     ),
                                   ),
                                 if (expanded)
                                   Padding(
-                                    padding: const EdgeInsets.only(top: 8, right: 34),
+                                    padding: const EdgeInsets.only(
+                                      top: 8,
+                                      right: 34,
+                                    ),
                                     child: Wrap(
                                       spacing: 8,
                                       runSpacing: 6,
                                       children: product.units
-                                          .map((unit) => ActionChip(
-                                                key: Key('purchase-catalog-unit-${product.id}-${unit.id}'),
-                                                label: Text(unit.displayValue),
-                                                avatar: const Icon(Icons.straighten_rounded, size: 18),
-                                                onPressed: () => _select(product, unit),
-                                              ))
+                                          .map(
+                                            (unit) => ActionChip(
+                                              key: Key(
+                                                'shared-catalog-unit-${product.id}-${unit.id}',
+                                              ),
+                                              label: Text(unit.displayValue),
+                                              avatar: const Icon(
+                                                Icons.straighten_rounded,
+                                                size: 18,
+                                              ),
+                                              onPressed: () =>
+                                                  _select(product, unit),
+                                            ),
+                                          )
                                           .toList(growable: false),
                                     ),
                                   ),

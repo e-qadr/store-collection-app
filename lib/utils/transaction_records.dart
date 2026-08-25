@@ -1,5 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum TransactionSortField { createdAt, businessDate, voucherNumber, amount }
+
+enum TransactionSortDirection { ascending, descending }
+
+class TransactionRecordSort {
+  final TransactionSortField field;
+  final TransactionSortDirection direction;
+
+  const TransactionRecordSort({
+    this.field = TransactionSortField.createdAt,
+    this.direction = TransactionSortDirection.descending,
+  });
+}
+
 class TransactionRecordFilters {
   final String? currency;
   final String? status;
@@ -105,20 +119,58 @@ List<T> filterAndSortTransactionRecords<T>({
   required Iterable<T> records,
   required Map<String, dynamic> Function(T record) dataOf,
   required TransactionRecordFilters filters,
+  TransactionRecordSort sort = const TransactionRecordSort(),
 }) {
   final result = records
       .where((record) => matchesTransactionRecord(dataOf(record), filters))
       .toList();
 
   result.sort((a, b) {
-    final aDate = transactionDate(dataOf(a)['timestamp']);
-    final bDate = transactionDate(dataOf(b)['timestamp']);
-    if (aDate == null && bDate == null) return 0;
-    if (aDate == null) return 1;
-    if (bDate == null) return -1;
-    return bDate.compareTo(aDate);
+    final comparison = _compareTransactionValues(
+      _sortValue(dataOf(a), sort.field),
+      _sortValue(dataOf(b), sort.field),
+    );
+    final directed = sort.direction == TransactionSortDirection.ascending
+        ? comparison
+        : -comparison;
+    if (directed != 0) return directed;
+    return _compareTransactionValues(
+      dataOf(a)['transaction_number']?.toString(),
+      dataOf(b)['transaction_number']?.toString(),
+    );
   });
   return result;
+}
+
+Object? _sortValue(Map<String, dynamic> data, TransactionSortField field) {
+  return switch (field) {
+    TransactionSortField.createdAt => transactionDate(data['timestamp']),
+    TransactionSortField.businessDate =>
+      transactionDate(data['transaction_date']) ??
+          transactionDate(data['dateFrom']),
+    TransactionSortField.voucherNumber =>
+      data['transaction_number']?.toString() ?? '',
+    TransactionSortField.amount => (data['amount'] as num?)?.toDouble(),
+  };
+}
+
+int _compareTransactionValues(Object? left, Object? right) {
+  if (left == null && right == null) return 0;
+  if (left == null) return 1;
+  if (right == null) return -1;
+  if (left is DateTime && right is DateTime) return left.compareTo(right);
+  if (left is num && right is num) return left.compareTo(right);
+  return _naturalCompare(left.toString(), right.toString());
+}
+
+int _naturalCompare(String left, String right) {
+  final leftNumber = num.tryParse(left.replaceAll(RegExp(r'\D'), ''));
+  final rightNumber = num.tryParse(right.replaceAll(RegExp(r'\D'), ''));
+  if (leftNumber != null && rightNumber != null) {
+    final result = leftNumber.compareTo(rightNumber);
+    if (result != 0) return result;
+  }
+  return left.compareTo(right);
 }
 
 Map<String, double> totalsByCurrency(

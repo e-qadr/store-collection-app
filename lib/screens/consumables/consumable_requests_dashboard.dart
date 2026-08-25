@@ -10,6 +10,7 @@ import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
+import 'package:store_collection_app/widgets/grouped_branch_overview.dart';
 
 class ConsumableRequestsDashboard extends StatefulWidget {
   final UserRole role;
@@ -50,6 +51,22 @@ class _ConsumableRequestsDashboardState
 
   @override
   Widget build(BuildContext context) {
+    if (usesGroupedBranchOverview(widget.role, widget.branchId)) {
+      return GroupedBranchOverview(
+        role: widget.role,
+        kind: GroupedBranchOverviewKind.consumption,
+        onViewAll: (context, branchId, branchName) => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ConsumableRequestsDashboard(
+              role: widget.role,
+              branchId: branchId,
+              branchName: branchName,
+            ),
+          ),
+        ),
+      );
+    }
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(

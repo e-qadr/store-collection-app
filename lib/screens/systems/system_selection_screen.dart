@@ -271,7 +271,7 @@ class SystemSelectionScreen extends StatelessWidget {
     if (role == UserRole.admin) return;
 
     final id = branchId ?? '';
-    if (id.isEmpty) {
+    if (id.isEmpty && role == UserRole.manager) {
       final selectionScreen = switch (role) {
         UserRole.collector => const CollectorBranchesScreen(
           openConsumableRequests: true,
@@ -296,8 +296,8 @@ class SystemSelectionScreen extends StatelessWidget {
       MaterialPageRoute(
         builder: (_) => ConsumableRequestsDashboard(
           role: role,
-          branchId: id,
-          branchName: branchName,
+          branchId: id.isEmpty ? null : id,
+          branchName: id.isEmpty ? 'جميع الفروع' : branchName,
         ),
       ),
     );
@@ -307,7 +307,7 @@ class SystemSelectionScreen extends StatelessWidget {
     if (role == UserRole.admin) return;
 
     final id = branchId ?? '';
-    if (id.isEmpty) {
+    if (id.isEmpty && role == UserRole.manager) {
       final selectionScreen = switch (role) {
         UserRole.collector => const CollectorBranchesScreen(
           openCashExpenses: true,
@@ -332,8 +332,8 @@ class SystemSelectionScreen extends StatelessWidget {
       MaterialPageRoute(
         builder: (_) => CashExpensesDashboard(
           role: role,
-          branchId: id,
-          branchName: branchName,
+          branchId: id.isEmpty ? null : id,
+          branchName: id.isEmpty ? 'جميع الفروع' : branchName,
         ),
       ),
     );

@@ -67,27 +67,23 @@ void main() {
       Directionality.of(tester.element(find.byType(Scaffold).first)),
       TextDirection.rtl,
     );
-    await tester.enterText(
-      find.widgetWithText(TextField, 'بحث في دليل المنتجات'),
-      'أرز',
-    );
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<String>).at(1));
-    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('shared-catalog-search')), findsOneWidget);
     expect(find.text('أرز فاخر'), findsOneWidget);
-    expect(find.text('تفاح أحمر'), findsNothing);
-    await tester.tap(find.text('أرز فاخر').last);
+    expect(find.text('تفاح أحمر'), findsOneWidget);
+    await tester.tap(find.text('أرز فاخر'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(DropdownButtonFormField<String>).at(2));
+    await tester.tap(
+      find.byKey(const Key('shared-catalog-unit-product-2-unit_2')),
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('علبة').last);
     await tester.enterText(
-      find.widgetWithText(TextField, 'الكمية الموردة'),
+      find.byKey(const Key('purchase-item-quantity')),
       '3',
     );
-    await tester.tap(find.text('إضافة المنتج'));
-    await tester.pump();
+    await tester.tap(find.byKey(const Key('confirm-purchase-item')));
+    await tester.pumpAndSettle();
 
     expect(find.text('أرز فاخر'), findsOneWidget);
     expect(find.textContaining('3 علبة'), findsOneWidget);
@@ -97,9 +93,9 @@ void main() {
     await _pumpCreation(tester, initialItems: List.generate(50, _commandItem));
 
     expect(find.text('سطور الفاتورة (50/50)'), findsOneWidget);
-    await tester.ensureVisible(find.text('إضافة المنتج'));
+    await tester.ensureVisible(find.text('إضافة مادة'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('إضافة المنتج'));
+    await tester.tap(find.text('إضافة مادة'));
     await tester.pump();
     expect(find.textContaining('الحد الأقصى 50'), findsOneWidget);
   });

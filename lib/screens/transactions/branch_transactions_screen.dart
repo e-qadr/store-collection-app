@@ -42,6 +42,8 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
   // فلتر فترة التحصيل (DateFrom - DateTo)
   DateTime? _periodStartDate;
   DateTime? _periodEndDate;
+  TransactionSortField _sortField = TransactionSortField.createdAt;
+  TransactionSortDirection _sortDirection = TransactionSortDirection.descending;
 
   @override
   void initState() {
@@ -1072,6 +1074,75 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    DropdownButtonFormField<TransactionSortField>(
+                      initialValue: _sortField,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'ترتيب حسب',
+                        prefixIcon: Icon(Icons.sort_rounded),
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: TransactionSortField.createdAt,
+                          child: Text('تاريخ الإدخال في النظام'),
+                        ),
+                        const DropdownMenuItem(
+                          value: TransactionSortField.businessDate,
+                          child: Text('تاريخ الدخل / تاريخ السند'),
+                        ),
+                        const DropdownMenuItem(
+                          value: TransactionSortField.voucherNumber,
+                          child: Text('رقم السند'),
+                        ),
+                        if (_currentUserRole == 'collector' ||
+                            _currentUserRole == 'accountant' ||
+                            _currentUserRole == 'manager')
+                          const DropdownMenuItem(
+                            value: TransactionSortField.amount,
+                            child: Text('المبلغ'),
+                          ),
+                      ],
+                      onChanged: (value) => setDialogState(
+                        () => _sortField =
+                            value ?? TransactionSortField.createdAt,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    DropdownButtonFormField<TransactionSortDirection>(
+                      initialValue: _sortDirection,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'الترتيب',
+                        prefixIcon: Icon(Icons.swap_vert_rounded),
+                      ),
+                      items: [
+                        DropdownMenuItem(
+                          value: TransactionSortDirection.descending,
+                          child: Text(
+                            _sortField == TransactionSortField.createdAt ||
+                                    _sortField ==
+                                        TransactionSortField.businessDate
+                                ? 'الأحدث أولاً'
+                                : 'تنازلي',
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: TransactionSortDirection.ascending,
+                          child: Text(
+                            _sortField == TransactionSortField.createdAt ||
+                                    _sortField ==
+                                        TransactionSortField.businessDate
+                                ? 'الأقدم أولاً'
+                                : 'تصاعدي',
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => setDialogState(
+                        () => _sortDirection =
+                            value ?? TransactionSortDirection.descending,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
                     InputDecorator(
                       decoration: const InputDecoration(
                         labelText: 'العملة',
@@ -1535,6 +1606,10 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                     records: snapshot.data!.docs,
                     dataOf: (doc) => doc.data() as Map<String, dynamic>,
                     filters: _recordFilters,
+                    sort: TransactionRecordSort(
+                      field: _sortField,
+                      direction: _sortDirection,
+                    ),
                   );
 
                   if (transactions.isEmpty) {

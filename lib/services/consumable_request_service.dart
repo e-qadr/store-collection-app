@@ -41,6 +41,13 @@ class ConsumableRequestService {
     if (requestItems.isEmpty) {
       throw Exception('أضف منتجاً واحداً على الأقل.');
     }
+    if (requestItems.any(
+      (item) =>
+          item.productId?.trim().isEmpty != false ||
+          item.unitId?.trim().isEmpty != false,
+    )) {
+      throw Exception('يجب اختيار جميع المواد ووحداتها من الكتالوج.');
+    }
 
     final actor = await _getCurrentActor();
     _validateManagerBranch(actor, branchId);

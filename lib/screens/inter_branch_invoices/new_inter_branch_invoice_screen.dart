@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_item_editor_dialog.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_api_service.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_service.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
@@ -278,6 +280,61 @@ class _NewInterBranchInvoiceScreenState
     });
   }
 
+  Future<void> _selectTransferItem({int? editIndex}) async {
+    if (_items.length >= InterBranchInvoiceApiService.maxItems &&
+        editIndex == null) {
+      _showSnack(
+        'الحد الأقصى ${InterBranchInvoiceApiService.maxItems} سطراً للفاتورة.',
+      );
+      return;
+    }
+    final selection = await showCatalogPicker(
+      context,
+      brandId: _brandId,
+      service: _catalogService,
+      products: widget.fixture == null ? null : _products,
+      mode: CatalogPickerMode.transfer,
+      title: editIndex == null ? 'إضافة مادة للتحويل' : 'تغيير مادة التحويل',
+    );
+    if (!mounted || selection == null) return;
+    final existing = editIndex == null ? null : _items[editIndex];
+    final result = await showDialog<PurchaseItemEditorResult>(
+      context: context,
+      builder: (_) => PurchaseItemEditorDialog.catalog(
+        productName: selection.product.name,
+        unitValue: selection.unit.displayValue,
+        catalogUnits: selection.product.units,
+        initialCatalogUnitId: selection.unit.id,
+        initialQuantity: existing?.requestedQuantity ?? 1,
+        showPricing: false,
+        confirmLabel: editIndex == null ? 'إضافة' : 'حفظ التعديل',
+      ),
+    );
+    if (!mounted || result == null) return;
+    final unit = selection.product.unitById(result.catalogUnitId ?? '');
+    if (unit == null) return;
+    final item = InterBranchInvoiceItem(
+      productId: selection.product.id,
+      productVersion: selection.product.version,
+      groupId: selection.product.groupId,
+      legacyCode: selection.product.legacyCode,
+      name: selection.product.name,
+      unitId: unit.id,
+      unit: unit.displayValue,
+      rawUnit: unit.rawValue,
+      requestedQuantity: result.quantity,
+      hasReceivedQuantity: false,
+      lineNotes: existing?.lineNotes ?? '',
+    );
+    setState(() {
+      if (editIndex == null) {
+        _items.add(item);
+      } else {
+        _items[editIndex] = item;
+      }
+    });
+  }
+
   Future<void> _save() async {
     if (_receivingBranchId == null || _items.isEmpty) {
       _showSnack('اختر الفرع المستلم وأضف منتجاً واحداً على الأقل.');
@@ -438,6 +495,37 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Widget _catalogCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.cardShadow(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'مواد علامة الفرع المورد',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            key: const Key('transfer-add-catalog-item'),
+            onPressed: _saving ? null : _selectTransferItem,
+            icon: const Icon(Icons.add_circle_outline_rounded),
+            label: const Text('إضافة مادة'),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'يتم البحث والاختيار محلياً من كتالوج الفرع، بدون تحميل أي أسعار.',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _legacyCatalogCard() {
     final product = _selectedProduct;
     return Container(
       padding: const EdgeInsets.all(16),
@@ -556,13 +644,26 @@ class _NewInterBranchInvoiceScreenState
                 subtitle: Text(
                   '${_formatNumber(entry.value.suppliedQuantity)} ${entry.value.unit}',
                 ),
-                trailing: IconButton(
-                  tooltip: 'إزالة',
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  color: AppTheme.errorColor,
-                  onPressed: _saving
-                      ? null
-                      : () => setState(() => _items.removeAt(entry.key)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      key: Key('transfer-edit-${entry.key}'),
+                      tooltip: 'تعديل المادة والوحدة والكمية',
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: _saving
+                          ? null
+                          : () => _selectTransferItem(editIndex: entry.key),
+                    ),
+                    IconButton(
+                      tooltip: 'إزالة',
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      color: AppTheme.errorColor,
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _items.removeAt(entry.key)),
+                    ),
+                  ],
                 ),
               ),
             ),

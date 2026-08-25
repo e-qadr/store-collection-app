@@ -158,14 +158,26 @@ class ConsumableRequestRead {
 }
 
 class ConsumableRequestItem {
+  final String? productId;
+  final int? productVersion;
+  final String? productCode;
+  final String? groupId;
   final String name;
+  final String? unitId;
   final String unit;
+  final String? rawUnit;
   final double requestedQuantity;
   final double collectorQuantity;
 
   const ConsumableRequestItem({
+    this.productId,
+    this.productVersion,
+    this.productCode,
+    this.groupId,
     required this.name,
+    this.unitId,
     required this.unit,
+    this.rawUnit,
     required this.requestedQuantity,
     double? collectorQuantity,
   }) : collectorQuantity = collectorQuantity ?? requestedQuantity;
@@ -175,11 +187,17 @@ class ConsumableRequestItem {
         (data[ConsumableRequestFields.requestedQuantity] as num?)?.toDouble() ??
         0;
     return ConsumableRequestItem(
+      productId: data['product_id']?.toString(),
+      productVersion: (data['product_version'] as num?)?.toInt(),
+      productCode: data['product_legacy_code']?.toString(),
+      groupId: data['group_id']?.toString(),
       name:
           data['name']?.toString() ??
           data[ConsumableRequestFields.itemName]?.toString() ??
           '',
       unit: data[ConsumableRequestFields.unit]?.toString() ?? '',
+      unitId: data['unit_id']?.toString(),
+      rawUnit: data['raw_unit']?.toString(),
       requestedQuantity: requested,
       collectorQuantity:
           (data[ConsumableRequestFields.collectorQuantity] as num?)
@@ -190,22 +208,40 @@ class ConsumableRequestItem {
 
   Map<String, dynamic> toMap() {
     return {
+      if (productId != null) 'product_id': productId,
+      if (productVersion != null) 'product_version': productVersion,
+      if (productCode?.isNotEmpty == true) 'product_legacy_code': productCode,
+      if (groupId?.isNotEmpty == true) 'group_id': groupId,
       'name': name,
+      if (unitId != null) 'unit_id': unitId,
       ConsumableRequestFields.unit: unit,
+      if (rawUnit?.isNotEmpty == true) 'raw_unit': rawUnit,
       ConsumableRequestFields.requestedQuantity: requestedQuantity,
       ConsumableRequestFields.collectorQuantity: collectorQuantity,
     };
   }
 
   ConsumableRequestItem copyWith({
+    String? productId,
+    int? productVersion,
+    String? productCode,
+    String? groupId,
     String? name,
+    String? unitId,
     String? unit,
+    String? rawUnit,
     double? requestedQuantity,
     double? collectorQuantity,
   }) {
     return ConsumableRequestItem(
+      productId: productId ?? this.productId,
+      productVersion: productVersion ?? this.productVersion,
+      productCode: productCode ?? this.productCode,
+      groupId: groupId ?? this.groupId,
       name: name ?? this.name,
+      unitId: unitId ?? this.unitId,
       unit: unit ?? this.unit,
+      rawUnit: rawUnit ?? this.rawUnit,
       requestedQuantity: requestedQuantity ?? this.requestedQuantity,
       collectorQuantity: collectorQuantity ?? this.collectorQuantity,
     );
