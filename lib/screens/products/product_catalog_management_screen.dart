@@ -10,6 +10,7 @@ import 'package:store_collection_app/screens/purchase_invoices/product_review_qu
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/catalog_operation_error.dart';
 import 'package:store_collection_app/utils/material_management_access.dart';
 
 ({CatalogUnit? unit2, CatalogUnit? unit3}) catalogEditorSecondaryUnitSlots(
@@ -1175,6 +1176,8 @@ class _ProductCatalogManagementContentState
   }
 
   String _errorText(Object error) {
+    final catalogError = catalogOperationErrorText(error);
+    if (catalogError != null) return catalogError;
     final message = error.toString().replaceFirst(
       RegExp(r'^(Exception|Bad state|Invalid argument\(s\)):\s*'),
       '',

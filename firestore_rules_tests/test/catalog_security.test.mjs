@@ -503,6 +503,66 @@ test('catalog supervisors can read all brands while collector and accountant can
   }));
 });
 
+test('manual canonical product payload succeeds for catalog editors and remains denied to branch roles', async () => {
+  const manualSource = { source_profile: 'manual' };
+  const units = [
+    {
+      unit_id: 'primary',
+      display_value: 'علبة',
+      raw_value: 'علبة',
+    },
+  ];
+
+  await assertSucceeds(createProductAndKey(databaseFor('collector-user'), {
+    id: 'manual-collector-product',
+    uniqueKeyId: 'manual-collector-name',
+    legacyKeyId: 'manual-collector-code',
+    legacyCode: 'MAN-C-001',
+    actorUid: 'collector-user',
+    actorName: 'General manager',
+    actorRole: 'collector',
+    name: 'مادة يدوية للمدير العام',
+    extra: { units, source_metadata: manualSource },
+  }));
+  const created = await getDoc(doc(
+    databaseFor('collector-user'),
+    'products',
+    'manual-collector-product',
+  ));
+  assert.equal(created.data().group_id, 'group-a');
+  assert.equal(created.data().units[0].unit_id, 'primary');
+  assert.equal(created.data().version, 1);
+
+  await assertSucceeds(createProductAndKey(databaseFor('accountant-user'), {
+    id: 'manual-accountant-product',
+    uniqueKeyId: 'manual-accountant-name',
+    actorUid: 'accountant-user',
+    actorName: 'Accountant',
+    actorRole: 'accountant',
+    name: 'مادة يدوية للمحاسب',
+    extra: { units, source_metadata: manualSource },
+  }));
+
+  await assertFails(createProductAndKey(databaseFor('manager-a'), {
+    id: 'manual-manager-product',
+    uniqueKeyId: 'manual-manager-name',
+    actorUid: 'manager-a',
+    actorName: 'Manager',
+    actorRole: 'manager',
+    name: 'مادة غير مسموحة',
+    extra: { units, source_metadata: manualSource },
+  }));
+  await assertFails(createProductAndKey(databaseFor('employee-a'), {
+    id: 'manual-employee-product',
+    uniqueKeyId: 'manual-employee-name',
+    actorUid: 'employee-a',
+    actorName: 'Employee',
+    actorRole: 'employee',
+    name: 'مادة غير مسموحة للموظف',
+    extra: { units, source_metadata: manualSource },
+  }));
+});
+
 test('group creation requires a linked audit and group deactivation is unavailable', async () => {
   const accountant = databaseFor('accountant-user');
   const groupId = 'new-group';

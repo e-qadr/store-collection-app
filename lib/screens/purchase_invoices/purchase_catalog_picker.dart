@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
+import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/catalog_operation_error.dart';
 
 enum CatalogPickerMode { purchase, consumption, transfer }
 
@@ -195,6 +197,18 @@ class _PurchaseCatalogPickerDialogState
     try {
       final selection = await creator();
       if (mounted && selection != null) Navigator.pop(context, selection);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              catalogOperationErrorText(error) ??
+                  'تعذر إكمال العملية. تحقق من البيانات وحاول مرة أخرى.',
+            ),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
