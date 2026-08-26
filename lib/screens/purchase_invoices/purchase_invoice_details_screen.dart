@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/enums.dart';
@@ -131,6 +133,8 @@ class _PurchaseInvoiceDetailsScreenState
             ...invoice.items.map((item) => _itemCard(item, verifiedPrices)),
             const SizedBox(height: 12),
             _action(invoice, verifiedPrices ?? verifiedDraft),
+            const SizedBox(height: 12),
+            _amendmentSection(invoice, verifiedPrices ?? verifiedDraft),
             const SizedBox(height: 20),
             _timeline(invoice),
           ],
@@ -608,6 +612,379 @@ class _PurchaseInvoiceDetailsScreenState
     overrideReason.dispose();
   }
 
+  Widget _amendmentSection(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoicePriceSnapshot? prices,
+  ) {
+    if (!invoice.hasPendingAmendment) {
+      if (!_mayRequestAmendment(invoice)) return const SizedBox.shrink();
+      return OutlinedButton.icon(
+        key: const Key('request-purchase-amendment'),
+        onPressed: _submitting
+            ? null
+            : () => _requestAmendment(invoice, prices),
+        icon: const Icon(Icons.edit_note_rounded),
+        label: const Text('طلب تعديل الفاتورة'),
+      );
+    }
+    return StreamBuilder<PurchaseInvoiceAmendment?>(
+      stream: _service.watchAmendment(invoice.openAmendmentId),
+      builder: (context, snapshot) {
+        final amendment = snapshot.data;
+        if (amendment == null) {
+          return const Card(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('جارٍ تحميل طلب التعديل...'),
+            ),
+          );
+        }
+        return _amendmentCard(invoice, amendment);
+      },
+    );
+  }
+
+  bool _mayRequestAmendment(PurchaseInvoiceRead invoice) {
+    if (invoice.status != PurchaseInvoiceStatus.pendingReceiverReview) {
+      return false;
+    }
+    if (widget.role == UserRole.manager) {
+      return widget.branchId == invoice.receivingBranchId;
+    }
+    return _mayReadPrices;
+  }
+
+  Widget _amendmentCard(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoiceAmendment amendment,
+  ) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final mayDecide =
+        amendment.status == 'pending' &&
+        amendment.requiredApprovers.any((actor) => actor.uid == currentUid) &&
+        !amendment.approvedBy(currentUid);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.edit_note_rounded),
+                SizedBox(width: 8),
+                Text(
+                  'طلب تعديل الفاتورة',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('الطلب بواسطة: ${amendment.requestedByName}'),
+            Text('السبب: ${amendment.reason}'),
+            if (amendment.includesProtectedPriceChanges)
+              Text(
+                _mayReadPrices
+                    ? 'يتضمن الطلب تعديلاً مالياً محمياً.'
+                    : 'يتضمن الطلب تعديلاً مالياً محمياً دون عرض القيم.',
+              ),
+            const SizedBox(height: 8),
+            ...amendment.changes.entries.map(
+              (entry) => Text(
+                '${_amendmentFieldLabel(entry.key)}: '
+                '${entry.value['before'] ?? '-'} ← ${entry.value['after'] ?? '-'}',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'تمت الموافقة: '
+              '${amendment.approvals.map((actor) => actor.name).where((name) => name.isNotEmpty).join('، ')}',
+            ),
+            Text(
+              'بانتظار: '
+              '${amendment.pendingApprovers.map((actor) => actor.name).where((name) => name.isNotEmpty).join('، ')}',
+            ),
+            if (amendment.rejectionReason.isNotEmpty)
+              Text('سبب الرفض: ${amendment.rejectionReason}'),
+            if (_mayReadPrices && amendment.includesProtectedPriceChanges)
+              _protectedAmendmentPrices(amendment),
+            if (mayDecide) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                children: [
+                  FilledButton(
+                    key: const Key('approve-purchase-amendment'),
+                    onPressed: _submitting
+                        ? null
+                        : () => _decideAmendment(
+                            invoice,
+                            amendment,
+                            decision: 'approve',
+                          ),
+                    child: const Text('موافقة'),
+                  ),
+                  OutlinedButton(
+                    key: const Key('reject-purchase-amendment'),
+                    onPressed: _submitting
+                        ? null
+                        : () => _rejectAmendment(invoice, amendment),
+                    child: const Text('رفض'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _protectedAmendmentPrices(PurchaseInvoiceAmendment amendment) =>
+      StreamBuilder<PurchaseInvoiceAmendmentPrice?>(
+        stream: _service.watchProtectedAmendmentPrices(amendment.id),
+        builder: (context, snapshot) {
+          final values = snapshot.data;
+          if (values == null) return const SizedBox.shrink();
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: values.items
+                  .map(
+                    (item) => Text(
+                      'سعر محمي: ${_number(item.oldUnitPrice)} ← '
+                      '${_number(item.newUnitPrice)} ${values.currency}',
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          );
+        },
+      );
+
+  String _amendmentFieldLabel(String field) => switch (field) {
+    'supplier_name' => 'المورد',
+    'supplier_invoice_number' => 'رقم فاتورة المورد',
+    'supplier_invoice_date' => 'تاريخ فاتورة المورد',
+    'general_manager_notes' => 'ملاحظات المدير العام',
+    _ => field,
+  };
+
+  Future<void> _requestAmendment(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoicePriceSnapshot? prices,
+  ) async {
+    final reason = TextEditingController();
+    final supplier = TextEditingController(text: invoice.supplierName);
+    final supplierNumber = TextEditingController(
+      text: invoice.supplierInvoiceNumber,
+    );
+    final supplierDate = TextEditingController(
+      text: invoice.supplierInvoiceDate,
+    );
+    final notes = TextEditingController(text: invoice.generalManagerNotes);
+    final priceControllers = <String, TextEditingController>{
+      if (_mayReadPrices)
+        for (final item in invoice.items)
+          item.id: TextEditingController(
+            text: prices?.provisionalPrices[item.id]?.toString() ?? '',
+          ),
+    };
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('طلب تعديل الفاتورة'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: reason,
+                  maxLines: 2,
+                  decoration: const InputDecoration(labelText: 'سبب التعديل *'),
+                ),
+                TextField(
+                  controller: supplier,
+                  decoration: const InputDecoration(labelText: 'المورد'),
+                ),
+                TextField(
+                  controller: supplierNumber,
+                  decoration: const InputDecoration(
+                    labelText: 'رقم فاتورة المورد',
+                  ),
+                ),
+                TextField(
+                  controller: supplierDate,
+                  decoration: const InputDecoration(
+                    labelText: 'تاريخ فاتورة المورد (YYYY-MM-DD)',
+                  ),
+                ),
+                TextField(
+                  controller: notes,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات المدير العام',
+                  ),
+                ),
+                if (_mayReadPrices) ...[
+                  const SizedBox(height: 12),
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'تعديل السعر المحمي (اختياري)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  ...invoice.items.map(
+                    (item) => TextField(
+                      controller: priceControllers[item.id],
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: '${item.displayName} — ${item.displayUnit}',
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('إرسال للموافقة'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) {
+      final priceItems = <PurchaseAmendmentPriceInput>[];
+      for (final item in invoice.items) {
+        final controller = priceControllers[item.id];
+        if (controller == null || controller.text.trim().isEmpty) continue;
+        final value = double.tryParse(controller.text.trim());
+        final original = prices?.provisionalPrices[item.id];
+        if (value == null || value < 0) {
+          _message('تحقق من قيمة السعر المحمي.');
+          return;
+        }
+        if (value != original) {
+          priceItems.add(
+            PurchaseAmendmentPriceInput(itemId: item.id, unitPrice: value),
+          );
+        }
+      }
+      final hasHeaderChange =
+          supplier.text.trim() != invoice.supplierName ||
+          supplierNumber.text.trim() != invoice.supplierInvoiceNumber ||
+          supplierDate.text.trim() != invoice.supplierInvoiceDate ||
+          notes.text.trim() != invoice.generalManagerNotes;
+      if (reason.text.trim().isEmpty ||
+          (!hasHeaderChange && priceItems.isEmpty)) {
+        _message('أدخل سبباً وتغييراً واحداً على الأقل.');
+      } else {
+        await _run(
+          () => _api.createAmendment(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            reason: reason.text,
+            supplierName: supplier.text.trim() == invoice.supplierName
+                ? null
+                : supplier.text,
+            supplierInvoiceNumber:
+                supplierNumber.text.trim() == invoice.supplierInvoiceNumber
+                ? null
+                : supplierNumber.text,
+            supplierInvoiceDate:
+                supplierDate.text.trim() == invoice.supplierInvoiceDate
+                ? null
+                : supplierDate.text,
+            generalManagerNotes:
+                notes.text.trim() == invoice.generalManagerNotes
+                ? null
+                : notes.text,
+            priceItems: priceItems.isEmpty ? null : priceItems,
+            idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
+          ),
+        );
+      }
+    }
+    for (final controller in [
+      reason,
+      supplier,
+      supplierNumber,
+      supplierDate,
+      notes,
+      ...priceControllers.values,
+    ]) {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _rejectAmendment(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoiceAmendment amendment,
+  ) async {
+    final reason = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('رفض طلب التعديل'),
+        content: TextField(
+          controller: reason,
+          maxLines: 2,
+          decoration: const InputDecoration(labelText: 'سبب الرفض *'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('تأكيد الرفض'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true && reason.text.trim().isNotEmpty) {
+      await _decideAmendment(
+        invoice,
+        amendment,
+        decision: 'reject',
+        reason: reason.text,
+      );
+    } else if (accepted == true) {
+      _message('سبب الرفض مطلوب.');
+    }
+    reason.dispose();
+  }
+
+  Future<void> _decideAmendment(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoiceAmendment amendment, {
+    required String decision,
+    String? reason,
+  }) => _run(
+    () => _api.decideAmendment(
+      invoiceId: invoice.id,
+      amendmentId: amendment.id,
+      expectedRevision: invoice.revision,
+      decision: decision,
+      reason: reason,
+      idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
+    ),
+  );
+
   Widget _timeline(PurchaseInvoiceRead invoice) {
     final fixture = widget.fixtureInvoice != null;
     if (fixture) {
@@ -639,13 +1016,26 @@ class _PurchaseInvoiceDetailsScreenState
         ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 8),
-      ...events.map(
-        (event) => ListTile(
+      ...events.map((event) {
+        final rawTime = event['created_at'] ?? event['timestamp'];
+        final time = rawTime is Timestamp
+            ? rawTime.toDate()
+            : rawTime is DateTime
+            ? rawTime
+            : rawTime is String
+            ? DateTime.tryParse(rawTime)
+            : null;
+        return ListTile(
           leading: const Icon(Icons.history_rounded),
           title: Text(event['message']?.toString() ?? ''),
-          subtitle: Text(event['actor_name']?.toString() ?? ''),
-        ),
-      ),
+          subtitle: Text(
+            [
+              event['actor_name']?.toString() ?? '',
+              if (time != null) DateFormat('yyyy/MM/dd HH:mm').format(time),
+            ].where((value) => value.isNotEmpty).join(' — '),
+          ),
+        );
+      }),
     ],
   );
 

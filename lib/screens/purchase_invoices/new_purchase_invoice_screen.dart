@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
+import 'package:store_collection_app/screens/products/catalog_product_editor_dialog.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_item_editor_dialog.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
@@ -493,6 +495,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       context,
       brandId: _brandId,
       service: _catalog,
+      onCreateProduct: _createCatalogProductIfAuthorized,
     );
     if (!mounted || selection == null) return;
     final latest = await _latestPrice(selection.product, selection.unit);
@@ -529,6 +532,65 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         ),
       );
     });
+  }
+
+  Future<CatalogSelection?> _createCatalogProductIfAuthorized() async {
+    if (_brandId.trim().isEmpty) {
+      _message('اختر الفرع المستلم أولاً.');
+      return null;
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _message('انتهت جلسة الدخول. سجل الدخول مجدداً.');
+      return null;
+    }
+    final profile = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    final data = profile.data();
+    final role = data?['role']?.toString();
+    if (data == null ||
+        (role != 'collector' && role != 'accountant') ||
+        data['isActive'] == false) {
+      // Do not turn an invoice screen into a catalog-management privilege.
+      _message('إضافة مادة جديدة متاحة للمدير العام والمحاسب فقط.');
+      return null;
+    }
+    final groups = await _catalog
+        .watchGroups(brandId: _brandId, activeOnly: true)
+        .first;
+    if (!mounted) return null;
+    if (groups.isEmpty) {
+      _message('أضف مجموعة مواد نشطة من إدارة المواد أولاً.');
+      return null;
+    }
+    final draft = await showCatalogProductEditor(context, groups: groups);
+    if (!mounted || draft == null) return null;
+    final actor = CatalogActor(
+      uid: user.uid,
+      name: data['name']?.toString().trim().isNotEmpty == true
+          ? data['name'].toString().trim()
+          : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
+      role: role!,
+      active: data['isActive'] != false,
+    );
+    final productId = await _catalog.createProduct(
+      actor: actor,
+      brandId: _brandId,
+      groupId: draft.groupId,
+      name: draft.name,
+      legacyCode: draft.legacyCode,
+      units: draft.units,
+      primaryUnitId: draft.primaryUnitId,
+      sourceMetadata: const {'source_profile': 'manual'},
+    );
+    final product = await _catalog.fetchProduct(productId);
+    if (product == null || product.units.isEmpty) {
+      throw StateError('تعذر تحميل المادة التي أُنشئت.');
+    }
+    final unit = product.unitById(product.primaryUnitId) ?? product.units.first;
+    return CatalogSelection(product: product, unit: unit);
   }
 
   Future<void> _addUnmatchedItem() async {

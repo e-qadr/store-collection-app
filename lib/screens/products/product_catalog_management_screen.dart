@@ -5,6 +5,7 @@ import 'package:intl/intl.dart' show DateFormat;
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
 import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/screens/products/catalog_product_editor_dialog.dart';
 import 'package:store_collection_app/screens/purchase_invoices/product_review_queue_screen.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
@@ -78,12 +79,18 @@ class ProductCatalogManagementScreen extends StatelessWidget {
   final UserRole? role;
   final bool hasKnownRole;
   final ProductCatalogService? service;
+  final Stream<List<CatalogBrandOption>>? brandsStream;
+  final CatalogGroupsStreamFactory? groupsStreamFactory;
+  final CatalogProductsStreamFactory? productsStreamFactory;
 
   const ProductCatalogManagementScreen({
     super.key,
     required this.role,
     this.hasKnownRole = true,
     this.service,
+    this.brandsStream,
+    this.groupsStreamFactory,
+    this.productsStreamFactory,
   });
 
   @override
@@ -91,9 +98,39 @@ class ProductCatalogManagementScreen extends StatelessWidget {
     if (!MaterialManagementAccess.canAccess(role, hasKnownRole: hasKnownRole)) {
       return const _MaterialManagementAccessDeniedScreen();
     }
-    return _ProductCatalogManagementContent(service: service);
+    return _ProductCatalogManagementContent(
+      service: service,
+      brandsStream: brandsStream,
+      groupsStreamFactory: groupsStreamFactory,
+      productsStreamFactory: productsStreamFactory,
+    );
   }
 }
+
+/// A deliberately small public read model so the management screen can keep
+/// its brand stream stable and be exercised without a live Firebase instance.
+class CatalogBrandOption {
+  final String id;
+  final String name;
+
+  const CatalogBrandOption({required this.id, required this.name});
+
+  /// Keeps presentation call sites independent of Firestore snapshots.
+  Map<String, dynamic> data() => {'name': name};
+}
+
+typedef CatalogGroupsStreamFactory =
+    Stream<List<ProductGroupModel>> Function({
+      required String brandId,
+      required bool activeOnly,
+    });
+
+typedef CatalogProductsStreamFactory =
+    Stream<List<ProductCatalogModel>> Function({
+      required String brandId,
+      String? groupId,
+      required bool activeOnly,
+    });
 
 class _MaterialManagementAccessDeniedScreen extends StatelessWidget {
   const _MaterialManagementAccessDeniedScreen();
@@ -127,8 +164,16 @@ class _MaterialManagementAccessDeniedScreen extends StatelessWidget {
 
 class _ProductCatalogManagementContent extends StatefulWidget {
   final ProductCatalogService? service;
+  final Stream<List<CatalogBrandOption>>? brandsStream;
+  final CatalogGroupsStreamFactory? groupsStreamFactory;
+  final CatalogProductsStreamFactory? productsStreamFactory;
 
-  const _ProductCatalogManagementContent({this.service});
+  const _ProductCatalogManagementContent({
+    this.service,
+    this.brandsStream,
+    this.groupsStreamFactory,
+    this.productsStreamFactory,
+  });
 
   @override
   State<_ProductCatalogManagementContent> createState() =>
@@ -139,6 +184,7 @@ class _ProductCatalogManagementContentState
     extends State<_ProductCatalogManagementContent> {
   late final ProductCatalogService _service;
   late final ProductPriceService _prices;
+  late final Stream<List<CatalogBrandOption>> _brandsStream;
   final _searchController = TextEditingController();
   String? _selectedBrandId;
   String? _selectedGroupId;
@@ -150,6 +196,22 @@ class _ProductCatalogManagementContentState
     super.initState();
     _service = widget.service ?? ProductCatalogService();
     _prices = ProductPriceService();
+    _brandsStream =
+        widget.brandsStream ??
+        FirebaseFirestore.instance
+            .collection('brands')
+            .orderBy('name')
+            .snapshots()
+            .map(
+              (snapshot) => snapshot.docs
+                  .map(
+                    (document) => CatalogBrandOption(
+                      id: document.id,
+                      name: document.data()['name']?.toString() ?? document.id,
+                    ),
+                  )
+                  .toList(growable: false),
+            );
     _searchController.addListener(_refreshSearch);
   }
 
@@ -214,11 +276,8 @@ class _ProductCatalogManagementContentState
             ),
           ],
         ),
-        body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection('brands')
-              .orderBy('name')
-              .snapshots(),
+        body: StreamBuilder<List<CatalogBrandOption>>(
+          stream: _brandsStream,
           builder: (context, brandSnapshot) {
             if (brandSnapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -229,7 +288,7 @@ class _ProductCatalogManagementContentState
                 text: 'تعذر تحميل العلامات التجارية.',
               );
             }
-            final brands = brandSnapshot.data?.docs ?? const [];
+            final brands = brandSnapshot.data ?? const <CatalogBrandOption>[];
             if (brands.isEmpty) {
               return const _CatalogMessage(
                 icon: Icons.business_outlined,
@@ -254,12 +313,9 @@ class _ProductCatalogManagementContentState
     );
   }
 
-  Widget _buildForBrand(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> brands,
-    String brandId,
-  ) {
+  Widget _buildForBrand(List<CatalogBrandOption> brands, String brandId) {
     return StreamBuilder<List<ProductGroupModel>>(
-      stream: _service.watchGroups(
+      stream: (widget.groupsStreamFactory ?? _service.watchGroups)(
         brandId: brandId,
         activeOnly: !_includeInactive,
       ),
@@ -307,11 +363,12 @@ class _ProductCatalogManagementContentState
             else
               Expanded(
                 child: _ProductList(
-                  stream: _service.watchProducts(
-                    brandId: brandId,
-                    groupId: effectiveGroupId,
-                    activeOnly: !_includeInactive,
-                  ),
+                  stream:
+                      (widget.productsStreamFactory ?? _service.watchProducts)(
+                        brandId: brandId,
+                        groupId: effectiveGroupId,
+                        activeOnly: !_includeInactive,
+                      ),
                   searchText: _searchController.text,
                   groups: groups,
                   onEdit: (product) => _editProduct(product, groups),
@@ -395,7 +452,7 @@ class _ProductCatalogManagementContentState
       _message('أضف مجموعة نشطة قبل إضافة المنتج.', isError: true);
       return;
     }
-    final draft = await _showProductDialog(groups: groups);
+    final draft = await showCatalogProductEditor(context, groups: groups);
     if (draft == null) return;
     await _performMutation(
       operation: () async => _service.createProduct(
@@ -417,7 +474,11 @@ class _ProductCatalogManagementContentState
     List<ProductGroupModel> groups,
   ) async {
     if (_mutating) return;
-    final draft = await _showProductDialog(product: product, groups: groups);
+    final draft = await showCatalogProductEditor(
+      context,
+      product: product,
+      groups: groups,
+    );
     if (draft == null) return;
     await _performMutation(
       operation: () async => _service.updateProduct(
@@ -533,6 +594,7 @@ class _ProductCatalogManagementContentState
     );
   }
 
+  // ignore: unused_element
   Future<_ProductDraft?> _showProductDialog({
     ProductCatalogModel? product,
     required List<ProductGroupModel> groups,
@@ -1159,7 +1221,7 @@ class _ProductCatalogManagementContentState
 }
 
 class _CatalogFilters extends StatelessWidget {
-  final List<QueryDocumentSnapshot<Map<String, dynamic>>> brands;
+  final List<CatalogBrandOption> brands;
   final List<ProductGroupModel> groups;
   final String selectedBrandId;
   final String? selectedGroupId;
@@ -1185,91 +1247,94 @@ class _CatalogFilters extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+    return Material(
       color: Colors.white,
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: selectedBrandId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'العلامة التجارية',
-                    prefixIcon: Icon(Icons.business_rounded),
-                  ),
-                  items: brands
-                      .map(
-                        (brand) => DropdownMenuItem(
-                          value: brand.id,
-                          child: Text(
-                            brand.data()['name']?.toString() ?? 'بدون اسم',
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: selectedBrandId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'العلامة التجارية',
+                      prefixIcon: Icon(Icons.business_rounded),
+                    ),
+                    items: brands
+                        .map(
+                          (brand) => DropdownMenuItem(
+                            value: brand.id,
+                            child: Text(
+                              brand.data()['name']?.toString() ?? 'بدون اسم',
+                            ),
                           ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: onBrandChanged,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: DropdownButtonFormField<String?>(
-                  initialValue: selectedGroupId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'المجموعة',
-                    prefixIcon: Icon(Icons.category_rounded),
+                        )
+                        .toList(),
+                    onChanged: onBrandChanged,
                   ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('كل المجموعات'),
-                    ),
-                    ...groups.map(
-                      (group) => DropdownMenuItem<String?>(
-                        value: group.id,
-                        child: Text(group.name),
-                      ),
-                    ),
-                  ],
-                  onChanged: onGroupChanged,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: searchController,
-            decoration: InputDecoration(
-              labelText: 'بحث بالاسم أو رمز المادة',
-              prefixIcon: const Icon(Icons.search_rounded),
-              suffixIcon: searchController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'مسح البحث',
-                      onPressed: searchController.clear,
-                      icon: const Icon(Icons.clear_rounded),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: DropdownButtonFormField<String?>(
+                    initialValue: selectedGroupId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'المجموعة',
+                      prefixIcon: Icon(Icons.category_rounded),
                     ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('كل المجموعات'),
+                      ),
+                      ...groups.map(
+                        (group) => DropdownMenuItem<String?>(
+                          value: group.id,
+                          child: Text(group.name),
+                        ),
+                      ),
+                    ],
+                    onChanged: onGroupChanged,
+                  ),
+                ),
+              ],
             ),
-          ),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('عرض المنتجات والمجموعات المؤرشفة'),
-            subtitle: const Text('لا تُحذف المنتجات المرتبطة بالفواتير.'),
-            value: includeInactive,
-            onChanged: onIncludeInactiveChanged,
-          ),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: onCreateProduct,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('إضافة منتج إلى العلامة المحددة'),
+            const SizedBox(height: 10),
+            TextField(
+              key: const Key('material-management-search'),
+              controller: searchController,
+              decoration: InputDecoration(
+                labelText: 'بحث بالاسم أو رمز المادة',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: searchController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'مسح البحث',
+                        onPressed: searchController.clear,
+                        icon: const Icon(Icons.clear_rounded),
+                      ),
+              ),
             ),
-          ),
-        ],
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('عرض المنتجات والمجموعات المؤرشفة'),
+              subtitle: const Text('لا تُحذف المنتجات المرتبطة بالفواتير.'),
+              value: includeInactive,
+              onChanged: onIncludeInactiveChanged,
+            ),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onCreateProduct,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('إضافة منتج إلى العلامة المحددة'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1329,8 +1394,11 @@ class _ProductList extends StatelessWidget {
           separatorBuilder: (_, _) => const SizedBox(height: 10),
           itemBuilder: (context, index) {
             final product = products[index];
-            return Container(
-              decoration: AppTheme.cardShadow(),
+            return Material(
+              color: Colors.white,
+              elevation: 1,
+              shadowColor: Colors.black26,
+              borderRadius: BorderRadius.circular(16),
               child: ListTile(
                 contentPadding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
                 leading: CircleAvatar(

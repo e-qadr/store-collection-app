@@ -123,10 +123,18 @@ class FakeTransaction {
     this.operations.push({type: "update", reference, value: clone(value)});
   }
 
+  delete(reference) {
+    this.operations.push({type: "delete", reference});
+  }
+
   commit() {
     for (const operation of this.operations) {
       const collection = this.firestore._collection(operation.reference.collectionName);
       const current = collection.get(operation.reference.id);
+      if (operation.type === "delete") {
+        collection.delete(operation.reference.id);
+        continue;
+      }
       if (operation.type === "update" && current === undefined) {
         throw new Error(`Missing document for update: ${operation.reference.path}`);
       }

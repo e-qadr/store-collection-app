@@ -5,6 +5,7 @@ import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_price_model.dart';
 import 'package:store_collection_app/screens/purchase_invoices/product_review_queue_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_details_screen.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_history_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoices_dashboard.dart';
 
 PurchaseInvoiceRead fixtureInvoice({
@@ -86,6 +87,67 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('new-purchase-invoice')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'purchase history searches authorized headers and shows a pending amendment without totals',
+    (tester) async {
+      final invoice = PurchaseInvoiceRead(
+        id: 'history-1',
+        data: {
+          'schema_version': 1,
+          'workflow_version': 1,
+          'workflow_identity': 'purchase_invoice_v1',
+          'status': 'pendingReceiverReview',
+          'revision': 1,
+          'purchase_number': 'PUR-0042',
+          'receiving_branch_id': 'branch-r',
+          'receiving_branch_name': 'فرع الاستلام',
+          'receiving_brand_id': 'brand-r',
+          'branch_ids': ['branch-r'],
+          'item_count': 1,
+          'item_digest': 'a' * 64,
+          'currency': 'YER',
+          'supplier_name': 'مورد تاريخ',
+          'created_by': 'collector',
+          'created_by_name': 'المدير العام',
+          'created_by_role': 'collector',
+          'created_at': DateTime(2026, 8, 25, 10),
+          'last_updated': DateTime(2026, 8, 25, 11),
+          'open_amendment_id': 'amendment-1',
+          'open_amendment_status': 'pending',
+          'history': const [],
+        },
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PurchaseInvoiceHistoryScreen(
+            role: UserRole.manager,
+            branchId: 'branch-r',
+            branchName: 'فرع الاستلام',
+            invoiceStream: Stream.value([invoice]),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('purchase-history-history-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('purchase-history-amendments-filter')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('PUR-0042'), findsOneWidget);
+      expect(find.textContaining('YER'), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const Key('purchase-history-search')),
+        'لا يطابق',
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('purchase-history-history-1')), findsNothing);
     },
   );
 

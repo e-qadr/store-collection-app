@@ -295,6 +295,79 @@ function validatePricingPayload(body) {
   });
 }
 
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function amendmentStringChange(input, field, maximumBytes, {date = false} = {}) {
+  if (!hasOwn(input, field)) return undefined;
+  return date ?
+    optionalDate(input[field], field) :
+    requiredString(input[field], field, maximumBytes);
+}
+
+function validateAmendmentCreatePayload(body) {
+  const input = object(body);
+  onlyKeys(input, new Set([
+    "expected_revision", "reason", "supplier_name", "supplier_invoice_number",
+    "supplier_invoice_date", "general_manager_notes", "price_items",
+  ]), "body");
+  const changes = compact({
+    supplier_name: amendmentStringChange(input, "supplier_name", MAX_SUPPLIER_BYTES),
+    supplier_invoice_number: amendmentStringChange(
+        input, "supplier_invoice_number", MAX_REFERENCE_BYTES,
+    ),
+    supplier_invoice_date: amendmentStringChange(
+        input, "supplier_invoice_date", 10, {date: true},
+    ),
+    general_manager_notes: amendmentStringChange(
+        input, "general_manager_notes", MAX_NOTES_BYTES,
+    ),
+  });
+  let priceItems;
+  if (hasOwn(input, "price_items")) {
+    const rawItems = boundedItems(input.price_items, "price_items");
+    priceItems = rawItems.map((raw, index) => {
+      const item = object(raw, `price_items[${index}]`);
+      onlyKeys(item, new Set(["item_id", "unit_price"]), `price_items[${index}]`);
+      return {
+        item_id: documentId(item.item_id, `price_items[${index}].item_id`, MAX_ITEM_ID_BYTES),
+        unit_price: number(item.unit_price, `price_items[${index}].unit_price`, {
+          maximum: MAX_PRICE,
+        }),
+      };
+    });
+    ensureUniqueItemIds(priceItems);
+  }
+  if (Object.keys(changes).length === 0 && !priceItems) {
+    throw new PurchaseCommandError(
+        "amendment-no-changes", 400, "An amendment must include a change.",
+    );
+  }
+  return compact({
+    expected_revision: revision(input.expected_revision),
+    reason: requiredString(input.reason, "reason", MAX_NOTES_BYTES),
+    changes,
+    price_items: priceItems,
+  });
+}
+
+function validateAmendmentDecisionPayload(body) {
+  const input = object(body);
+  onlyKeys(input, new Set(["expected_revision", "decision", "reason"]), "body");
+  const decision = requiredString(input.decision, "decision", 16);
+  if (decision !== "approve" && decision !== "reject") {
+    throw new PurchaseCommandError("invalid-argument", 400, "decision is invalid.");
+  }
+  const reason = optionalString(input.reason, "reason", MAX_NOTES_BYTES);
+  if (decision === "reject" && !reason) {
+    throw new PurchaseCommandError(
+        "amendment-rejection-reason-required", 400, "A rejection reason is required.",
+    );
+  }
+  return compact({expected_revision: revision(input.expected_revision), decision, reason});
+}
+
 function validatePostingPayload(body) {
   const input = object(body);
   onlyKeys(input, new Set([
@@ -526,6 +599,8 @@ module.exports = {
   uncategorizedGroupId,
   validateCreatePayload,
   validateCatalogPricePayload,
+  validateAmendmentCreatePayload,
+  validateAmendmentDecisionPayload,
   validateIdempotencyKey,
   validatePostingPayload,
   validatePricingPayload,

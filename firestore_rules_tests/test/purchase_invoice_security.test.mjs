@@ -170,7 +170,7 @@ async function seedPurchase({status = 'pendingReceiverReview'} = {}) {
   });
 }
 
-test('purchase headers are branch-scoped for managers and role-constrained for queues', async () => {
+test('purchase headers are branch-scoped for managers and allow supervisor history', async () => {
   await seedPurchase();
   await assertSucceeds(getDoc(doc(db('manager-r'), 'purchase_invoices', 'purchase-1')));
   await assertFails(getDoc(doc(db('manager-x'), 'purchase_invoices', 'purchase-1')));
@@ -192,12 +192,71 @@ test('purchase headers are branch-scoped for managers and role-constrained for q
     limit(100),
   )));
   await assertFails(getDocs(query(collection(db('manager-r'), 'purchase_invoices'), limit(100))));
-  await assertFails(getDocs(query(collection(db('collector-user'), 'purchase_invoices'), limit(100))));
+  await assertSucceeds(getDocs(query(
+    collection(db('collector-user'), 'purchase_invoices'),
+    orderBy('last_updated', 'desc'),
+    limit(100),
+  )));
   await assertSucceeds(getDocs(query(
     collection(db('collector-user'), 'purchase_invoices'),
     where('status', '==', 'pendingPriceEntry'),
     limit(100),
   )));
+});
+
+test('public amendment requests are branch-visible while protected amendment prices remain financial-only', async () => {
+  await seedPurchase();
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    await setDoc(doc(database, 'purchase_invoice_amendments', 'amendment-1'), {
+      id: 'amendment-1',
+      invoice_id: 'purchase-1',
+      invoice_revision: 1,
+      status: 'pending',
+      reason: 'Operational correction',
+      changes: {
+        supplier_invoice_number: {before: 'S-100', after: 'S-101'},
+      },
+      includes_protected_price_changes: true,
+      required_approvers: [
+        {uid: 'collector-user', name: 'Collector', role: 'collector'},
+        {uid: 'manager-r', name: 'Manager', role: 'manager'},
+        {uid: 'accountant-user', name: 'Accountant', role: 'accountant'},
+      ],
+      approvals: [{uid: 'collector-user', name: 'Collector', role: 'collector'}],
+      requested_by: 'collector-user',
+      requested_by_name: 'Collector',
+      requested_by_role: 'collector',
+      requested_at: timestamp,
+      updated_at: timestamp,
+    });
+    await setDoc(doc(database, 'purchase_invoice_amendment_prices', 'amendment-1'), {
+      id: 'amendment-1',
+      amendment_id: 'amendment-1',
+      invoice_id: 'purchase-1',
+      price_items: [{item_id: 'item-1', old_unit_price: 15, new_unit_price: 17}],
+    });
+  });
+  await assertSucceeds(getDoc(doc(
+    db('manager-r'), 'purchase_invoice_amendments', 'amendment-1',
+  )));
+  await assertFails(getDoc(doc(
+    db('manager-x'), 'purchase_invoice_amendments', 'amendment-1',
+  )));
+  await assertFails(getDoc(doc(
+    db('manager-r'), 'purchase_invoice_amendment_prices', 'amendment-1',
+  )));
+  for (const uid of ['collector-user', 'accountant-user', 'admin-user']) {
+    await assertSucceeds(getDoc(doc(
+      db(uid), 'purchase_invoice_amendment_prices', 'amendment-1',
+    )));
+  }
+  await assertFails(updateDoc(doc(
+    db('accountant-user'), 'purchase_invoice_amendments', 'amendment-1',
+  ), {tampered: true}));
+  await assertFails(updateDoc(doc(
+    db('accountant-user'), 'purchase_invoice_amendment_prices', 'amendment-1',
+  ), {tampered: true}));
 });
 
 test('public purchase items and events remain branch-scoped and reject injected price fields', async () => {
@@ -264,6 +323,8 @@ test('all purchase workflow documents are backend-only for writes', async () => 
     ['purchase_invoices', 'purchase-1'],
     ['purchase_invoice_events', 'event-1'],
     ['purchase_invoice_prices', 'purchase-1'],
+    ['purchase_invoice_amendments', 'amendment-1'],
+    ['purchase_invoice_amendment_prices', 'amendment-1'],
     ['product_review_tasks', 'task-1'],
     ['purchase_invoice_commands', 'command-1'],
     ['purchase_invoice_unique_keys', 'key-1'],

@@ -14,6 +14,7 @@ class CatalogSelection {
 }
 
 typedef PurchaseCatalogSelection = CatalogSelection;
+typedef CatalogProductCreator = Future<CatalogSelection?> Function();
 
 /// Returns a human-readable group name only. Product group IDs are internal
 /// catalog identities and must never be rendered as a fallback label.
@@ -33,6 +34,7 @@ Future<PurchaseCatalogSelection?> showPurchaseCatalogPicker(
   ProductCatalogService? service,
   String title = 'اختيار مادة من الكتالوج',
   List<ProductCatalogModel>? products,
+  CatalogProductCreator? onCreateProduct,
 }) {
   return showCatalogPicker(
     context,
@@ -41,6 +43,7 @@ Future<PurchaseCatalogSelection?> showPurchaseCatalogPicker(
     title: title,
     mode: CatalogPickerMode.purchase,
     products: products,
+    onCreateProduct: onCreateProduct,
   );
 }
 
@@ -51,6 +54,7 @@ Future<CatalogSelection?> showCatalogPicker(
   ProductCatalogService? service,
   String title = 'اختيار مادة من الكتالوج',
   List<ProductCatalogModel>? products,
+  CatalogProductCreator? onCreateProduct,
 }) {
   return showDialog<CatalogSelection>(
     context: context,
@@ -60,6 +64,7 @@ Future<CatalogSelection?> showCatalogPicker(
       title: title,
       mode: mode,
       products: products,
+      onCreateProduct: onCreateProduct,
     ),
   );
 }
@@ -70,6 +75,7 @@ class _PurchaseCatalogPickerDialog extends StatefulWidget {
   final String title;
   final CatalogPickerMode mode;
   final List<ProductCatalogModel>? products;
+  final CatalogProductCreator? onCreateProduct;
 
   const _PurchaseCatalogPickerDialog({
     required this.brandId,
@@ -77,6 +83,7 @@ class _PurchaseCatalogPickerDialog extends StatefulWidget {
     required this.title,
     required this.mode,
     this.products,
+    this.onCreateProduct,
   });
 
   @override
@@ -181,6 +188,18 @@ class _PurchaseCatalogPickerDialogState
     Navigator.pop(context, CatalogSelection(product: product, unit: unit));
   }
 
+  Future<void> _createProduct() async {
+    final creator = widget.onCreateProduct;
+    if (creator == null || _loading) return;
+    setState(() => _loading = true);
+    try {
+      final selection = await creator();
+      if (mounted && selection != null) Navigator.pop(context, selection);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -219,8 +238,24 @@ class _PurchaseCatalogPickerDialogState
                   ),
                 )
               else if (_products.isEmpty)
-                const Expanded(
-                  child: Center(child: Text('لا توجد مواد مطابقة للبحث.')),
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('لا توجد مواد مطابقة للبحث.'),
+                        if (widget.onCreateProduct != null) ...[
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            key: const Key('purchase-add-new-catalog-material'),
+                            onPressed: _loading ? null : _createProduct,
+                            icon: const Icon(Icons.add_box_rounded),
+                            label: const Text('إضافة مادة جديدة'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 )
               else
                 Expanded(

@@ -838,6 +838,8 @@ service cloud.firestore {
           'posted_at',
           'posted_with_unresolved_override',
           'last_updated',
+          'open_amendment_id',
+          'open_amendment_status',
           'history'
         ]) &&
         data.keys().hasAll([
@@ -898,6 +900,10 @@ service cloud.firestore {
             data.posted_at is timestamp)) &&
         (!data.keys().hasAny(['posted_with_unresolved_override']) ||
           data.posted_with_unresolved_override == true) &&
+        (!data.keys().hasAny(['open_amendment_id']) ||
+          data.open_amendment_id is string) &&
+        (!data.keys().hasAny(['open_amendment_status']) ||
+          data.open_amendment_status is string) &&
         validPurchaseHistory(data.history);
     }
 
@@ -919,8 +925,7 @@ service cloud.firestore {
       return knownPurchaseUser() &&
         ((role() == 'manager' &&
             purchaseActorBranchId() == data.receiving_branch_id) ||
-          (role() == 'collector' && data.status == 'pendingPriceEntry') ||
-          (role() == 'accountant' && data.status == 'pendingAccountingEntry'));
+          purchaseSupervisor());
     }
 
     function purchaseReviewStatus(value) {
@@ -2085,6 +2090,129 @@ service cloud.firestore {
     // Prices, provisional prices, accounting references/notes, and override
     // reasons live only here. Managers and employees cannot read this document.
     match /purchase_invoice_prices/{invoiceId} {
+      allow get, list: if protectedPriceUser();
+      allow create, update, delete: if false;
+    }
+
+    // Amendment requests are public operational records. Protected old/new
+    // price values are deliberately stored in the companion collection below.
+    function validPurchaseAmendmentActor(actor) {
+      return actor is map &&
+        actor.keys().hasOnly(['uid', 'name', 'role']) &&
+        actor.keys().hasAll(['uid', 'name', 'role']) &&
+        actor.uid is string && actor.uid.size() > 0 &&
+        actor.name is string &&
+        (actor.role == 'manager' || actor.role == 'collector' ||
+          actor.role == 'accountant');
+    }
+
+    function validPurchaseAmendmentActors(actors, minimum) {
+      let count = actors.size();
+      return actors is list && count >= minimum && count <= 3 &&
+        (count < 1 || validPurchaseAmendmentActor(actors[0])) &&
+        (count < 2 || validPurchaseAmendmentActor(actors[1])) &&
+        (count < 3 || validPurchaseAmendmentActor(actors[2]));
+    }
+
+    function validPurchaseAmendmentChange(change) {
+      return change is map &&
+        change.keys().hasOnly(['before', 'after']) &&
+        change.keys().hasAll(['before', 'after']) &&
+        (change.before == null || change.before is string) &&
+        change.after is string;
+    }
+
+    function validPurchaseAmendment(amendmentId, data) {
+      return data.keys().hasOnly([
+          'id',
+          'invoice_id',
+          'invoice_revision',
+          'status',
+          'reason',
+          'changes',
+          'includes_protected_price_changes',
+          'required_approvers',
+          'approvals',
+          'requested_by',
+          'requested_by_name',
+          'requested_by_role',
+          'requested_at',
+          'updated_at',
+          'rejection_by',
+          'rejection_by_name',
+          'rejection_by_role',
+          'rejection_reason',
+          'rejected_at',
+          'applied_at',
+          'applied_by',
+          'applied_by_name',
+          'applied_by_role',
+          'applied_invoice_revision'
+        ]) &&
+        data.keys().hasAll([
+          'id',
+          'invoice_id',
+          'invoice_revision',
+          'status',
+          'reason',
+          'changes',
+          'includes_protected_price_changes',
+          'required_approvers',
+          'approvals',
+          'requested_by',
+          'requested_by_name',
+          'requested_by_role',
+          'requested_at',
+          'updated_at'
+        ]) &&
+        data.id == amendmentId && data.invoice_id is string &&
+        data.invoice_id.size() > 0 && data.invoice_revision is int &&
+        data.invoice_revision > 0 &&
+        (data.status == 'pending' || data.status == 'rejected' ||
+          data.status == 'applied') &&
+        data.reason is string && data.reason.size() > 0 &&
+        data.changes is map &&
+        data.changes.keys().hasOnly([
+          'supplier_name',
+          'supplier_invoice_number',
+          'supplier_invoice_date',
+          'general_manager_notes'
+        ]) &&
+        data.changes.size() > 0 &&
+        (!data.changes.keys().hasAny(['supplier_name']) ||
+          validPurchaseAmendmentChange(data.changes.supplier_name)) &&
+        (!data.changes.keys().hasAny(['supplier_invoice_number']) ||
+          validPurchaseAmendmentChange(data.changes.supplier_invoice_number)) &&
+        (!data.changes.keys().hasAny(['supplier_invoice_date']) ||
+          validPurchaseAmendmentChange(data.changes.supplier_invoice_date)) &&
+        (!data.changes.keys().hasAny(['general_manager_notes']) ||
+          validPurchaseAmendmentChange(data.changes.general_manager_notes)) &&
+        data.includes_protected_price_changes is bool &&
+        validPurchaseAmendmentActors(data.required_approvers, 2) &&
+        validPurchaseAmendmentActors(data.approvals, 0) &&
+        data.requested_by is string && data.requested_by.size() > 0 &&
+        data.requested_by_name is string &&
+        (data.requested_by_role == 'manager' ||
+          data.requested_by_role == 'collector' ||
+          data.requested_by_role == 'accountant') &&
+        data.requested_at is timestamp && data.updated_at is timestamp;
+    }
+
+    function mayReadPurchaseAmendment(data) {
+      return data.invoice_id is string &&
+        validPurchaseAmendment(data.id, data) &&
+        knownPurchaseUser() &&
+        mayReadPurchaseBranch(get(
+          /databases/$(database)/documents/purchase_invoices/$(data.invoice_id)
+        ).data);
+    }
+
+    match /purchase_invoice_amendments/{amendmentId} {
+      allow get, list: if mayReadPurchaseAmendment(resource.data);
+      allow create, update, delete: if false;
+    }
+
+    match /purchase_invoice_amendment_prices/{amendmentId} {
       allow get, list: if protectedPriceUser();
       allow create, update, delete: if false;
     }

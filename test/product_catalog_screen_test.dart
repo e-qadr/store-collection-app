@@ -1,4 +1,6 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
@@ -292,6 +294,72 @@ void main() {
       expect(changed.displayValue, 'علبة');
       expect(changed.rawValue, 'علبة');
       expect(changed.normalizedValue, isNull);
+    },
+  );
+
+  testWidgets(
+    'material-management search retains keyboard focus while filtering Arabic input',
+    (tester) async {
+      final material = product(
+        id: 'incense',
+        name: 'دخون طبيعي',
+        normalizedName: 'دخون طبيعي',
+      );
+      const group = ProductGroupModel(
+        id: 'group-1',
+        brandId: 'brand-1',
+        name: 'العطور',
+        normalizedName: 'العطور',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProductCatalogManagementScreen(
+            role: UserRole.collector,
+            brandsStream: Stream.value(const [
+              CatalogBrandOption(id: 'brand-1', name: 'الأصالة'),
+            ]),
+            groupsStreamFactory: ({required brandId, required activeOnly}) =>
+                Stream.value(const [group]),
+            productsStreamFactory:
+                ({required brandId, groupId, required activeOnly}) =>
+                    Stream.value([material]),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final search = find.byKey(const Key('material-management-search'));
+      await tester.tap(search);
+      await tester.enterText(search, 'د');
+      await tester.pump();
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      await tester.enterText(search, 'دخ');
+      await tester.pump();
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      await tester.enterText(search, 'دخون');
+      await tester.pumpAndSettle();
+
+      expect(tester.widget<TextField>(search).controller!.text, 'دخون');
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(find.text('دخون طبيعي'), findsOneWidget);
     },
   );
 }

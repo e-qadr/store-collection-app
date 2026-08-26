@@ -4,6 +4,7 @@ import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/screens/purchase_invoices/new_purchase_invoice_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/product_review_queue_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_details_screen.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_history_screen.dart';
 import 'package:store_collection_app/services/purchase_invoice_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
@@ -41,9 +42,24 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
           title: const Text('فواتير المشتريات'),
-          actions: widget.showNotificationBell
-              ? const [NotificationBell()]
-              : null,
+          actions: [
+            IconButton(
+              key: const Key('purchase-history'),
+              tooltip: 'سجل فواتير المشتريات',
+              icon: const Icon(Icons.history_rounded),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PurchaseInvoiceHistoryScreen(
+                    role: widget.role,
+                    branchId: widget.branchId,
+                    branchName: widget.branchName,
+                  ),
+                ),
+              ),
+            ),
+            if (widget.showNotificationBell) const NotificationBell(),
+          ],
         ),
         floatingActionButton: canCreate
             ? FloatingActionButton.extended(

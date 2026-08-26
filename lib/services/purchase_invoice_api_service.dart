@@ -148,6 +148,18 @@ class PurchasePriceInput {
   Map<String, dynamic> toJson() => {'item_id': itemId, 'unit_price': unitPrice};
 }
 
+class PurchaseAmendmentPriceInput {
+  final String itemId;
+  final double unitPrice;
+
+  const PurchaseAmendmentPriceInput({
+    required this.itemId,
+    required this.unitPrice,
+  });
+
+  Map<String, dynamic> toJson() => {'item_id': itemId, 'unit_price': unitPrice};
+}
+
 class PurchaseInvoiceApiService {
   static const maxItems = 50;
   static const supportedCurrencies = {'YER', 'SAR', 'USD'};
@@ -272,6 +284,52 @@ class PurchaseInvoiceApiService {
       'override_unresolved_materials': overrideUnresolvedMaterials,
       if (overrideUnresolvedMaterials)
         'override_reason': overrideReason?.trim() ?? '',
+    },
+  );
+
+  Future<PurchaseInvoiceCommandResult> createAmendment({
+    required String invoiceId,
+    required int expectedRevision,
+    required String reason,
+    required String idempotencyKey,
+    String? supplierName,
+    String? supplierInvoiceNumber,
+    String? supplierInvoiceDate,
+    String? generalManagerNotes,
+    List<PurchaseAmendmentPriceInput>? priceItems,
+  }) => _command(
+    '/v1/purchase-invoices/${Uri.encodeComponent(invoiceId)}/amendments',
+    idempotencyKey,
+    {
+      'expected_revision': expectedRevision,
+      'reason': reason.trim(),
+      if (supplierName != null) 'supplier_name': supplierName.trim(),
+      if (supplierInvoiceNumber != null)
+        'supplier_invoice_number': supplierInvoiceNumber.trim(),
+      if (supplierInvoiceDate != null)
+        'supplier_invoice_date': supplierInvoiceDate.trim(),
+      if (generalManagerNotes != null)
+        'general_manager_notes': generalManagerNotes.trim(),
+      if (priceItems != null)
+        'price_items': priceItems.map((item) => item.toJson()).toList(),
+    },
+  );
+
+  Future<PurchaseInvoiceCommandResult> decideAmendment({
+    required String invoiceId,
+    required String amendmentId,
+    required int expectedRevision,
+    required String decision,
+    required String idempotencyKey,
+    String? reason,
+  }) => _command(
+    '/v1/purchase-invoices/${Uri.encodeComponent(invoiceId)}/amendments/'
+    '${Uri.encodeComponent(amendmentId)}/decision',
+    idempotencyKey,
+    {
+      'expected_revision': expectedRevision,
+      'decision': decision,
+      if ((reason ?? '').trim().isNotEmpty) 'reason': reason!.trim(),
     },
   );
 
@@ -428,6 +486,13 @@ class PurchaseInvoiceApiService {
       'بيانات المادة أو المجموعة أو الوحدة المختارة لم تعد صالحة. أعد اختيارها.',
     'idempotency-conflict' =>
       'تم استخدام مفتاح الإرسال لطلب مختلف. أعد فتح الفاتورة وحاول مجددًا.',
+    'active-amendment-exists' => 'يوجد طلب تعديل معلق لهذه الفاتورة.',
+    'posted-invoice-amendment-blocked' =>
+      'الفاتورة المرحلة لا تُعدّل مباشرة؛ أنشئ مستند تصحيح أو عكس محاسبي.',
+    'duplicate-amendment-approval' =>
+      'تم تسجيل موافقتك على طلب التعديل مسبقاً.',
+    'amendment-rejection-reason-required' => 'سبب رفض طلب التعديل مطلوب.',
+    'amendment-no-changes' => 'أدخل تغييراً واحداً على الأقل في طلب التعديل.',
     _ => 'تعذر إتمام العملية بأمان. حاول مجددًا أو تواصل مع الإدارة.',
   };
 

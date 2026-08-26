@@ -10,6 +10,8 @@ const {
   createPurchaseInvoiceCommandRouter,
   confirmPrices,
   confirmReceipt,
+  createPurchaseAmendment,
+  decidePurchaseAmendment,
   postToAccounting,
   reviewProductTask,
   updateCatalogPrice,
@@ -905,4 +907,166 @@ test("the purchase route accepts measured 50-item payloads over 16kb and returns
       error: {code: "payload-too-large", message: "The JSON request exceeds the allowed size."},
     });
   });
+});
+
+test("controlled amendment waits for all fixed approvers, keeps the invoice authoritative, then applies atomically", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore);
+  const invoiceId = result.responseData.invoice_id;
+  const item = publicItems(firestore, invoiceId)[0];
+  const created = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      reason: "Correct supplier reference and protected draft price.",
+      changes: {supplier_invoice_number: "S-101"},
+      price_items: [{item_id: item.item_id, unit_price: 11}],
+    },
+    idempotencyKey: "amend-create-0001",
+    timestamp: now,
+  });
+  const amendmentId = created.responseData.amendment_id;
+  const pendingInvoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  const publicAmendment = firestore.document(COLLECTIONS.amendments, amendmentId);
+  const protectedAmendment = firestore.document(COLLECTIONS.amendmentPrices, amendmentId);
+  assert.equal(pendingInvoice.revision, 1);
+  assert.equal(pendingInvoice.supplier_invoice_number, "S-100");
+  assert.equal(pendingInvoice.open_amendment_id, amendmentId);
+  assert.equal(publicAmendment.approvals.length, 1);
+  assert.equal(publicAmendment.required_approvers.length, 3);
+  assert.doesNotMatch(JSON.stringify(publicAmendment), /unit_price|old_unit_price|new_unit_price|invoice_total/);
+  assert.equal(protectedAmendment.price_items[0].new_unit_price, 11);
+
+  const stillPending = await decidePurchaseAmendment({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    amendmentId,
+    payload: {expected_revision: 1, decision: "approve"},
+    idempotencyKey: "amend-manager-0001",
+    timestamp: now,
+  });
+  assert.equal(stillPending.responseData.amendment_status, "pending");
+  assert.equal(firestore.document(COLLECTIONS.invoices, invoiceId).revision, 1);
+  assert.equal(firestore.document(COLLECTIONS.amendments, amendmentId).approvals.length, 2);
+
+  const applied = await decidePurchaseAmendment({
+    firestore,
+    actorUid: "accountant",
+    invoiceId,
+    amendmentId,
+    payload: {expected_revision: 1, decision: "approve"},
+    idempotencyKey: "amend-accountant-0001",
+    timestamp: now,
+  });
+  const amendedInvoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  assert.equal(applied.responseData.amendment_status, "applied");
+  assert.equal(amendedInvoice.revision, 2);
+  assert.equal(amendedInvoice.supplier_invoice_number, "S-101");
+  assert.equal(amendedInvoice.open_amendment_id, "");
+  assert.equal(firestore.document(COLLECTIONS.amendments, amendmentId).status, "applied");
+  assert.equal(
+      firestore.document(COLLECTIONS.prices, invoiceId).provisional_items
+          .find((entry) => entry.item_id === item.item_id).unit_price,
+      11,
+  );
+  assert.ok(
+      firestore.documents(COLLECTIONS.events)
+          .some((event) => event.action === "purchase_amendment_applied" && event.revision === 2),
+  );
+});
+
+test("amendment rejection, stale versions, duplicate approvals, unauthorized actors, and posted invoices fail closed", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore);
+  const invoiceId = result.responseData.invoice_id;
+  await assert.rejects(
+      () => createPurchaseAmendment({
+        firestore,
+        actorUid: "manager-x",
+        invoiceId,
+        payload: {
+          expected_revision: 1,
+          reason: "not a recorded participant",
+          changes: {supplier_invoice_number: "S-101"},
+        },
+        idempotencyKey: "amend-unauthorized-1",
+        timestamp: now,
+      }),
+      (error) => error.code === "forbidden",
+  );
+  await assert.rejects(
+      () => createPurchaseAmendment({
+        firestore,
+        actorUid: "collector",
+        invoiceId,
+        payload: {
+          expected_revision: 2,
+          reason: "stale",
+          changes: {supplier_invoice_number: "S-101"},
+        },
+        idempotencyKey: "amend-stale-0001",
+        timestamp: now,
+      }),
+      (error) => error.code === "stale-revision",
+  );
+  const created = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      reason: "Correct a public reference.",
+      changes: {supplier_invoice_number: "S-101"},
+    },
+    idempotencyKey: "amend-reject-0001",
+    timestamp: now,
+  });
+  const amendmentId = created.responseData.amendment_id;
+  await assert.rejects(
+      () => decidePurchaseAmendment({
+        firestore,
+        actorUid: "collector",
+        invoiceId,
+        amendmentId,
+        payload: {expected_revision: 1, decision: "approve"},
+        idempotencyKey: "amend-duplicate-1",
+        timestamp: now,
+      }),
+      (error) => error.code === "duplicate-amendment-approval",
+  );
+  await decidePurchaseAmendment({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    amendmentId,
+    payload: {expected_revision: 1, decision: "reject", reason: "Incorrect request."},
+    idempotencyKey: "amend-reject-manager",
+    timestamp: now,
+  });
+  const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  assert.equal(invoice.supplier_invoice_number, "S-100");
+  assert.equal(invoice.revision, 1);
+  assert.equal(invoice.open_amendment_id, "");
+  assert.equal(firestore.document(COLLECTIONS.amendments, amendmentId).status, "rejected");
+  await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).update({
+    status: "postedToAccounting",
+  });
+  await assert.rejects(
+      () => createPurchaseAmendment({
+        firestore,
+        actorUid: "collector",
+        invoiceId,
+        payload: {
+          expected_revision: 1,
+          reason: "must use correction",
+          changes: {supplier_invoice_number: "S-102"},
+        },
+        idempotencyKey: "amend-posted-0001",
+        timestamp: now,
+      }),
+      (error) => error.code === "posted-invoice-amendment-blocked",
+  );
 });

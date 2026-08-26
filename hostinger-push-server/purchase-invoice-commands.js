@@ -17,6 +17,8 @@ const {
   uncategorizedGroupId,
   validateCreatePayload,
   validateCatalogPricePayload,
+  validateAmendmentCreatePayload,
+  validateAmendmentDecisionPayload,
   validateIdempotencyKey,
   validatePostingPayload,
   validatePricingPayload,
@@ -36,6 +38,8 @@ const COLLECTIONS = Object.freeze({
   invoices: "purchase_invoices",
   events: "purchase_invoice_events",
   prices: "purchase_invoice_prices",
+  amendments: "purchase_invoice_amendments",
+  amendmentPrices: "purchase_invoice_amendment_prices",
   reviewTasks: "product_review_tasks",
   commands: "purchase_invoice_commands",
   counters: "purchase_invoice_counters",
@@ -80,6 +84,7 @@ const HEADER_KEYS = new Set([
   "created_by", "created_by_name", "created_by_role", "created_at", "receipt_confirmed_by",
   "receipt_confirmed_by_name", "receipt_confirmed_at", "posted_by", "posted_by_name",
   "posted_at", "posted_with_unresolved_override", "last_updated", "history",
+  "open_amendment_id", "open_amendment_status",
 ]);
 
 const ITEM_KEYS = new Set([
@@ -153,7 +158,9 @@ function historyWithEvent(invoice, event) {
       invoice.history.some((entry) => !hasOnlyKeys(entry, HISTORY_KEYS))) {
     throw new PurchaseCommandError("invoice-malformed", 409, "Invoice history is invalid.");
   }
-  return [...invoice.history, event];
+  // The public header is intentionally bounded for Rules-compatible direct
+  // reads. The complete immutable sequence remains in purchase_invoice_events.
+  return [...invoice.history, event].slice(-8);
 }
 
 function activeDocument(data) {
@@ -1789,6 +1796,475 @@ function approximatelyEqual(left, right) {
   return Math.abs(left - right) <= Number.EPSILON * scale * 2;
 }
 
+function publicActor(actor) {
+  return {uid: actor.uid, name: actor.name, role: actor.role};
+}
+
+function requiredSingleApprover(actors, role) {
+  if (actors.length !== 1) {
+    throw new PurchaseCommandError(
+        `${role}-approver-ambiguous`,
+        409,
+        `Exactly one active ${role} approver must be configured.`,
+    );
+  }
+  return actors[0];
+}
+
+function amendmentChangesForInvoice(invoice, changes) {
+  return Object.fromEntries(Object.entries(changes).map(([field, after]) => [
+    field,
+    {before: invoice[field] ?? null, after},
+  ]));
+}
+
+function assertAmendment(amendment, amendmentId, invoice) {
+  if (!amendment || amendment.id !== amendmentId ||
+      amendment.invoice_id !== invoice.id ||
+      amendment.invoice_revision !== invoice.revision ||
+      amendment.status !== "pending" ||
+      !Array.isArray(amendment.required_approvers) ||
+      amendment.required_approvers.length < 2 ||
+      !Array.isArray(amendment.approvals) ||
+      !amendment.changes || typeof amendment.changes !== "object" ||
+      typeof amendment.reason !== "string" || !amendment.reason) {
+    throw new PurchaseCommandError(
+        "amendment-invalid", 409, "The amendment request is invalid.",
+    );
+  }
+  const requiredIds = amendment.required_approvers.map((entry) => entry?.uid);
+  if (requiredIds.some((uid) => typeof uid !== "string" || !uid) ||
+      new Set(requiredIds).size !== requiredIds.length ||
+      amendment.approvals.some((entry) => !requiredIds.includes(entry?.uid)) ||
+      new Set(amendment.approvals.map((entry) => entry.uid)).size !== amendment.approvals.length) {
+    throw new PurchaseCommandError(
+        "amendment-invalid", 409, "The amendment approval record is invalid.",
+    );
+  }
+}
+
+function amendmentResponse(invoice, amendmentId, status = "pending") {
+  return {
+    ...responseFor(
+        invoice.id, invoice.status, invoice.revision, invoice.purchase_number,
+    ),
+    amendment_id: amendmentId,
+    amendment_status: status,
+  };
+}
+
+function amendmentPriceDocument({
+  amendmentRef, invoice, actor, priceItems, price, timestamp,
+}) {
+  const existing = new Map(
+      (Array.isArray(price?.provisional_items) ? price.provisional_items : [])
+          .filter((entry) => entry && typeof entry.item_id === "string" &&
+              typeof entry.unit_price === "number")
+          .map((entry) => [entry.item_id, entry.unit_price]),
+  );
+  return {
+    id: amendmentRef.id,
+    amendment_id: amendmentRef.id,
+    invoice_id: invoice.id,
+    invoice_revision: invoice.revision,
+    currency: invoice.currency,
+    price_items: priceItems.map((entry) => ({
+      item_id: entry.item_id,
+      old_unit_price: existing.get(entry.item_id) ?? null,
+      new_unit_price: entry.unit_price,
+    })),
+    created_by: actor.uid,
+    created_by_name: actor.name,
+    created_by_role: actor.role,
+    created_at: timestamp,
+  };
+}
+
+async function createPurchaseAmendment({
+  firestore, actorUid, invoiceId, payload, idempotencyKey, timestamp,
+}) {
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const amendmentRef = firestore.collection(COLLECTIONS.amendments).doc();
+  const amendmentPriceRef = firestore.collection(COLLECTIONS.amendmentPrices).doc(amendmentRef.id);
+  const requestHash = canonicalRequestHash({invoice_id: invoiceId, ...payload});
+  return runIdempotent({
+    firestore,
+    command: "create_purchase_amendment",
+    actorUid,
+    expectedRole: ["manager", "collector", "accountant"],
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const invoiceSnapshot = await transaction.get(invoiceRef);
+      const invoice = requireInvoice(invoiceSnapshot, invoiceId);
+      if (invoice.status === STATUS.postedToAccounting) {
+        throw new PurchaseCommandError(
+            "posted-invoice-amendment-blocked",
+            409,
+            "Posted invoices require a corrective document.",
+        );
+      }
+      requireState(invoice, STATUS.pendingReceiverReview, payload.expected_revision);
+      if (invoice.open_amendment_id) {
+        throw new PurchaseCommandError(
+            "active-amendment-exists", 409, "An amendment is already pending.",
+        );
+      }
+      if (payload.price_items && !["collector", "accountant"].includes(actor.role)) {
+        throw new PurchaseCommandError(
+            "forbidden", 403, "The role cannot propose protected prices.",
+        );
+      }
+      const branchSnapshot = await transaction.get(
+          firestore.collection(COLLECTIONS.branches).doc(invoice.receiving_branch_id),
+      );
+      const branch = cleanBranch(branchSnapshot, invoice.receiving_branch_id);
+      const managers = await activeBranchManagers(
+          transaction, firestore, branch.id, branch.data,
+      );
+      const collectors = await activeUsersByRole(transaction, firestore, "collector");
+      const creator = collectors.find((entry) => entry.uid === invoice.created_by);
+      if (!creator) {
+        throw new PurchaseCommandError(
+            "invoice-creator-unavailable", 409, "The originating actor is unavailable.",
+        );
+      }
+      const manager = requiredSingleApprover(managers, "manager");
+      const accountant = requiredSingleApprover(
+          await activeUsersByRole(transaction, firestore, "accountant"),
+          "accountant",
+      );
+      const requiredApprovers = [creator, manager, accountant]
+          .filter((entry, index, all) => all.findIndex((candidate) =>
+            candidate.uid === entry.uid) === index)
+          .map(publicActor);
+      if (!requiredApprovers.some((entry) => entry.uid === actor.uid)) {
+        throw new PurchaseCommandError(
+            "forbidden", 403, "Only a recorded required participant may request an amendment.",
+        );
+      }
+      const storedItems = await readItems(transaction, invoiceRef, invoice);
+      let price;
+      if (payload.price_items) {
+        const priceRef = firestore.collection(COLLECTIONS.prices).doc(invoiceId);
+        const priceSnapshot = await transaction.get(priceRef);
+        price = priceSnapshot.data();
+        if (!priceSnapshot.exists || !hasOnlyKeys(price, PROTECTED_PRICE_KEYS) ||
+            price.locked !== false || price.invoice_id !== invoiceId ||
+            price.invoice_revision !== invoice.revision ||
+            price.item_digest !== invoice.item_digest || price.currency !== invoice.currency ||
+            !["initial", "provisional"].includes(price.pricing_state)) {
+          throw new PurchaseCommandError(
+              "price-snapshot-invalid", 409, "The protected price draft is invalid.",
+          );
+        }
+        const itemIds = new Set(storedItems.map((item) => item.item_id));
+        if (payload.price_items.some((entry) => !itemIds.has(entry.item_id))) {
+          throw new PurchaseCommandError(
+              "items-mismatch", 409, "A protected price item is invalid.",
+          );
+        }
+      }
+      const oldKeyId = supplierUniqueKey(invoice);
+      const proposedSupplier = {
+        supplier_name: payload.changes.supplier_name ?? invoice.supplier_name,
+        supplier_invoice_number:
+          payload.changes.supplier_invoice_number ?? invoice.supplier_invoice_number,
+      };
+      const newKeyId = supplierUniqueKey(proposedSupplier);
+      const oldKeyRef = oldKeyId ?
+        firestore.collection(COLLECTIONS.supplierKeys).doc(oldKeyId) : null;
+      const newKeyRef = newKeyId ?
+        firestore.collection(COLLECTIONS.supplierKeys).doc(newKeyId) : null;
+      const newKeySnapshot = newKeyRef ? await transaction.get(newKeyRef) : null;
+      if (newKeySnapshot?.exists && newKeySnapshot.data()?.invoice_id !== invoiceId) {
+        throw new PurchaseCommandError(
+            "duplicate-supplier-invoice", 409, "A matching supplier invoice already exists.",
+        );
+      }
+      const event = eventData(
+          "purchase_amendment_requested",
+          "A controlled purchase-invoice amendment was requested.",
+          actor,
+          timestamp,
+      );
+      const requesterApproval = publicActor(actor);
+      const amendment = {
+        id: amendmentRef.id,
+        invoice_id: invoice.id,
+        invoice_revision: invoice.revision,
+        status: "pending",
+        reason: payload.reason,
+        changes: amendmentChangesForInvoice(invoice, payload.changes),
+        includes_protected_price_changes: Boolean(payload.price_items),
+        required_approvers: requiredApprovers,
+        approvals: [requesterApproval],
+        requested_by: actor.uid,
+        requested_by_name: actor.name,
+        requested_by_role: actor.role,
+        requested_at: timestamp,
+        updated_at: timestamp,
+      };
+      transaction.set(amendmentRef, amendment);
+      if (payload.price_items) {
+        transaction.set(amendmentPriceRef, amendmentPriceDocument({
+          amendmentRef, invoice, actor, priceItems: payload.price_items, price, timestamp,
+        }));
+      }
+      transaction.update(invoiceRef, {
+        open_amendment_id: amendmentRef.id,
+        open_amendment_status: "pending",
+        last_updated: timestamp,
+        history: historyWithEvent(invoice, event),
+      });
+      writeEvent(transaction, firestore, {
+        invoice, event, revision: invoice.revision, suffix: amendmentRef.id,
+      });
+      writeNotifications(transaction, firestore, {
+        recipients: requiredApprovers,
+        invoice,
+        type: "purchase_amendment_requested",
+        title: "Purchase amendment approval required",
+        message: `Purchase invoice ${invoice.purchase_number} has a pending amendment.`,
+        revision: invoice.revision,
+        timestamp,
+        excludeUid: actor.uid,
+      });
+      return {statusCode: 201, responseData: amendmentResponse(invoice, amendmentRef.id)};
+    },
+  });
+}
+
+async function decidePurchaseAmendment({
+  firestore, actorUid, invoiceId, amendmentId, payload, idempotencyKey, timestamp,
+}) {
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const amendmentRef = firestore.collection(COLLECTIONS.amendments).doc(amendmentId);
+  const amendmentPriceRef = firestore.collection(COLLECTIONS.amendmentPrices).doc(amendmentId);
+  const requestHash = canonicalRequestHash({
+    invoice_id: invoiceId, amendment_id: amendmentId, ...payload,
+  });
+  return runIdempotent({
+    firestore,
+    command: "decide_purchase_amendment",
+    actorUid,
+    expectedRole: ["manager", "collector", "accountant"],
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const [invoiceSnapshot, amendmentSnapshot] = await Promise.all([
+        transaction.get(invoiceRef), transaction.get(amendmentRef),
+      ]);
+      const invoice = requireInvoice(invoiceSnapshot, invoiceId);
+      if (invoice.status === STATUS.postedToAccounting) {
+        throw new PurchaseCommandError(
+            "posted-invoice-amendment-blocked",
+            409,
+            "Posted invoices require a corrective document.",
+        );
+      }
+      requireState(invoice, STATUS.pendingReceiverReview, payload.expected_revision);
+      const amendment = amendmentSnapshot.data();
+      assertAmendment(amendment, amendmentId, invoice);
+      if (invoice.open_amendment_id !== amendmentId ||
+          invoice.open_amendment_status !== "pending") {
+        throw new PurchaseCommandError(
+            "active-amendment-mismatch", 409, "The invoice amendment state changed.",
+        );
+      }
+      const approver = amendment.required_approvers.find((entry) => entry.uid === actor.uid);
+      if (!approver) {
+        throw new PurchaseCommandError(
+            "forbidden", 403, "Only a required participant may decide this amendment.",
+        );
+      }
+      if (amendment.approvals.some((entry) => entry.uid === actor.uid)) {
+        throw new PurchaseCommandError(
+            "duplicate-amendment-approval", 409, "This actor already approved the amendment.",
+        );
+      }
+      if (payload.decision === "reject") {
+        const event = eventData(
+            "purchase_amendment_rejected",
+            "A purchase-invoice amendment was rejected; the invoice was unchanged.",
+            actor,
+            timestamp,
+        );
+        transaction.update(amendmentRef, {
+          status: "rejected",
+          rejection_by: actor.uid,
+          rejection_by_name: actor.name,
+          rejection_by_role: actor.role,
+          rejection_reason: payload.reason,
+          rejected_at: timestamp,
+          updated_at: timestamp,
+        });
+        transaction.update(invoiceRef, {
+          open_amendment_id: "",
+          open_amendment_status: "rejected",
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        });
+        writeEvent(transaction, firestore, {
+          invoice, event, revision: invoice.revision, suffix: amendmentId,
+        });
+        return {
+          statusCode: 200,
+          responseData: amendmentResponse(invoice, amendmentId, "rejected"),
+        };
+      }
+      const approvals = [...amendment.approvals, publicActor(actor)];
+      const allApproved = amendment.required_approvers.every((entry) =>
+        approvals.some((approval) => approval.uid === entry.uid));
+      if (!allApproved) {
+        const event = eventData(
+            "purchase_amendment_approved",
+            "A required participant approved a purchase-invoice amendment.",
+            actor,
+            timestamp,
+        );
+        transaction.update(amendmentRef, {approvals, updated_at: timestamp});
+        transaction.update(invoiceRef, {
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        });
+        writeEvent(transaction, firestore, {
+          invoice, event, revision: invoice.revision, suffix: `${amendmentId}-${actor.uid}`,
+        });
+        return {
+          statusCode: 200,
+          responseData: amendmentResponse(invoice, amendmentId, "pending"),
+        };
+      }
+      const publicChanges = amendment.changes;
+      const oldKeyId = supplierUniqueKey(invoice);
+      const proposedSupplier = {
+        supplier_name: publicChanges.supplier_name?.after ?? invoice.supplier_name,
+        supplier_invoice_number:
+          publicChanges.supplier_invoice_number?.after ?? invoice.supplier_invoice_number,
+      };
+      const newKeyId = supplierUniqueKey(proposedSupplier);
+      const oldKeyRef = oldKeyId ?
+        firestore.collection(COLLECTIONS.supplierKeys).doc(oldKeyId) : null;
+      const newKeyRef = newKeyId ?
+        firestore.collection(COLLECTIONS.supplierKeys).doc(newKeyId) : null;
+      const [oldKeySnapshot, newKeySnapshot, amendmentPriceSnapshot] = await Promise.all([
+        oldKeyRef ? transaction.get(oldKeyRef) : Promise.resolve(null),
+        newKeyRef ? transaction.get(newKeyRef) : Promise.resolve(null),
+        amendment.includes_protected_price_changes ?
+          transaction.get(amendmentPriceRef) : Promise.resolve(null),
+      ]);
+      if (newKeySnapshot?.exists && newKeySnapshot.data()?.invoice_id !== invoiceId) {
+        throw new PurchaseCommandError(
+            "duplicate-supplier-invoice", 409, "A matching supplier invoice already exists.",
+        );
+      }
+      const nextRevision = invoice.revision + 1;
+      const event = eventData(
+          "purchase_amendment_applied",
+          "All required participants approved a purchase-invoice amendment.",
+          actor,
+          timestamp,
+      );
+      const invoiceUpdate = {
+        revision: nextRevision,
+        last_updated: timestamp,
+        history: historyWithEvent(invoice, event),
+        open_amendment_id: "",
+        open_amendment_status: "applied",
+      };
+      Object.entries(publicChanges).forEach(([field, change]) => {
+        invoiceUpdate[field] = change.after;
+      });
+      if (amendment.includes_protected_price_changes) {
+        const amendmentPrice = amendmentPriceSnapshot?.data();
+        if (!amendmentPrice || amendmentPrice.invoice_id !== invoiceId ||
+            amendmentPrice.invoice_revision !== invoice.revision ||
+            !Array.isArray(amendmentPrice.price_items)) {
+          throw new PurchaseCommandError(
+              "amendment-price-invalid", 409, "The protected amendment data is invalid.",
+          );
+        }
+        const priceRef = firestore.collection(COLLECTIONS.prices).doc(invoiceId);
+        const priceSnapshot = await transaction.get(priceRef);
+        const price = priceSnapshot.data();
+        if (!priceSnapshot.exists || !hasOnlyKeys(price, PROTECTED_PRICE_KEYS) ||
+            price.locked !== false || price.invoice_revision !== invoice.revision ||
+            price.item_digest !== invoice.item_digest || price.currency !== invoice.currency ||
+            !["initial", "provisional"].includes(price.pricing_state)) {
+          throw new PurchaseCommandError(
+              "price-snapshot-invalid", 409, "The protected price draft is invalid.",
+          );
+        }
+        const invoiceItems = await readItems(transaction, invoiceRef, invoice);
+        const validItemIds = new Set(invoiceItems.map((item) => item.item_id));
+        const replacement = new Map(amendmentPrice.price_items.map((entry) =>
+          [entry.item_id, entry.new_unit_price]));
+        if (replacement.size !== amendmentPrice.price_items.length ||
+            [...replacement.keys()].some((id) => !validItemIds.has(id)) ||
+            [...replacement.values()].some((value) =>
+              typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+          throw new PurchaseCommandError(
+              "amendment-price-invalid", 409, "The protected amendment data is invalid.",
+          );
+        }
+        const pricesByItemId = new Map(
+            (Array.isArray(price.provisional_items) ? price.provisional_items : [])
+                .filter((entry) => entry && typeof entry.item_id === "string" &&
+                    typeof entry.unit_price === "number")
+                .map((entry) => [entry.item_id, entry.unit_price]),
+        );
+        replacement.forEach((value, id) => pricesByItemId.set(id, value));
+        const provisionalItems = invoiceItems
+            .filter((item) => pricesByItemId.has(item.item_id))
+            .map((item) => ({item_id: item.item_id, unit_price: pricesByItemId.get(item.item_id)}));
+        transaction.update(priceRef, {
+          invoice_revision: nextRevision,
+          provisional_items: provisionalItems,
+          pricing_state: provisionalItems.length === invoiceItems.length ? "initial" : "provisional",
+        });
+      }
+      transaction.update(invoiceRef, invoiceUpdate);
+      transaction.update(amendmentRef, {
+        status: "applied",
+        approvals,
+        applied_at: timestamp,
+        applied_by: actor.uid,
+        applied_by_name: actor.name,
+        applied_by_role: actor.role,
+        applied_invoice_revision: nextRevision,
+        updated_at: timestamp,
+      });
+      if (oldKeyRef && oldKeyId !== newKeyId && oldKeySnapshot?.data()?.invoice_id === invoiceId) {
+        transaction.delete(oldKeyRef);
+      }
+      if (newKeyRef && oldKeyId !== newKeyId) {
+        transaction.set(newKeyRef, {
+          id: newKeyId,
+          invoice_id: invoiceId,
+          supplier_name_normalized: normalizeCatalogText(proposedSupplier.supplier_name),
+          supplier_invoice_number_normalized:
+            normalizeCatalogText(proposedSupplier.supplier_invoice_number),
+          created_at: timestamp,
+        });
+      }
+      writeEvent(transaction, firestore, {
+        invoice, event, revision: nextRevision, suffix: amendmentId,
+      });
+      return {
+        statusCode: 200,
+        responseData: {
+          ...responseFor(invoiceId, invoice.status, nextRevision, invoice.purchase_number),
+          amendment_id: amendmentId,
+          amendment_status: "applied",
+        },
+      };
+    },
+  });
+}
+
 function assertProtectedPrice(invoice, items, price) {
   if (!price || !hasOnlyKeys(price, PROTECTED_PRICE_KEYS) || price.locked !== false ||
       price.id !== invoice.id || price.invoice_id !== invoice.id ||
@@ -1954,7 +2430,9 @@ function createAuthentication({admin, firestore}) {
   };
 }
 
-function commandRoute({firestore, admin, now, randomUUID, validator, execute, taskRoute = false}) {
+function commandRoute({
+  firestore, admin, now, randomUUID, validator, execute, taskRoute = false, amendmentRoute = false,
+}) {
   return async (request, response) => {
     try {
       const idempotencyKey = validateIdempotencyKey(request.get("idempotency-key"));
@@ -1963,11 +2441,14 @@ function commandRoute({firestore, admin, now, randomUUID, validator, execute, ta
         documentId(request.params.invoiceId, "invoice_id");
       const taskId = request.params.taskId === undefined ? undefined :
         documentId(request.params.taskId, "task_id");
+      const amendmentId = request.params.amendmentId === undefined ? undefined :
+        documentId(request.params.amendmentId, "amendment_id");
       const result = await execute({
         firestore,
         actorUid: request.purchaseAuth.uid,
         ...(invoiceId ? {invoiceId} : {}),
         ...(taskRoute && taskId ? {taskId} : {}),
+        ...(amendmentRoute && amendmentId ? {amendmentId} : {}),
         payload,
         idempotencyKey,
         timestamp: timestampFor(admin, now),
@@ -2006,6 +2487,14 @@ function createPurchaseInvoiceCommandRouter({
     firestore, admin, now, randomUUID, validator: validatePostingPayload,
     execute: postToAccounting,
   }));
+  router.post("/purchase-invoices/:invoiceId/amendments", commandRoute({
+    firestore, admin, now, randomUUID, validator: validateAmendmentCreatePayload,
+    execute: createPurchaseAmendment,
+  }));
+  router.post("/purchase-invoices/:invoiceId/amendments/:amendmentId/decision", commandRoute({
+    firestore, admin, now, randomUUID, validator: validateAmendmentDecisionPayload,
+    execute: decidePurchaseAmendment, amendmentRoute: true,
+  }));
   router.post("/product-prices", commandRoute({
     firestore, admin, now, randomUUID, validator: validateCatalogPricePayload,
     execute: updateCatalogPrice,
@@ -2028,6 +2517,8 @@ module.exports = {
   createPurchaseInvoiceCommandRouter,
   confirmPrices,
   confirmReceipt,
+  createPurchaseAmendment,
+  decidePurchaseAmendment,
   finalPriceItems,
   isOperationalProfile,
   postToAccounting,

@@ -13,11 +13,10 @@ extension PurchaseInvoiceStatusX on PurchaseInvoiceStatus {
   String get value => name;
 
   String get label => switch (this) {
-    PurchaseInvoiceStatus.pendingReceiverReview =>
-      'بانتظار مراجعة الفرع المستلم',
+    PurchaseInvoiceStatus.pendingReceiverReview => 'بانتظار تأكيد مدير الفرع',
     PurchaseInvoiceStatus.pendingPriceEntry => 'بانتظار اعتماد الأسعار',
-    PurchaseInvoiceStatus.pendingAccountingEntry => 'بانتظار الترحيل المحاسبي',
-    PurchaseInvoiceStatus.postedToAccounting => 'مرحلة محاسبيًا',
+    PurchaseInvoiceStatus.pendingAccountingEntry => 'بانتظار المحاسب',
+    PurchaseInvoiceStatus.postedToAccounting => 'مكتملة ومُرحّلة محاسبياً',
     PurchaseInvoiceStatus.unknown => 'حالة غير معروفة',
   };
 
@@ -43,6 +42,8 @@ class PurchaseInvoiceCollections {
   static const invoices = 'purchase_invoices';
   static const events = 'purchase_invoice_events';
   static const prices = 'purchase_invoice_prices';
+  static const amendments = 'purchase_invoice_amendments';
+  static const amendmentPrices = 'purchase_invoice_amendment_prices';
   static const reviewTasks = 'product_review_tasks';
   static const items = 'items';
 }
@@ -92,6 +93,16 @@ class PurchaseInvoiceRead {
   DateTime? get receiptConfirmedAt => _date(data['receipt_confirmed_at']);
   DateTime? get postedAt => _date(data['posted_at']);
   DateTime? get lastUpdated => _date(data['last_updated']);
+  String get openAmendmentId => data['open_amendment_id']?.toString() ?? '';
+  bool get hasPendingAmendment => openAmendmentId.isNotEmpty;
+
+  String get currentResponsibleParty => switch (status) {
+    PurchaseInvoiceStatus.pendingReceiverReview => 'مدير الفرع المستلم',
+    PurchaseInvoiceStatus.pendingPriceEntry => 'المدير العام',
+    PurchaseInvoiceStatus.pendingAccountingEntry => 'المحاسب',
+    PurchaseInvoiceStatus.postedToAccounting => 'مكتملة',
+    PurchaseInvoiceStatus.unknown => 'غير محدد',
+  };
 
   List<PurchaseInvoiceItem> get items {
     final documents = itemDocuments;
@@ -150,6 +161,8 @@ const _purchaseHeaderFields = <String>{
   'posted_at',
   'posted_with_unresolved_override',
   'last_updated',
+  'open_amendment_id',
+  'open_amendment_status',
   'history',
 };
 
@@ -351,6 +364,152 @@ class PurchaseInvoiceHistoryEvent {
         actorRole: data['actor_role']?.toString() ?? '',
         timestamp: _date(data['timestamp']),
       );
+}
+
+class PurchaseInvoiceAmendment {
+  final String id;
+  final String invoiceId;
+  final int invoiceRevision;
+  final String status;
+  final String reason;
+  final Map<String, Map<String, dynamic>> changes;
+  final bool includesProtectedPriceChanges;
+  final List<PurchaseAmendmentActor> requiredApprovers;
+  final List<PurchaseAmendmentActor> approvals;
+  final String requestedByName;
+  final String requestedByRole;
+  final DateTime? requestedAt;
+  final String rejectionReason;
+
+  const PurchaseInvoiceAmendment({
+    required this.id,
+    required this.invoiceId,
+    required this.invoiceRevision,
+    required this.status,
+    required this.reason,
+    required this.changes,
+    required this.includesProtectedPriceChanges,
+    required this.requiredApprovers,
+    required this.approvals,
+    required this.requestedByName,
+    required this.requestedByRole,
+    this.requestedAt,
+    this.rejectionReason = '',
+  });
+
+  factory PurchaseInvoiceAmendment.fromMap(
+    String id,
+    Map<String, dynamic> data,
+  ) {
+    Map<String, Map<String, dynamic>> changes = const {};
+    final rawChanges = data['changes'];
+    if (rawChanges is Map) {
+      changes = Map.unmodifiable({
+        for (final entry in rawChanges.entries)
+          if (entry.key is String && entry.value is Map)
+            entry.key as String: Map.unmodifiable(
+              Map<String, dynamic>.from(entry.value as Map),
+            ),
+      });
+    }
+    List<PurchaseAmendmentActor> actors(dynamic raw) => raw is List
+        ? raw
+              .whereType<Map>()
+              .map(
+                (entry) => PurchaseAmendmentActor.fromMap(
+                  Map<String, dynamic>.from(entry),
+                ),
+              )
+              .toList(growable: false)
+        : const [];
+    return PurchaseInvoiceAmendment(
+      id: data['id']?.toString() ?? id,
+      invoiceId: data['invoice_id']?.toString() ?? '',
+      invoiceRevision: (data['invoice_revision'] as num?)?.toInt() ?? 0,
+      status: data['status']?.toString() ?? '',
+      reason: data['reason']?.toString() ?? '',
+      changes: changes,
+      includesProtectedPriceChanges:
+          data['includes_protected_price_changes'] == true,
+      requiredApprovers: actors(data['required_approvers']),
+      approvals: actors(data['approvals']),
+      requestedByName: data['requested_by_name']?.toString() ?? '',
+      requestedByRole: data['requested_by_role']?.toString() ?? '',
+      requestedAt: _date(data['requested_at']),
+      rejectionReason: data['rejection_reason']?.toString() ?? '',
+    );
+  }
+
+  List<PurchaseAmendmentActor> get pendingApprovers => requiredApprovers
+      .where(
+        (required) =>
+            !approvals.any((approved) => approved.uid == required.uid),
+      )
+      .toList(growable: false);
+
+  bool approvedBy(String uid) => approvals.any((actor) => actor.uid == uid);
+}
+
+class PurchaseAmendmentActor {
+  final String uid;
+  final String name;
+  final String role;
+
+  const PurchaseAmendmentActor({
+    required this.uid,
+    required this.name,
+    required this.role,
+  });
+
+  factory PurchaseAmendmentActor.fromMap(Map<String, dynamic> data) =>
+      PurchaseAmendmentActor(
+        uid: data['uid']?.toString() ?? '',
+        name: data['name']?.toString() ?? '',
+        role: data['role']?.toString() ?? '',
+      );
+}
+
+class PurchaseInvoiceAmendmentPrice {
+  final String amendmentId;
+  final String invoiceId;
+  final String currency;
+  final List<PurchaseAmendmentPriceItem> items;
+
+  const PurchaseInvoiceAmendmentPrice({
+    required this.amendmentId,
+    required this.invoiceId,
+    required this.currency,
+    required this.items,
+  });
+
+  factory PurchaseInvoiceAmendmentPrice.fromMap(Map<String, dynamic> data) =>
+      PurchaseInvoiceAmendmentPrice(
+        amendmentId: data['amendment_id']?.toString() ?? '',
+        invoiceId: data['invoice_id']?.toString() ?? '',
+        currency: data['currency']?.toString() ?? '',
+        items: (data['price_items'] as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (entry) => PurchaseAmendmentPriceItem(
+                itemId: entry['item_id']?.toString() ?? '',
+                oldUnitPrice: (entry['old_unit_price'] as num?)?.toDouble(),
+                newUnitPrice: (entry['new_unit_price'] as num?)?.toDouble(),
+              ),
+            )
+            .toList(growable: false),
+      );
+}
+
+class PurchaseAmendmentPriceItem {
+  final String itemId;
+  final double? oldUnitPrice;
+  final double? newUnitPrice;
+
+  const PurchaseAmendmentPriceItem({
+    required this.itemId,
+    this.oldUnitPrice,
+    this.newUnitPrice,
+  });
 }
 
 class ProductReviewTask {

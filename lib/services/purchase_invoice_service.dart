@@ -54,6 +54,33 @@ class PurchaseInvoiceService {
     });
   }
 
+  /// The history page intentionally uses one bounded, live header query. It
+  /// does not fetch items or protected prices until a user opens one invoice.
+  Stream<List<PurchaseInvoiceRead>> watchHistory({
+    required UserRole role,
+    String? branchId,
+  }) {
+    Query<Map<String, dynamic>> query = _invoices;
+    if (role == UserRole.manager) {
+      final branch = branchId?.trim() ?? '';
+      if (branch.isEmpty) return Stream.value(const []);
+      query = query.where('receiving_branch_id', isEqualTo: branch);
+    } else if (role != UserRole.collector &&
+        role != UserRole.accountant &&
+        role != UserRole.admin) {
+      return Stream.value(const []);
+    }
+    return query
+        .orderBy('last_updated', descending: true)
+        .limit(100)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => PurchaseInvoiceRead(id: doc.id, data: doc.data()))
+              .toList(growable: false),
+        );
+  }
+
   Future<PurchaseInvoiceRead> loadInvoiceWithItems(String invoiceId) async {
     final invoiceSnapshot = await _invoices.doc(invoiceId).get();
     final data = invoiceSnapshot.data();
@@ -85,6 +112,36 @@ class PurchaseInvoiceService {
               .map((doc) => {'id': doc.id, ...doc.data()})
               .toList(growable: false),
         );
+  }
+
+  Stream<PurchaseInvoiceAmendment?> watchAmendment(String amendmentId) {
+    if (amendmentId.trim().isEmpty) return Stream.value(null);
+    return _firestore
+        .collection(PurchaseInvoiceCollections.amendments)
+        .doc(amendmentId.trim())
+        .snapshots()
+        .map((snapshot) {
+          final data = snapshot.data();
+          return data == null
+              ? null
+              : PurchaseInvoiceAmendment.fromMap(snapshot.id, data);
+        });
+  }
+
+  Stream<PurchaseInvoiceAmendmentPrice?> watchProtectedAmendmentPrices(
+    String amendmentId,
+  ) {
+    if (amendmentId.trim().isEmpty) return Stream.value(null);
+    return _firestore
+        .collection(PurchaseInvoiceCollections.amendmentPrices)
+        .doc(amendmentId.trim())
+        .snapshots()
+        .map((snapshot) {
+          final data = snapshot.data();
+          return data == null
+              ? null
+              : PurchaseInvoiceAmendmentPrice.fromMap(data);
+        });
   }
 
   Stream<PurchaseInvoicePriceSnapshot?> watchProtectedPrices(String invoiceId) {

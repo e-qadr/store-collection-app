@@ -73,14 +73,17 @@ bool _catalogTokensAppearInOrder(String name, List<String> tokens) {
 }
 
 class ProductCatalogService {
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _providedFirestore;
   final Map<String, Future<List<ProductCatalogModel>>> _activeCatalogCache =
       <String, Future<List<ProductCatalogModel>>>{};
   final Map<String, Future<Map<String, String>>> _activeGroupNamesCache =
       <String, Future<Map<String, String>>>{};
 
   ProductCatalogService({FirebaseFirestore? firestore})
-    : _firestore = firestore ?? FirebaseFirestore.instance;
+    : _providedFirestore = firestore;
+
+  FirebaseFirestore get _firestore =>
+      _providedFirestore ?? FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> get _groups =>
       _firestore.collection(ProductCatalogCollections.groups);
@@ -144,6 +147,15 @@ class ProductCatalogService {
               .map((doc) => ProductCatalogModel.fromMap(doc.id, doc.data()))
               .toList(growable: false),
         );
+  }
+
+  /// Loads one catalog record after a successful managed creation flow. The
+  /// caller still receives the canonical server-validated product identity.
+  Future<ProductCatalogModel?> fetchProduct(String productId) async {
+    final cleanProductId = _required(productId, 'Product ID');
+    final snapshot = await _products.doc(cleanProductId).get();
+    final data = snapshot.data();
+    return data == null ? null : ProductCatalogModel.fromMap(snapshot.id, data);
   }
 
   Future<ProductCatalogPage> fetchActiveProductsPage({
