@@ -95,6 +95,8 @@ class _PurchaseCatalogPickerDialog extends StatefulWidget {
 
 class _PurchaseCatalogPickerDialogState
     extends State<_PurchaseCatalogPickerDialog> {
+  late final ProductCatalogService _service =
+      widget.service ?? ProductCatalogService();
   final _search = TextEditingController();
   Timer? _debounce;
   List<ProductCatalogModel> _products = const [];
@@ -139,14 +141,13 @@ class _PurchaseCatalogPickerDialogState
         });
         return;
       }
-      final service = widget.service ?? ProductCatalogService();
-      final pageFuture = service.fetchActiveProductsPage(
+      final pageFuture = _service.fetchActiveProductsPage(
         brandId: widget.brandId,
         search: _search.text,
         offset: reset ? 0 : _products.length,
         pageSize: 40,
       );
-      final groupNamesFuture = service.fetchActiveGroupNames(
+      final groupNamesFuture = _service.fetchActiveGroupNames(
         brandId: widget.brandId,
       );
       final page = await pageFuture;

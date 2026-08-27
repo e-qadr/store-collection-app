@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -147,6 +148,49 @@ void main() {
               ),
         ),
       );
+    },
+  );
+
+  test(
+    'token acquisition failure is localized and does not send a command',
+    () async {
+      var requests = 0;
+      final service = PurchaseInvoiceApiService(
+        baseUrl: 'https://api.example.test',
+        tokenProvider: () async => throw FirebaseAuthException(
+          code: 'unknown',
+          message: 'connection reset by peer',
+        ),
+        client: MockClient((_) async {
+          requests++;
+          return http.Response('{}', 500);
+        }),
+      );
+
+      await expectLater(
+        service.createInvoice(
+          receivingBranchId: 'branch-r',
+          currency: 'SAR',
+          idempotencyKey: 'purchase-request-token-failure',
+          items: const [
+            PurchaseInvoiceCreateItem.catalog(
+              productId: 'product-1',
+              unitId: 'unit-1',
+              orderedQuantity: 1,
+            ),
+          ],
+        ),
+        throwsA(
+          isA<PurchaseInvoiceApiException>()
+              .having((error) => error.code, 'code', 'session-refresh-failed')
+              .having(
+                (error) => error.message,
+                'localized message',
+                contains('جلسة المستخدم'),
+              ),
+        ),
+      );
+      expect(requests, 0);
     },
   );
 }

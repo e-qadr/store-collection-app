@@ -134,38 +134,54 @@ function optionalDate(value, field) {
   return clean;
 }
 
+// The command endpoint deliberately exposes stable, safe codes rather than
+// field paths.  This gives the client a useful Arabic correction without
+// disclosing request internals or collapsing every malformed purchase line
+// into one generic invoice error.
+function purchaseCreateField(code, validate) {
+  try {
+    return validate();
+  } catch (error) {
+    if (error instanceof PurchaseCommandError && error.code === "invalid-argument") {
+      throw new PurchaseCommandError(code, 400, "The purchase field is invalid.");
+    }
+    throw error;
+  }
+}
+
 function validateCreatePayload(body) {
   const input = object(body);
   onlyKeys(input, new Set([
     "receiving_branch_id", "currency", "supplier_name", "supplier_invoice_number",
     "supplier_invoice_date", "general_manager_notes", "items",
   ]), "body");
-  const items = boundedItems(input.items).map((raw, index) => {
+  const items = purchaseCreateField("purchase-items-invalid", () => boundedItems(input.items)).map((raw, index) => {
     const item = object(raw, `items[${index}]`);
     onlyKeys(item, new Set([
       "source_type", "product_id", "unit_id", "material_name", "group_text",
       "unit_text", "ordered_quantity", "line_notes", "provisional_unit_price",
     ]), `items[${index}]`);
-    const sourceType = requiredString(item.source_type, `items[${index}].source_type`, 16);
+    const sourceType = purchaseCreateField("purchase-item-source-invalid", () =>
+      requiredString(item.source_type, `items[${index}].source_type`, 16));
     if (sourceType !== "catalog" && sourceType !== "unmatched") {
-      throw new PurchaseCommandError("invalid-argument", 400, "source_type is invalid.");
+      throw new PurchaseCommandError("purchase-item-source-invalid", 400, "source_type is invalid.");
     }
     const common = {
       source_type: sourceType,
-      ordered_quantity: number(
+      ordered_quantity: purchaseCreateField("purchase-quantity-invalid", () => number(
           item.ordered_quantity,
           `items[${index}].ordered_quantity`,
           {minimum: Number.MIN_VALUE},
-      ),
+      )),
       line_notes: optionalString(
           item.line_notes,
           `items[${index}].line_notes`,
           MAX_LINE_NOTES_BYTES,
       ),
       provisional_unit_price: item.provisional_unit_price === undefined ? undefined :
-        number(item.provisional_unit_price, `items[${index}].provisional_unit_price`, {
+        purchaseCreateField("purchase-price-invalid", () => number(item.provisional_unit_price, `items[${index}].provisional_unit_price`, {
           maximum: MAX_PRICE,
-        }),
+        })),
     };
     if (sourceType === "catalog") {
       if (item.material_name !== undefined || item.group_text !== undefined ||
@@ -174,8 +190,10 @@ function validateCreatePayload(body) {
       }
       return compact({
         ...common,
-        product_id: documentId(item.product_id, `items[${index}].product_id`),
-        unit_id: documentId(item.unit_id, `items[${index}].unit_id`, MAX_UNIT_ID_BYTES),
+        product_id: purchaseCreateField("purchase-product-invalid", () =>
+          documentId(item.product_id, `items[${index}].product_id`)),
+        unit_id: purchaseCreateField("purchase-unit-invalid", () =>
+          documentId(item.unit_id, `items[${index}].unit_id`, MAX_UNIT_ID_BYTES)),
       });
     }
     if (item.product_id !== undefined || item.unit_id !== undefined) {
@@ -183,18 +201,19 @@ function validateCreatePayload(body) {
     }
     return compact({
       ...common,
-      material_name: requiredString(
+      material_name: purchaseCreateField("purchase-unmatched-material-invalid", () => requiredString(
           item.material_name,
           `items[${index}].material_name`,
           MAX_MATERIAL_BYTES,
-      ),
+      )),
       group_text: optionalString(
           item.group_text,
           `items[${index}].group_text`,
           MAX_GROUP_BYTES,
           {preserveEmpty: true},
       ) ?? "",
-      unit_text: requiredString(item.unit_text, `items[${index}].unit_text`, MAX_UNIT_BYTES),
+      unit_text: purchaseCreateField("purchase-unmatched-unit-invalid", () =>
+        requiredString(item.unit_text, `items[${index}].unit_text`, MAX_UNIT_BYTES)),
     });
   });
   const selections = new Set();
@@ -208,8 +227,9 @@ function validateCreatePayload(body) {
     selections.add(key);
   }
   return compact({
-    receiving_branch_id: documentId(input.receiving_branch_id, "receiving_branch_id"),
-    currency: currency(input.currency),
+    receiving_branch_id: purchaseCreateField("receiving-branch-invalid", () =>
+      documentId(input.receiving_branch_id, "receiving_branch_id")),
+    currency: purchaseCreateField("currency-invalid", () => currency(input.currency)),
     supplier_name: optionalString(input.supplier_name, "supplier_name", MAX_SUPPLIER_BYTES),
     supplier_invoice_number: optionalString(
         input.supplier_invoice_number,

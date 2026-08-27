@@ -89,7 +89,27 @@ test("purchase creation validates closed source-specific schemas and duplicate s
       unit_id: "primary",
       ordered_quantity: 1,
     })),
-  }), (error) => error.code === "invalid-argument");
+  }), (error) => error.code === "purchase-items-invalid");
+});
+
+test("purchase creation returns safe field-specific validation codes", () => {
+  const base = {
+    receiving_branch_id: "branch-r",
+    currency: "SAR",
+    items: [{source_type: "catalog", product_id: "product-1", unit_id: "primary", ordered_quantity: 1}],
+  };
+  assert.throws(() => validateCreatePayload({...base, receiving_branch_id: ""}),
+      (error) => error.code === "receiving-branch-invalid");
+  assert.throws(() => validateCreatePayload({...base, currency: "EUR"}),
+      (error) => error.code === "currency-invalid");
+  assert.throws(() => validateCreatePayload({...base, items: [{...base.items[0], product_id: ""}]}),
+      (error) => error.code === "purchase-product-invalid");
+  assert.throws(() => validateCreatePayload({...base, items: [{...base.items[0], unit_id: ""}]}),
+      (error) => error.code === "purchase-unit-invalid");
+  assert.throws(() => validateCreatePayload({...base, items: [{...base.items[0], ordered_quantity: 0}]}),
+      (error) => error.code === "purchase-quantity-invalid");
+  assert.throws(() => validateCreatePayload({...base, items: [{...base.items[0], provisional_unit_price: -1}]}),
+      (error) => error.code === "purchase-price-invalid");
 });
 
 test("receipt, pricing, posting override, and review payloads are closed", () => {

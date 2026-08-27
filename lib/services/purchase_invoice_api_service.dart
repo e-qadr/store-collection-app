@@ -183,7 +183,10 @@ class PurchaseInvoiceApiService {
              final user = FirebaseAuth.instance.currentUser;
              return user == null
                  ? Future<String?>.value()
-                 : user.getIdToken(true);
+                 // Firebase Auth returns its cached token and refreshes it when
+                 // necessary.  Forcing a refresh for every command made a
+                 // transient Auth transport failure look like an invoice error.
+                 : user.getIdToken();
            });
 
   bool get isConfigured => _baseUrl.isNotEmpty;
@@ -399,7 +402,22 @@ class PurchaseInvoiceApiService {
         !RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(key)) {
       throw ArgumentError('مفتاح منع التكرار غير صالح.');
     }
-    final token = await _tokenProvider();
+    String? token;
+    try {
+      token = await _tokenProvider();
+    } on FirebaseAuthException {
+      throw const PurchaseInvoiceApiException(
+        'session-refresh-failed',
+        'تعذر تحديث جلسة المستخدم. لم تُرسل الفاتورة؛ تحقق من الاتصال ثم حاول مرة واحدة.',
+      );
+    } catch (_) {
+      // Token acquisition happens before any request is sent.  Keep this
+      // distinct from invalid invoice data and do not retry implicitly.
+      throw const PurchaseInvoiceApiException(
+        'session-refresh-failed',
+        'تعذر تحديث جلسة المستخدم. لم تُرسل الفاتورة؛ تحقق من الاتصال ثم حاول مرة واحدة.',
+      );
+    }
     if (token == null || token.isEmpty) {
       throw const PurchaseInvoiceApiException(
         'unauthenticated',
@@ -460,6 +478,8 @@ class PurchaseInvoiceApiService {
   }
 
   static String safeMessageForCode(String code) => switch (code) {
+    'session-refresh-failed' =>
+      'تعذر تحديث جلسة المستخدم. لم تُرسل الفاتورة؛ تحقق من الاتصال ثم حاول مرة واحدة.',
     'stale-revision' =>
       'تم تحديث السجل من مستخدم آخر. أعد فتحه ثم حاول مجددًا.',
     'invalid-state' => 'هذا الإجراء غير متاح في الحالة الحالية.',
@@ -472,6 +492,18 @@ class PurchaseInvoiceApiService {
     'unauthenticated' => 'انتهت جلسة الدخول. سجل الدخول مجددًا.',
     'invalid-argument' =>
       'بيانات فاتورة المشتريات غير صالحة. راجع الفرع والمادة والوحدة والسعر.',
+    'receiving-branch-invalid' =>
+      'الفرع المستلم غير صالح. اختر فرعاً صالحاً ثم حاول.',
+    'currency-invalid' => 'عملة الفاتورة غير صالحة.',
+    'purchase-items-invalid' => 'أضف مادة واحدة صالحة على الأقل إلى الفاتورة.',
+    'purchase-item-source-invalid' => 'نوع مادة الفاتورة غير صالح.',
+    'purchase-product-invalid' => 'المادة المختارة غير صالحة. أعد اختيارها.',
+    'purchase-unit-invalid' => 'وحدة المادة غير صالحة. أعد اختيار الوحدة.',
+    'purchase-quantity-invalid' => 'كمية المادة غير صالحة.',
+    'purchase-price-invalid' => 'سعر المادة غير صالح.',
+    'purchase-unmatched-material-invalid' =>
+      'اسم المادة غير المطابقة غير صالح.',
+    'purchase-unmatched-unit-invalid' => 'وحدة المادة غير المطابقة غير صالحة.',
     'duplicate-item' => 'لا يمكن تكرار المادة والوحدة نفسها في الفاتورة.',
     'branch-not-found' => 'الفرع المستلم غير متاح.',
     'branch-brand-missing' ||

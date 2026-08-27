@@ -27,6 +27,11 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
   final _api = PurchaseInvoiceApiService();
   final _catalog = ProductCatalogService();
   final _prices = ProductPriceService();
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _branchesStream =
+      FirebaseFirestore.instance
+          .collection('branches')
+          .orderBy('name')
+          .snapshots();
   final List<_PurchaseDraftItem> _items = [];
   String? _branchId;
   String _brandId = '';
@@ -407,10 +412,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
 
   Widget _branchSelector() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('branches')
-          .orderBy('name')
-          .snapshots(),
+      stream: _branchesStream,
       builder: (context, snapshot) {
         final branches = (snapshot.data?.docs ?? const [])
             .where((doc) {
@@ -718,6 +720,11 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       if (!mounted) return;
       Navigator.pop(context, result.invoiceId);
     } catch (error) {
+      if (error is PurchaseInvoiceApiException &&
+          (error.code == 'catalog-snapshot-invalid' ||
+              error.code == 'product-brand-mismatch')) {
+        _catalog.invalidateActiveCatalog(brandId: _brandId);
+      }
       if (mounted) _message(error.toString());
     } finally {
       if (mounted) setState(() => _submitting = false);

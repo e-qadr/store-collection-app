@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/utils/catalog_normalization.dart';
 
@@ -74,16 +75,58 @@ bool _catalogTokensAppearInOrder(String name, List<String> tokens) {
 
 class ProductCatalogService {
   final FirebaseFirestore? _providedFirestore;
-  final Map<String, Future<List<ProductCatalogModel>>> _activeCatalogCache =
-      <String, Future<List<ProductCatalogModel>>>{};
-  final Map<String, Future<Map<String, String>>> _activeGroupNamesCache =
+  // Catalog selection is public to the same signed-in session.  The default
+  // Firestore client is shared by all screens, so share its per-brand cache as
+  // well: reopening Purchase, Consumption, or Transfer does not re-download
+  // the same active catalog. Injected clients deliberately keep isolated
+  // caches for tests and previews.
+  static final Map<String, Future<List<ProductCatalogModel>>>
+  _sharedActiveCatalogCache = <String, Future<List<ProductCatalogModel>>>{};
+  static final Map<String, Future<Map<String, String>>>
+  _sharedActiveGroupNamesCache = <String, Future<Map<String, String>>>{};
+  final Map<String, Future<List<ProductCatalogModel>>>
+  _localActiveCatalogCache = <String, Future<List<ProductCatalogModel>>>{};
+  final Map<String, Future<Map<String, String>>> _localActiveGroupNamesCache =
       <String, Future<Map<String, String>>>{};
+  final Map<String, Stream<List<ProductGroupModel>>> _groupStreams =
+      <String, Stream<List<ProductGroupModel>>>{};
+  final Map<String, Stream<List<ProductCatalogModel>>> _productStreams =
+      <String, Stream<List<ProductCatalogModel>>>{};
 
   ProductCatalogService({FirebaseFirestore? firestore})
     : _providedFirestore = firestore;
 
   FirebaseFirestore get _firestore =>
       _providedFirestore ?? FirebaseFirestore.instance;
+
+  Map<String, Future<List<ProductCatalogModel>>> get _activeCatalogCache =>
+      _providedFirestore == null
+      ? _sharedActiveCatalogCache
+      : _localActiveCatalogCache;
+
+  Map<String, Future<Map<String, String>>> get _activeGroupNamesCache =>
+      _providedFirestore == null
+      ? _sharedActiveGroupNamesCache
+      : _localActiveGroupNamesCache;
+
+  void _invalidateBrandCache(String brandId) {
+    final cacheKey = _cacheKey(brandId);
+    _activeCatalogCache.remove(cacheKey);
+    _activeGroupNamesCache.remove(cacheKey);
+  }
+
+  /// Clears the active, local-search candidate cache after the backend tells a
+  /// caller that a selected product/unit snapshot is no longer authoritative.
+  void invalidateActiveCatalog({required String brandId}) {
+    _invalidateBrandCache(_required(brandId, 'Brand ID'));
+  }
+
+  String _cacheKey(String brandId) {
+    // Keep cached catalog identities scoped to the signed-in Firebase user;
+    // a sign-out or account switch must never inherit another session cache.
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+    return '$uid\u001f$brandId';
+  }
 
   CollectionReference<Map<String, dynamic>> get _groups =>
       _firestore.collection(ProductCatalogCollections.groups);
@@ -109,14 +152,18 @@ class ProductCatalogService {
     if (activeOnly) {
       query = query.where(ProductCatalogFields.active, isEqualTo: true);
     }
-    return query
-        .orderBy(ProductCatalogFields.normalizedName)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => ProductGroupModel.fromMap(doc.id, doc.data()))
-              .toList(growable: false),
-        );
+    final cacheKey = '${_cacheKey(brandId.trim())}|$activeOnly';
+    return _groupStreams.putIfAbsent(
+      cacheKey,
+      () => query
+          .orderBy(ProductCatalogFields.normalizedName)
+          .snapshots()
+          .map(
+            (snapshot) => snapshot.docs
+                .map((doc) => ProductGroupModel.fromMap(doc.id, doc.data()))
+                .toList(growable: false),
+          ),
+    );
   }
 
   Stream<List<ProductCatalogModel>> watchProducts({
@@ -139,14 +186,18 @@ class ProductCatalogService {
     if (activeOnly) {
       query = query.where(ProductCatalogFields.active, isEqualTo: true);
     }
-    return query
-        .orderBy(ProductCatalogFields.normalizedName)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => ProductCatalogModel.fromMap(doc.id, doc.data()))
-              .toList(growable: false),
-        );
+    final cacheKey = '${_cacheKey(brandId.trim())}|$selectedGroup|$activeOnly';
+    return _productStreams.putIfAbsent(
+      cacheKey,
+      () => query
+          .orderBy(ProductCatalogFields.normalizedName)
+          .snapshots()
+          .map(
+            (snapshot) => snapshot.docs
+                .map((doc) => ProductCatalogModel.fromMap(doc.id, doc.data()))
+                .toList(growable: false),
+          ),
+    );
   }
 
   /// Loads one catalog record after a successful managed creation flow. The
@@ -193,25 +244,28 @@ class ProductCatalogService {
   /// falling back to the opaque document ID.
   Future<Map<String, String>> fetchActiveGroupNames({required String brandId}) {
     final cleanBrandId = _required(brandId, 'Brand ID');
-    return _activeGroupNamesCache.putIfAbsent(cleanBrandId, () async {
-      final snapshot = await _groups
-          .where(ProductCatalogFields.brandId, isEqualTo: cleanBrandId)
-          .where(ProductCatalogFields.active, isEqualTo: true)
-          .get();
-      final names = <String, String>{};
-      for (final doc in snapshot.docs) {
-        final group = ProductGroupModel.fromMap(doc.id, doc.data());
-        final name = group.name.trim();
-        if (name.isEmpty) continue;
-        names[doc.id] = name;
-        if (group.id.isNotEmpty) names[group.id] = name;
-      }
-      return Map.unmodifiable(names);
-    });
+    return _activeGroupNamesCache.putIfAbsent(
+      _cacheKey(cleanBrandId),
+      () async {
+        final snapshot = await _groups
+            .where(ProductCatalogFields.brandId, isEqualTo: cleanBrandId)
+            .where(ProductCatalogFields.active, isEqualTo: true)
+            .get();
+        final names = <String, String>{};
+        for (final doc in snapshot.docs) {
+          final group = ProductGroupModel.fromMap(doc.id, doc.data());
+          final name = group.name.trim();
+          if (name.isEmpty) continue;
+          names[doc.id] = name;
+          if (group.id.isNotEmpty) names[group.id] = name;
+        }
+        return Map.unmodifiable(names);
+      },
+    );
   }
 
   Future<List<ProductCatalogModel>> _activeProductsForBrand(String brandId) {
-    return _activeCatalogCache.putIfAbsent(brandId, () async {
+    return _activeCatalogCache.putIfAbsent(_cacheKey(brandId), () async {
       final snapshot = await _products
           .where(ProductCatalogFields.brandId, isEqualTo: brandId)
           .where(ProductCatalogFields.active, isEqualTo: true)
@@ -522,6 +576,7 @@ class ProductCatalogService {
         ),
       );
     });
+    _invalidateBrandCache(cleanBrandId);
     return productRef.id;
   }
 
@@ -547,6 +602,7 @@ class ProductCatalogService {
     final productRef = _products.doc(cleanProductId);
     final auditRef = _auditEvents.doc();
 
+    String? affectedBrandId;
     await _firestore.runTransaction((transaction) async {
       final product = await transaction.get(productRef);
       final current = product.data();
@@ -560,6 +616,7 @@ class ProductCatalogService {
         current[ProductCatalogFields.brandId]?.toString() ?? '',
         'Product brand ID',
       );
+      affectedBrandId = brandId;
       final currentSourceMetadata = Map<String, dynamic>.from(
         current[ProductCatalogFields.sourceMetadata] as Map? ?? const {},
       );
@@ -664,6 +721,7 @@ class ProductCatalogService {
         ),
       );
     });
+    if (affectedBrandId != null) _invalidateBrandCache(affectedBrandId!);
   }
 
   Future<void> archiveProduct({
@@ -675,10 +733,12 @@ class ProductCatalogService {
     final cleanReason = _required(reason, 'Archive reason');
     final productRef = _products.doc(_required(productId, 'Product ID'));
     final auditRef = _auditEvents.doc();
+    String? affectedBrandId;
     await _firestore.runTransaction((transaction) async {
       final product = await transaction.get(productRef);
       final current = product.data();
       if (current == null) throw StateError('Product was not found.');
+      affectedBrandId = current[ProductCatalogFields.brandId]?.toString();
       if (current[ProductCatalogFields.active] == false) {
         throw StateError('Product is already archived.');
       }
@@ -716,6 +776,7 @@ class ProductCatalogService {
         ),
       );
     });
+    if (affectedBrandId != null) _invalidateBrandCache(affectedBrandId!);
   }
 
   Future<void> reactivateProduct({
@@ -727,10 +788,12 @@ class ProductCatalogService {
     final cleanReason = _required(reason, 'Reactivation reason');
     final productRef = _products.doc(_required(productId, 'Product ID'));
     final auditRef = _auditEvents.doc();
+    String? affectedBrandId;
     await _firestore.runTransaction((transaction) async {
       final product = await transaction.get(productRef);
       final current = product.data();
       if (current == null) throw StateError('Product was not found.');
+      affectedBrandId = current[ProductCatalogFields.brandId]?.toString();
       if (current[ProductCatalogFields.active] != false) {
         throw StateError('Product is already active.');
       }
@@ -785,6 +848,7 @@ class ProductCatalogService {
         ),
       );
     });
+    if (affectedBrandId != null) _invalidateBrandCache(affectedBrandId!);
   }
 
   Future<void> upsertAccountingProfile({

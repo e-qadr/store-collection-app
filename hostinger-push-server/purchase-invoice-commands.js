@@ -2403,7 +2403,7 @@ async function postToAccounting({firestore, actorUid, invoiceId, payload, idempo
   });
 }
 
-function createAuthentication({admin, firestore}) {
+function createAuthentication({admin}) {
   const auth = admin.auth();
   return async (request, response, next) => {
     try {
@@ -2417,10 +2417,9 @@ function createAuthentication({admin, firestore}) {
       } catch (_) {
         throw new PurchaseCommandError("unauthenticated", 401, "Authentication is required.");
       }
-      const snapshot = await firestore.collection(COLLECTIONS.users).doc(decoded.uid).get();
-      if (!snapshot.exists || !isOperationalProfile(snapshot.data())) {
-        throw new PurchaseCommandError("forbidden", 403, "The account cannot perform this operation.");
-      }
+      // Every command performs the authoritative operational-profile check in
+      // its Firestore transaction.  Avoid a duplicate profile document read
+      // here while retaining the token verification boundary.
       request.purchaseAuth = {uid: decoded.uid};
       next();
     } catch (error) {
@@ -2470,7 +2469,7 @@ function createPurchaseInvoiceCommandRouter({
 }) {
   if (!admin || !firestore) throw new Error("Firebase Admin and Firestore are required.");
   const router = express.Router();
-  router.use(createAuthentication({admin, firestore}));
+  router.use(createAuthentication({admin}));
   router.post("/purchase-invoices", commandRoute({
     firestore, admin, now, randomUUID, validator: validateCreatePayload,
     execute: createPurchaseInvoice,

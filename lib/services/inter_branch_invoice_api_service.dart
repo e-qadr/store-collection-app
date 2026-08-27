@@ -78,9 +78,7 @@ class InterBranchInvoiceApiService {
            tokenProvider ??
            (() {
              final user = FirebaseAuth.instance.currentUser;
-             return user == null
-                 ? Future<String?>.value()
-                 : user.getIdToken(true);
+             return user == null ? Future<String?>.value() : user.getIdToken();
            });
 
   bool get isConfigured => _baseUrl.isNotEmpty;
