@@ -36,6 +36,9 @@ class _PurchaseInvoiceHistoryScreenState
     extends State<PurchaseInvoiceHistoryScreen> {
   final _search = TextEditingController();
   late final PurchaseInvoiceService _service = PurchaseInvoiceService();
+  late final Stream<List<PurchaseInvoiceRead>> _invoiceStream =
+      widget.invoiceStream ??
+      _service.watchHistory(role: widget.role, branchId: widget.branchId);
   PurchaseInvoiceStatus? _status;
   bool _amendmentsOnly = false;
   _HistorySort _sort = _HistorySort.latestUpdated;
@@ -63,9 +66,7 @@ class _PurchaseInvoiceHistoryScreenState
       backgroundColor: AppTheme.surfaceColor,
       appBar: AppBar(title: const Text('سجل فواتير المشتريات')),
       body: StreamBuilder<List<PurchaseInvoiceRead>>(
-        stream:
-            widget.invoiceStream ??
-            _service.watchHistory(role: widget.role, branchId: widget.branchId),
+        stream: _invoiceStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());

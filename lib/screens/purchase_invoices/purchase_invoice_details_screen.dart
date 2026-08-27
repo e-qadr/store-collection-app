@@ -37,7 +37,23 @@ class _PurchaseInvoiceDetailsScreenState
     extends State<PurchaseInvoiceDetailsScreen> {
   late final PurchaseInvoiceService _service = PurchaseInvoiceService();
   late final PurchaseInvoiceApiService _api = PurchaseInvoiceApiService();
+  late final Stream<PurchaseInvoiceRead?> _headerStream = _service.watchInvoice(
+    widget.invoiceId,
+  );
+  late final Stream<PurchaseInvoicePriceSnapshot?> _priceStream = _service
+      .watchProtectedPrices(widget.invoiceId);
+  String? _loadedInvoiceKey;
+  Future<PurchaseInvoiceRead>? _invoiceFuture;
   bool _submitting = false;
+
+  Future<PurchaseInvoiceRead> _itemsFor(PurchaseInvoiceRead header) {
+    final key = '${header.id}-${header.revision}-${header.itemDigest}';
+    if (_loadedInvoiceKey != key || _invoiceFuture == null) {
+      _loadedInvoiceKey = key;
+      _invoiceFuture = _service.loadInvoiceWithItems(widget.invoiceId);
+    }
+    return _invoiceFuture!;
+  }
 
   bool get _mayReadPrices => const {
     UserRole.collector,
@@ -51,7 +67,7 @@ class _PurchaseInvoiceDetailsScreenState
       return _page(widget.fixtureInvoice!, widget.fixturePrices);
     }
     return StreamBuilder<PurchaseInvoiceRead?>(
-      stream: _service.watchInvoice(widget.invoiceId),
+      stream: _headerStream,
       builder: (context, headerSnapshot) {
         final header = headerSnapshot.data;
         if (headerSnapshot.connectionState == ConnectionState.waiting) {
@@ -66,7 +82,7 @@ class _PurchaseInvoiceDetailsScreenState
         }
         return FutureBuilder<PurchaseInvoiceRead>(
           key: ValueKey('${header.id}-${header.revision}-${header.itemDigest}'),
-          future: _service.loadInvoiceWithItems(widget.invoiceId),
+          future: _itemsFor(header),
           builder: (context, invoiceSnapshot) {
             final invoice = invoiceSnapshot.data;
             if (invoice == null) {
@@ -76,7 +92,7 @@ class _PurchaseInvoiceDetailsScreenState
             }
             if (!_mayReadPrices) return _page(invoice, null);
             return StreamBuilder<PurchaseInvoicePriceSnapshot?>(
-              stream: _service.watchProtectedPrices(widget.invoiceId),
+              stream: _priceStream,
               builder: (context, priceSnapshot) =>
                   _page(invoice, priceSnapshot.data),
             );
