@@ -67,6 +67,7 @@ const PUBLIC_INVOICE_KEYS = new Set([
   "sending_brand_id",
   "receiving_branch_id",
   "receiving_branch_name",
+  "receiving_branch_type",
   "receiving_brand_id",
   "branch_ids",
   "item_count",
@@ -483,6 +484,22 @@ function cleanBranch(snapshot, branchId) {
   };
 }
 
+function isMainBranch(branchData) {
+  return String(branchData?.branch_type || "").trim() === "main";
+}
+
+function assertCanonicalMainBranch(branch, brand) {
+  if (!isMainBranch(branch.data)) return;
+  const configuredId = String(brand?.main_branch_id || "").trim();
+  if (configuredId !== branch.id) {
+    throw new CommandError(
+        "main-branch-invalid",
+        409,
+        "The main branch is not the canonical branch for its brand.",
+    );
+  }
+}
+
 function requireBrand(snapshot, brandId) {
   if (!snapshot.exists || !activeDocument(snapshot.data())) {
     throw new CommandError("branch-brand-invalid", 409, "A branch brand is unavailable.");
@@ -500,7 +517,8 @@ async function readActor(transaction, firestore, uid, expectedRole) {
     throw new CommandError("forbidden", 403, "The account cannot perform this operation.");
   }
   const actor = actorFromProfile(uid, profile);
-  if (actor.role !== expectedRole) {
+  const expectedRoles = Array.isArray(expectedRole) ? expectedRole : [expectedRole];
+  if (!expectedRoles.includes(actor.role)) {
     throw new CommandError("forbidden", 403, "The role cannot perform this operation.");
   }
   return actor;
@@ -598,6 +616,12 @@ async function activeBranchManagers(transaction, firestore, branchId, branchData
     }
   }
   return [...recipients.values()];
+}
+
+async function activeReceivingRecipients(transaction, firestore, branch) {
+  return isMainBranch(branch.data) ?
+    activeUsersByRole(transaction, firestore, "collector") :
+    activeBranchManagers(transaction, firestore, branch.id, branch.data);
 }
 
 function notificationReference(firestore, invoiceId, type, revision, recipientId) {
@@ -822,6 +846,20 @@ async function createDirectInvoice({
       const supplying = cleanBranch(supplyingSnapshot, actor.branchId);
       const receiving = cleanBranch(receivingSnapshot, payload.receiving_branch_id);
       assertActorManagesBranch(actor, supplying.id, supplying.data);
+      if (isMainBranch(supplying.data)) {
+        throw new CommandError(
+            "main-branch-source-not-supported",
+            403,
+            "A main branch cannot be used as a transfer source.",
+        );
+      }
+      if (supplying.brandId !== receiving.brandId) {
+        throw new CommandError(
+            "cross-brand-transfer",
+            403,
+            "Transfers must stay within one brand.",
+        );
+      }
       const nextNumber = validateCounter(counterSnapshot, supplying);
       const invoiceNumber = invoiceNumberFor(supplying.code, nextNumber);
 
@@ -831,6 +869,7 @@ async function createDirectInvoice({
       ]);
       requireBrand(supplyingBrandSnapshot, supplying.brandId);
       requireBrand(receivingBrandSnapshot, receiving.brandId);
+      assertCanonicalMainBranch(receiving, receivingBrandSnapshot.data());
 
       const productRefs = payload.items.map((item) =>
         firestore.collection(COLLECTIONS.products).doc(item.product_id));
@@ -875,17 +914,13 @@ async function createDirectInvoice({
         }
         groups.set(groupId, group);
       });
-      const recipients = await activeBranchManagers(
-          transaction,
-          firestore,
-          receiving.id,
-          receiving.data,
-      );
+      const recipients = await activeReceivingRecipients(transaction, firestore, receiving);
       if (recipients.length === 0) {
         throw new CommandError(
-            "receiving-manager-not-configured",
+            isMainBranch(receiving.data) ?
+              "general-manager-not-configured" : "receiving-manager-not-configured",
             409,
-            "The receiving branch has no active manager.",
+            "The receiving branch has no active responsible user.",
         );
       }
 
@@ -921,6 +956,7 @@ async function createDirectInvoice({
         sending_brand_id: supplying.brandId,
         receiving_branch_id: receiving.id,
         receiving_branch_name: receiving.name,
+        receiving_branch_type: isMainBranch(receiving.data) ? "main" : "branch",
         receiving_brand_id: receiving.brandId,
         branch_ids: [supplying.id, receiving.id],
         item_count: items.length,
@@ -957,8 +993,12 @@ async function createDirectInvoice({
         recipients,
         invoice: publicInvoice,
         type: "inter_branch_v2_direct_created",
-        title: "فاتورة تحويل بين الفروع بانتظار الاستلام",
-        message: `الفاتورة رقم ${invoiceNumber} بانتظار مراجعة الفرع المستلم.`,
+        title: isMainBranch(receiving.data) ?
+          "فاتورة تحويل بانتظار استلام الإدارة الرئيسية" :
+          "فاتورة تحويل بين الفروع بانتظار الاستلام",
+        message: isMainBranch(receiving.data) ?
+          `الفاتورة رقم ${invoiceNumber} بانتظار تأكيد المدير العام للاستلام.` :
+          `الفاتورة رقم ${invoiceNumber} بانتظار مراجعة الفرع المستلم.`,
         revision: 1,
         timestamp,
         excludeUid: actor.uid,
@@ -1027,7 +1067,7 @@ async function confirmReceipt({
     firestore,
     command: "confirm_receipt",
     actorUid,
-    expectedRole: "manager",
+    expectedRole: ["manager", "collector"],
     idempotencyKey,
     requestHash,
     timestamp,
@@ -1035,14 +1075,28 @@ async function confirmReceipt({
       const invoiceSnapshot = await transaction.get(invoiceRef);
       const rawInvoice = invoiceSnapshot.exists ? invoiceSnapshot.data() : null;
       const branchId = String(rawInvoice?.receiving_branch_id || "");
-      if (!invoiceSnapshot.exists || !branchId || actor.branchId !== branchId) {
+      if (!invoiceSnapshot.exists || !branchId) {
         throw new CommandError("forbidden", 403, "You cannot act for this branch.");
       }
       const branchSnapshot = await transaction.get(
           firestore.collection(COLLECTIONS.branches).doc(branchId),
       );
       const branch = cleanBranch(branchSnapshot, branchId);
-      assertActorManagesBranch(actor, branch.id, branch.data);
+      if (isMainBranch(branch.data)) {
+        if (actor.role !== "collector") {
+          throw new CommandError("forbidden", 403, "Only the general manager may receive for the main branch.");
+        }
+        const brandSnapshot = await transaction.get(
+            firestore.collection(COLLECTIONS.brands).doc(branch.brandId),
+        );
+        requireBrand(brandSnapshot, branch.brandId);
+        assertCanonicalMainBranch(branch, brandSnapshot.data());
+      } else {
+        if (actor.branchId !== branchId) {
+          throw new CommandError("forbidden", 403, "You cannot act for this branch.");
+        }
+        assertActorManagesBranch(actor, branch.id, branch.data);
+      }
       const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
       requireStatusAndRevision(invoice, STATUS.pendingReceiverReview, payload.expected_revision);
       const storedItems = await readV2PublicItems(transaction, invoiceRef, invoice);
@@ -1062,7 +1116,9 @@ async function confirmReceipt({
       }
       const event = eventData(
           "receipt_confirmed",
-          "أكد مدير الفرع المستلم الكميات المستلمة.",
+          isMainBranch(branch.data) ?
+            "أكد المدير العام استلام الإدارة الرئيسية للكميات." :
+            "أكد مدير الفرع المستلم الكميات المستلمة.",
           actor,
           timestamp,
       );
@@ -1437,12 +1493,12 @@ async function postToAccounting({
           invoice.sending_branch_id,
           supplyingBranchSnapshot.data(),
       );
-      const receiverManagers = await activeBranchManagers(
-          transaction,
-          firestore,
-          invoice.receiving_branch_id,
-          receivingBranchSnapshot.data(),
-      );
+      const receivingBranch = {
+        id: invoice.receiving_branch_id,
+        data: receivingBranchSnapshot.data(),
+      };
+      const receiverManagers = await activeReceivingRecipients(
+          transaction, firestore, receivingBranch);
       const collectors = await activeUsersByRole(transaction, firestore, "collector");
       const revision = invoice.revision + 1;
       transaction.update(snapshotRef, {
@@ -1488,7 +1544,7 @@ async function postToAccounting({
   });
 }
 
-function createOperationalAuthentication({admin, firestore}) {
+function createOperationalAuthentication({admin}) {
   const auth = admin.auth();
   return async (request, response, next) => {
     try {
@@ -1499,10 +1555,6 @@ function createOperationalAuthentication({admin, firestore}) {
         decoded = await auth.verifyIdToken(token, true);
       } catch (_) {
         throw new CommandError("unauthenticated", 401, "Authentication is required.");
-      }
-      const snapshot = await firestore.collection(COLLECTIONS.users).doc(decoded.uid).get();
-      if (!snapshot.exists || !isOperationalProfile(snapshot.data())) {
-        throw new CommandError("forbidden", 403, "The account cannot perform this operation.");
       }
       request.phase2Auth = {uid: decoded.uid};
       next();
@@ -1549,7 +1601,7 @@ function createInterBranchInvoiceCommandRouter({
 }) {
   if (!admin || !firestore) throw new Error("Firebase Admin and Firestore are required.");
   const router = express.Router();
-  router.use(createOperationalAuthentication({admin, firestore}));
+  router.use(createOperationalAuthentication({admin}));
   router.post("/inter-branch-invoices", commandRoute({
     admin,
     firestore,

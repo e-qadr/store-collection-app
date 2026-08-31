@@ -175,6 +175,7 @@ class InterBranchInvoiceFields {
   static const unit = 'unit';
   static const receivingBranchId = 'receiving_branch_id';
   static const receivingBranchName = 'receiving_branch_name';
+  static const receivingBranchType = 'receiving_branch_type';
   static const receivingBrandId = 'receiving_brand_id';
   static const sendingBranchId = 'sending_branch_id';
   static const sendingBranchName = 'sending_branch_name';
@@ -238,11 +239,7 @@ class InterBranchInvoiceRead {
 
   InterBranchInvoiceRead withItemDocuments(
     List<Map<String, dynamic>> documents,
-  ) => InterBranchInvoiceRead(
-    id: id,
-    data: data,
-    itemDocuments: documents,
-  );
+  ) => InterBranchInvoiceRead(id: id, data: data, itemDocuments: documents);
 
   String get rawStatus =>
       data[InterBranchInvoiceFields.status]?.toString().trim() ?? '';
@@ -260,6 +257,8 @@ class InterBranchInvoiceRead {
       : data[InterBranchInvoiceFields.unit]?.toString() ?? '';
   String get receivingBranchName =>
       data[InterBranchInvoiceFields.receivingBranchName]?.toString() ?? '';
+  bool get isReceivingMainBranch =>
+      data[InterBranchInvoiceFields.receivingBranchType]?.toString() == 'main';
   String get sendingBranchName =>
       data[InterBranchInvoiceFields.sendingBranchName]?.toString() ?? '';
   String get receivingBranchId =>
@@ -344,17 +343,16 @@ class InterBranchInvoiceRead {
     if (isVersion2) {
       final documents = itemDocuments;
       if (documents == null) return const [];
-      final ordered = [...documents]..sort((left, right) {
-        final leftLine = (left['line_number'] as num?)?.toInt() ?? 0;
-        final rightLine = (right['line_number'] as num?)?.toInt() ?? 0;
-        return leftLine.compareTo(rightLine);
-      });
+      final ordered = [...documents]
+        ..sort((left, right) {
+          final leftLine = (left['line_number'] as num?)?.toInt() ?? 0;
+          final rightLine = (right['line_number'] as num?)?.toInt() ?? 0;
+          return leftLine.compareTo(rightLine);
+        });
       return ordered
           .map(
-            (item) => InterBranchInvoiceItem.fromMap(
-              item,
-              allowLegacyPrices: false,
-            ),
+            (item) =>
+                InterBranchInvoiceItem.fromMap(item, allowLegacyPrices: false),
           )
           .toList(growable: false);
     }

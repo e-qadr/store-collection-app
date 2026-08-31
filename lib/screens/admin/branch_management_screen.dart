@@ -18,6 +18,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
   final AuthApiService _authApiService = AuthApiService();
   String? _selectedBrandId;
   String? _selectedBrandName;
+  bool _isMainBranch = false;
 
   Future<void> _saveBranch({
     String? branchId,
@@ -51,6 +52,9 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
         ? firestore.collection('branches').doc()
         : firestore.collection('branches').doc(branchId);
     final newCodeRef = firestore.collection('branch_codes').doc(branchCode);
+    final targetBrandRef = firestore
+        .collection('brands')
+        .doc(_selectedBrandId!);
 
     try {
       final duplicateBranches = await firestore
@@ -62,10 +66,37 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
       }
 
       await firestore.runTransaction((transaction) async {
-        final newCodeDoc = await transaction.get(newCodeRef);
+        final reads = await Future.wait([
+          transaction.get(newCodeRef),
+          transaction.get(branchRef),
+          transaction.get(targetBrandRef),
+        ]);
+        final newCodeDoc = reads[0];
+        final currentBranch = reads[1];
+        final targetBrand = reads[2];
         if (newCodeDoc.exists &&
             newCodeDoc.data()?['branch_id'] != branchRef.id) {
           throw Exception('رمز الفرع مستخدم لفرع آخر');
+        }
+
+        if (!targetBrand.exists) {
+          throw StateError('The selected brand does not exist.');
+        }
+        final current = currentBranch.data();
+        final wasMain = current?['branch_type'] == 'main';
+        final currentBrandId = current?['brand_id']?.toString() ?? '';
+        if (wasMain && (!_isMainBranch || currentBrandId != _selectedBrandId)) {
+          throw StateError('A main branch cannot be removed or moved here.');
+        }
+        if (_isMainBranch) {
+          final existingMainId =
+              targetBrand.data()?['main_branch_id']?.toString().trim() ?? '';
+          if (existingMainId.isNotEmpty && existingMainId != branchRef.id) {
+            throw StateError('This brand already has a main branch.');
+          }
+          transaction.set(targetBrandRef, {
+            'main_branch_id': branchRef.id,
+          }, SetOptions(merge: true));
         }
 
         transaction.set(branchRef, {
@@ -74,7 +105,9 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           'brand_id': _selectedBrandId,
           'company_name': _selectedBrandName,
           'branch_code': branchCode,
-          if (branchId == null) 'branch_manager_id': null,
+          'branch_type': _isMainBranch ? 'main' : 'branch',
+          if (_isMainBranch) 'branch_manager_id': FieldValue.delete(),
+          if (branchId == null && !_isMainBranch) 'branch_manager_id': null,
         }, SetOptions(merge: true));
         transaction.set(newCodeRef, {
           'branch_id': branchRef.id,
@@ -91,6 +124,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
       _branchCodeController.clear();
       _selectedBrandId = null;
       _selectedBrandName = null;
+      _isMainBranch = false;
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -337,6 +371,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
     _branchCodeController.clear();
     _selectedBrandId = null;
     _selectedBrandName = null;
+    _isMainBranch = false;
     _showBranchDialog();
   }
 
@@ -345,6 +380,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
     _branchCodeController.text = data['branch_code'] ?? '';
     _selectedBrandId = data['brand_id'];
     _selectedBrandName = data['company_name'];
+    _isMainBranch = data['branch_type'] == 'main';
     _showBranchDialog(
       branchId: branchId,
       oldBranchCode: data['branch_code'] ?? '',
@@ -432,6 +468,16 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                     helperText: 'سيُستخدم في أرقام السندات مثل AM005',
                     prefixIcon: Icon(Icons.tag_rounded),
                   ),
+                ),
+                CheckboxListTile(
+                  value: _isMainBranch,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('الفرع الرئيسي للعلامة'),
+                  subtitle: const Text(
+                    'تصل إليه المناقلات ويؤكد المدير العام استلامه.',
+                  ),
+                  onChanged: (value) =>
+                      setDialogState(() => _isMainBranch = value ?? false),
                 ),
               ],
             ),
@@ -546,6 +592,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                       itemBuilder: (context, index) {
                         final doc = branches[index];
                         final data = doc.data() as Map<String, dynamic>;
+                        final isMainBranch = data['branch_type'] == 'main';
                         final managerId = (data['branch_manager_id'] as String?)
                             ?.trim();
                         final hasManager = managerId?.isNotEmpty == true;
@@ -558,10 +605,12 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                             borderRadius: BorderRadius.circular(16),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
-                              onTap: () => _showAssignManagerDialog(
-                                doc.id,
-                                managerId ?? '',
-                              ),
+                              onTap: isMainBranch
+                                  ? null
+                                  : () => _showAssignManagerDialog(
+                                      doc.id,
+                                      managerId ?? '',
+                                    ),
                               child: Padding(
                                 padding: const EdgeInsets.all(16),
                                 child: Row(
@@ -595,6 +644,17 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                               color: AppTheme.textPrimary,
                                             ),
                                           ),
+                                          if (isMainBranch) ...[
+                                            const SizedBox(height: 4),
+                                            const Text(
+                                              'الفرع الرئيسي — مسؤولية المدير العام',
+                                              style: TextStyle(
+                                                color: AppTheme.collectorColor,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
                                           const SizedBox(height: 4),
                                           Text(
                                             '${data['company_name'] ?? 'بدون شركة'} • الرمز: ${data['branch_code'] ?? 'غير محدد'}',
@@ -604,7 +664,9 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                             ),
                                           ),
                                           const SizedBox(height: 6),
-                                          !hasManager
+                                          isMainBranch
+                                              ? const SizedBox.shrink()
+                                              : !hasManager
                                               ? const Text(
                                                   'لا يوجد مدير معيّن',
                                                   style: TextStyle(
@@ -678,28 +740,30 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                                 data,
                                               ),
                                         ),
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.manage_accounts_rounded,
-                                            color: AppTheme.adminColor,
+                                        if (!isMainBranch)
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.manage_accounts_rounded,
+                                              color: AppTheme.adminColor,
+                                            ),
+                                            tooltip: 'تعيين مدير',
+                                            onPressed: () =>
+                                                _showAssignManagerDialog(
+                                                  doc.id,
+                                                  managerId ?? '',
+                                                ),
                                           ),
-                                          tooltip: 'تعيين مدير',
-                                          onPressed: () =>
-                                              _showAssignManagerDialog(
-                                                doc.id,
-                                                managerId ?? '',
-                                              ),
-                                        ),
-                                        IconButton(
-                                          icon: Icon(
-                                            Icons.delete_outline_rounded,
-                                            color: Colors.red.shade400,
+                                        if (!isMainBranch)
+                                          IconButton(
+                                            icon: Icon(
+                                              Icons.delete_outline_rounded,
+                                              color: Colors.red.shade400,
+                                            ),
+                                            onPressed: () => _deleteBranch(
+                                              doc.id,
+                                              data['branch_code'] ?? '',
+                                            ),
                                           ),
-                                          onPressed: () => _deleteBranch(
-                                            doc.id,
-                                            data['branch_code'] ?? '',
-                                          ),
-                                        ),
                                       ],
                                     ),
                                   ],

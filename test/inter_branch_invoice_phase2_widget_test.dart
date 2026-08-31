@@ -55,6 +55,18 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('1b. قائمة الوجهة تميّز الفرع الرئيسي للعلامة نفسها', (
+    tester,
+  ) async {
+    await _pumpCreation(tester);
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('الفرع الرئيسي — الفرع الرئيسي للعلامة'), findsOneWidget);
+    expect(find.text('الفرع المستلم 1'), findsOneWidget);
+  });
+
   testWidgets('2. البحث في المنتجات واختيار الوحدة يعملان باتجاه RTL', (
     tester,
   ) async {
@@ -368,6 +380,11 @@ Future<void> _pumpCreation(
       fixture: DirectInvoiceCreationFixture(
         brandId: 'brand-a',
         branches: const [
+          DirectInvoiceBranchOption(
+            id: 'main-a',
+            name: 'الفرع الرئيسي للعلامة',
+            isMainBranch: true,
+          ),
           DirectInvoiceBranchOption(id: 'branch-b', name: 'الفرع المستلم 1'),
         ],
         products: products ?? [_product(1, 'أرز فاخر')],

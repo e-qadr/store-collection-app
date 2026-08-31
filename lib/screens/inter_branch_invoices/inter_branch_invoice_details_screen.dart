@@ -410,7 +410,7 @@ class _InterBranchInvoiceDetailsScreenState
                   ),
                 ),
                 const SizedBox(width: 8),
-                _statusChip(invoice.status),
+                _statusChip(invoice),
               ],
             ),
           ),
@@ -916,7 +916,7 @@ class _InterBranchInvoiceDetailsScreenState
                   ),
                 ),
               ),
-              _statusChip(invoice.status),
+              _statusChip(invoice),
             ],
           ),
           const SizedBox(height: 10),
@@ -930,7 +930,7 @@ class _InterBranchInvoiceDetailsScreenState
               ),
             ),
             child: Text(
-              'وصلت الفاتورة الآن إلى: ${invoice.status.label}',
+              'وصلت الفاتورة الآن إلى: ${_statusLabel(invoice)}',
               style: TextStyle(
                 color: invoice.status.color,
                 fontWeight: FontWeight.bold,
@@ -950,7 +950,7 @@ class _InterBranchInvoiceDetailsScreenState
                       index == currentIndex),
               isActive: index == currentIndex,
               isException: isException && index == currentIndex,
-              activeLabel: index == currentIndex ? invoice.status.label : null,
+              activeLabel: index == currentIndex ? _statusLabel(invoice) : null,
             ),
         ],
       ),
@@ -1261,7 +1261,9 @@ class _InterBranchInvoiceDetailsScreenState
     if (allowed.contains(InterBranchInvoiceAction.confirmReceipt)) {
       buttons.add(
         _actionButton(
-          'تأكيد الاستلام',
+          invoice.isReceivingMainBranch
+              ? 'تأكيد استلام الإدارة الرئيسية'
+              : 'تأكيد الاستلام',
           Icons.inventory_rounded,
           AppTheme.managerColor,
           () => _showReceive(invoice),
@@ -1502,7 +1504,9 @@ class _InterBranchInvoiceDetailsScreenState
         .toList();
     final notes = TextEditingController();
     await _dialog(
-      title: 'تأكيد الاستلام',
+      title: invoice.isReceivingMainBranch
+          ? 'تأكيد استلام الإدارة الرئيسية'
+          : 'تأكيد الاستلام',
       children: [
         ...invoice.items.asMap().entries.map((entry) {
           final item = entry.value;
@@ -2118,7 +2122,16 @@ class _InterBranchInvoiceDetailsScreenState
     );
   }
 
-  Widget _statusChip(InterBranchInvoiceStatus status) {
+  String _statusLabel(InterBranchInvoiceRead invoice) {
+    if (invoice.isReceivingMainBranch &&
+        invoice.status == InterBranchInvoiceStatus.pendingReceiverReview) {
+      return 'بانتظار تأكيد المدير العام لاستلام الإدارة الرئيسية';
+    }
+    return invoice.status.label;
+  }
+
+  Widget _statusChip(InterBranchInvoiceRead invoice) {
+    final status = invoice.status;
     return Container(
       constraints: const BoxConstraints(maxWidth: 150),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -2127,7 +2140,7 @@ class _InterBranchInvoiceDetailsScreenState
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        status.label,
+        _statusLabel(invoice),
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         textAlign: TextAlign.center,

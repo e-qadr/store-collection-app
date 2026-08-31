@@ -64,6 +64,22 @@ void main() {
       expect(invoice.status, InterBranchInvoiceStatus.unknown);
       expect(invoice.status.hasInvoice, isFalse);
     });
+
+    test(
+      'identifies a main destination from the immutable invoice snapshot',
+      () {
+        final invoice = InterBranchInvoiceRead(
+          id: 'invoice-main',
+          data: const {
+            'schema_version': 2,
+            'workflow_version': 2,
+            'receiving_branch_type': 'main',
+          },
+        );
+
+        expect(invoice.isReceivingMainBranch, isTrue);
+      },
+    );
   });
 
   test('legacy manual items and price snapshots remain readable', () {

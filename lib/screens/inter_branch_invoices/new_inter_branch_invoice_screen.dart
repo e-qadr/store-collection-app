@@ -17,8 +17,15 @@ import 'package:store_collection_app/theme/app_theme.dart';
 class DirectInvoiceBranchOption {
   final String id;
   final String name;
+  final bool isMainBranch;
 
-  const DirectInvoiceBranchOption({required this.id, required this.name});
+  const DirectInvoiceBranchOption({
+    required this.id,
+    required this.name,
+    this.isMainBranch = false,
+  });
+
+  String get displayName => isMainBranch ? 'الفرع الرئيسي — $name' : name;
 }
 
 class DirectInvoiceCreationFixture {
@@ -126,7 +133,8 @@ class _NewInterBranchInvoiceScreenState
     final supplierData = supplier.data();
     if (supplierData == null ||
         supplierData['active'] == false ||
-        supplierData['is_active'] == false) {
+        supplierData['is_active'] == false ||
+        supplierData['branch_type'] == 'main') {
       throw StateError('الفرع المورد غير موجود أو غير نشط.');
     }
     final brandId = supplierData['brand_id']?.toString().trim() ?? '';
@@ -145,29 +153,43 @@ class _NewInterBranchInvoiceScreenState
     try {
       Query<Map<String, dynamic>> query = FirebaseFirestore.instance
           .collection('branches')
-          .orderBy('name')
+          .where('brand_id', isEqualTo: _brandId)
           .limit(30);
       if (!reset && _branchCursor != null) {
         query = query.startAfterDocument(_branchCursor!);
       }
       final page = await query.get();
-      final loaded = page.docs
-          .where(
-            (doc) =>
-                doc.id != widget.branchId &&
-                doc.data()['active'] != false &&
-                doc.data()['is_active'] != false,
-          )
-          .map(
-            (doc) => DirectInvoiceBranchOption(
-              id: doc.id,
-              name: doc.data()['name']?.toString() ?? 'فرع غير مسمى',
-            ),
-          )
-          .toList(growable: false);
+      final loaded =
+          page.docs
+              .where(
+                (doc) =>
+                    doc.id != widget.branchId &&
+                    doc.data()['active'] != false &&
+                    doc.data()['is_active'] != false,
+              )
+              .map(
+                (doc) => DirectInvoiceBranchOption(
+                  id: doc.id,
+                  name: doc.data()['name']?.toString() ?? 'فرع غير مسمى',
+                  isMainBranch: doc.data()['branch_type'] == 'main',
+                ),
+              )
+              .toList(growable: true)
+            ..sort((left, right) {
+              if (left.isMainBranch != right.isMainBranch) {
+                return left.isMainBranch ? -1 : 1;
+              }
+              return left.name.compareTo(right.name);
+            });
       if (!mounted) return;
       setState(() {
-        _branches = reset ? loaded : [..._branches, ...loaded];
+        _branches = (reset ? loaded : [..._branches, ...loaded])
+          ..sort((left, right) {
+            if (left.isMainBranch != right.isMainBranch) {
+              return left.isMainBranch ? -1 : 1;
+            }
+            return left.name.compareTo(right.name);
+          });
         _branchCursor = page.docs.isEmpty ? null : page.docs.last;
         _hasMoreBranches = page.docs.length == 30;
       });
@@ -470,7 +492,10 @@ class _NewInterBranchInvoiceScreenState
                 .map(
                   (branch) => DropdownMenuItem(
                     value: branch.id,
-                    child: Text(branch.name, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      branch.displayName,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 )
                 .toList(),

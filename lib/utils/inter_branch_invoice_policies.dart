@@ -87,8 +87,10 @@ class InterBranchInvoicePolicy {
       }
     }
 
-    if (role == UserRole.manager &&
-        isReceiving &&
+    if (((role == UserRole.manager &&
+                isReceiving &&
+                !invoice.isReceivingMainBranch) ||
+            (role == UserRole.collector && invoice.isReceivingMainBranch)) &&
         invoice.status == InterBranchInvoiceStatus.pendingReceiverReview) {
       actions.add(InterBranchInvoiceAction.confirmReceipt);
     }

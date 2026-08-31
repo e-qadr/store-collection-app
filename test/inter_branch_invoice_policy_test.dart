@@ -70,6 +70,30 @@ void main() {
       );
     });
 
+    test('only the general manager can receive a main-branch transfer', () {
+      final invoice = _invoice(
+        status: InterBranchInvoiceStatus.pendingReceiverReview,
+        receivingMainBranch: true,
+      );
+
+      expect(
+        InterBranchInvoicePolicy.actionsFor(
+          role: UserRole.collector,
+          branchId: null,
+          invoice: invoice,
+        ),
+        contains(InterBranchInvoiceAction.confirmReceipt),
+      );
+      expect(
+        InterBranchInvoicePolicy.actionsFor(
+          role: UserRole.manager,
+          branchId: 'receiver',
+          invoice: invoice,
+        ),
+        isNot(contains(InterBranchInvoiceAction.confirmReceipt)),
+      );
+    });
+
     test('price visibility excludes both supplying and receiving managers', () {
       expect(
         InterBranchInvoicePolicy.mayReadProtectedPrices(UserRole.manager),
@@ -124,16 +148,19 @@ void main() {
   });
 }
 
-InterBranchInvoiceRead _invoice({required InterBranchInvoiceStatus status}) =>
-    InterBranchInvoiceRead(
-      id: 'invoice-1',
-      data: {
-        'schema_version': 2,
-        'workflow_version': 2,
-        'revision': 2,
-        'status': status.value,
-        'sending_branch_id': 'supplier',
-        'receiving_branch_id': 'receiver',
-        'branch_ids': const ['supplier', 'receiver'],
-      },
-    );
+InterBranchInvoiceRead _invoice({
+  required InterBranchInvoiceStatus status,
+  bool receivingMainBranch = false,
+}) => InterBranchInvoiceRead(
+  id: 'invoice-1',
+  data: {
+    'schema_version': 2,
+    'workflow_version': 2,
+    'revision': 2,
+    'status': status.value,
+    'sending_branch_id': 'supplier',
+    'receiving_branch_id': 'receiver',
+    if (receivingMainBranch) 'receiving_branch_type': 'main',
+    'branch_ids': const ['supplier', 'receiver'],
+  },
+);
