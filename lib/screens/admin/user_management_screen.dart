@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/screens/admin/branch_management_screen.dart';
 import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/branch_scope.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class UserManagementScreen extends StatefulWidget {
@@ -280,7 +281,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     );
                   }
 
-                  final branches = snapshot.data!.docs;
+                  final branches = snapshot.data!.docs
+                      .where(
+                        (branch) => canAssignUserToBranch(
+                          branch.data() as Map<String, dynamic>,
+                        ),
+                      )
+                      .toList(growable: false);
 
                   if (newBranchId != null &&
                       !branches.any((b) => b.id == newBranchId)) {
@@ -506,8 +513,16 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                 );
                               }
 
+                              final branches = snapshot.data!.docs
+                                  .where(
+                                    (branch) => canAssignUserToBranch(
+                                      branch.data() as Map<String, dynamic>,
+                                    ),
+                                  )
+                                  .toList(growable: false);
+
                               if (_selectedBranchId != null &&
-                                  !snapshot.data!.docs.any(
+                                  !branches.any(
                                     (b) => b.id == _selectedBranchId,
                                   )) {
                                 _selectedBranchId = null;
@@ -534,7 +549,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                         child: DropdownButton<String>(
                                           value: _selectedBranchId,
                                           isExpanded: true,
-                                          items: snapshot.data!.docs
+                                          items: branches
                                               .map(
                                                 (branch) => DropdownMenuItem(
                                                   value: branch.id,

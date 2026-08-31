@@ -44,6 +44,12 @@ function seed() {
       forced: {name: "تغيير كلمة مرور", role: "collector", isActive: true, mustChangePassword: true},
     },
     branches: {
+      "main-r": {
+        id: "main-r",
+        name: "المقر الرئيسي",
+        brand_id: "brand-r",
+        branch_type: "main",
+      },
       "branch-r": {
         id: "branch-r",
         name: "الفرع المستلم",
@@ -376,6 +382,23 @@ test("creation validates collector role, receiving brand ownership, duplicates, 
     timestamp: now,
     randomUUID,
   }), (error) => error.code === "duplicate-supplier-invoice");
+});
+
+test("purchase creation rejects a transfer-only Main Branch without writing an invoice or counter", async () => {
+  const firestore = new FakeFirestore(seed());
+  const payload = {...createPayload(), receiving_branch_id: "main-r"};
+
+  await assert.rejects(() => createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload,
+    idempotencyKey: "main-branch-purchase-1",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  }), (error) => error.code === "branch-not-found" && error.status === 404);
+
+  assert.equal(firestore.documents(COLLECTIONS.invoices).length, 0);
+  assert.equal(firestore.document(COLLECTIONS.counters, "global"), undefined);
 });
 
 test("new receipt is non-blocking with unresolved review tasks and goes directly to accounting", async () => {

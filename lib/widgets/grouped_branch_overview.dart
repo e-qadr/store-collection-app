@@ -5,6 +5,7 @@ import 'package:store_collection_app/models/cash_expense_request_model.dart';
 import 'package:store_collection_app/models/consumable_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/branch_scope.dart';
 
 enum GroupedBranchOverviewKind { expenses, consumption }
 
@@ -61,6 +62,7 @@ class GroupedBranchOverview extends StatelessWidget {
         .snapshots()
         .map(
           (snapshot) => snapshot.docs
+              .where((doc) => !isTransferOnlyMainBranch(doc.data()))
               .map(
                 (doc) => GroupedBranchOverviewBranch(
                   id: doc.id,

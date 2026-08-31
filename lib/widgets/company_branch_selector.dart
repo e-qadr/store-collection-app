@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
+import 'package:store_collection_app/utils/branch_scope.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 
@@ -67,7 +68,13 @@ class _CompanyBranchSelectorState extends State<CompanyBranchSelector> {
                 }
 
                 final brands = brandsSnapshot.data?.docs.toList() ?? [];
-                final branches = branchesSnapshot.data?.docs.toList() ?? [];
+                final branches = (branchesSnapshot.data?.docs ?? [])
+                    .where(
+                      (branch) => !isTransferOnlyMainBranch(
+                        branch.data() as Map<String, dynamic>,
+                      ),
+                    )
+                    .toList(growable: false);
                 final options = _brandOptions(brands, branches);
                 final selectedExists = options.any(
                   (option) => option.id == _selectedBrandId,

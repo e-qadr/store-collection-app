@@ -172,6 +172,9 @@ function cleanBranch(snapshot, branchId) {
     throw new PurchaseCommandError("branch-not-found", 404, "The receiving branch is unavailable.");
   }
   const data = snapshot.data();
+  if (String(data.branch_type || "").trim() === "main") {
+    throw new PurchaseCommandError("branch-not-found", 404, "The receiving branch is unavailable.");
+  }
   const brandId = String(data.brand_id || "").trim();
   if (!brandId) {
     throw new PurchaseCommandError("branch-brand-missing", 409, "The branch brand is missing.");

@@ -10,6 +10,10 @@ import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/branch_scope.dart';
+
+bool isEligiblePurchaseReceivingBranch(Map<String, dynamic> branch) =>
+    isActiveOperationalBranch(branch);
 
 class NewPurchaseInvoiceScreen extends StatefulWidget {
   const NewPurchaseInvoiceScreen({super.key});
@@ -415,10 +419,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       stream: _branchesStream,
       builder: (context, snapshot) {
         final branches = (snapshot.data?.docs ?? const [])
-            .where((doc) {
-              final data = doc.data();
-              return data['active'] != false && data['isActive'] != false;
-            })
+            .where((doc) => isEligiblePurchaseReceivingBranch(doc.data()))
             .toList(growable: false);
         return DropdownButtonFormField<String>(
           key: const Key('purchase-receiving-branch'),
