@@ -437,7 +437,7 @@ void main() {
       'invalid-state',
       'unauthenticated',
       'stale-revision',
-      'brand-identifier-missing',
+      'counter-exhausted',
     ];
     var attempt = 0;
     await _pumpCreation(

@@ -381,28 +381,15 @@ function productPriceLatestKey({brandId, productId, unitId, currency}) {
 
 function invoiceNumberFor(branchCode, nextNumber) {
   const code = String(branchCode || "").trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(code)) {
+  if (!code) {
     throw new CommandError("branch-code-invalid", 409, "The supplying branch code is not configured.");
   }
-  if (!Number.isSafeInteger(nextNumber) || nextNumber < 0) {
+  if (!Number.isSafeInteger(nextNumber) || nextNumber < 0 || nextNumber > 999) {
     throw new CommandError("counter-invalid", 409, "The invoice counter is not configured.");
   }
-  return `${code}${String(nextNumber).padStart(4, "0")}`;
-}
-
-function brandInvoiceNumberFor(brandCode, nextNumber) {
-  const code = String(brandCode || "").trim().toUpperCase();
-  if (!/^[A-Z0-9]{2,16}$/.test(code)) {
-    throw new CommandError(
-        "brand-identifier-invalid",
-        409,
-        "The source brand identifier is not configured.",
-    );
-  }
-  if (!Number.isSafeInteger(nextNumber) || nextNumber < 0 || nextNumber > 999) {
-    throw new CommandError("brand-counter-invalid", 409, "The brand invoice counter is invalid.");
-  }
-  return `${code}-${String(nextNumber).padStart(3, "0")}`;
+  // Matches the established Collection voucher convention exactly:
+  // branches.branch_code + an independent three-digit branch sequence.
+  return `${code}${String(nextNumber).padStart(3, "0")}`;
 }
 
 function publicError(error) {
@@ -430,7 +417,6 @@ module.exports = {
   assertNoPriceLikeKeys,
   canonicalJson,
   canonicalRequestHash,
-  brandInvoiceNumberFor,
   deterministicDocumentId,
   documentId,
   invoiceItemDigest,

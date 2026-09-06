@@ -441,17 +441,20 @@ class InterBranchInvoiceService {
           .toString()
           .trim()
           .toUpperCase();
-      if (!RegExp(r'^[A-Z]{2}$').hasMatch(branchCode)) {
-        throw Exception(
-          'يجب ضبط رمز الفرع المورد بحرفين إنجليزيين قبل إنشاء الفاتورة.',
-        );
+      if (branchCode.isEmpty) {
+        throw Exception('يجب ضبط رمز الفرع المورد قبل إنشاء الفاتورة.');
       }
 
       final counterSnapshot = await transaction.get(counterRef);
       final nextNumber =
           (counterSnapshot.data()?['next_number'] as num?)?.toInt() ?? 0;
+      if (nextNumber < 0 || nextNumber > 999) {
+        throw Exception(
+          'وصل تسلسل فواتير الفرع إلى 999. يلزم اعتماد سياسة ترقيم جديدة قبل إنشاء فاتورة أخرى.',
+        );
+      }
       final invoiceNumber =
-          '$branchCode${nextNumber.toString().padLeft(4, '0')}';
+          '$branchCode${nextNumber.toString().padLeft(3, '0')}';
 
       transaction.set(counterRef, {
         'branch_id': supplierBranchId,

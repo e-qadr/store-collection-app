@@ -5,10 +5,10 @@ const {
   CommandError,
   SUPPORTED_CURRENCIES,
   assertNoPriceLikeKeys,
-  brandInvoiceNumberFor,
   canonicalRequestHash,
   deterministicDocumentId,
   documentId,
+  invoiceNumberFor,
   invoiceItemDigest,
   productPriceLatestKey,
   publicError,
@@ -28,7 +28,6 @@ const COLLECTIONS = Object.freeze({
   invoices: "inter_branch_invoices",
   invoiceEvents: "inter_branch_invoice_events",
   counters: "inter_branch_invoice_counters",
-  brandCounters: "inter_branch_invoice_brand_counters",
   invoicePrices: "inter_branch_invoice_prices",
   priceLatest: "product_price_latest",
   priceHistory: "product_price_history",
@@ -66,7 +65,6 @@ const PUBLIC_INVOICE_KEYS = new Set([
   "sending_branch_id",
   "sending_branch_name",
   "sending_brand_id",
-  "sending_brand_code",
   "receiving_branch_id",
   "receiving_branch_name",
   "receiving_branch_type",
@@ -775,55 +773,23 @@ function buildPublicCatalogItem({
   };
 }
 
-function brandIdentifier(brand, brandId) {
-  const code = String(brand?.brand_code || "").trim().toUpperCase();
-  if (!code) {
-    throw new CommandError(
-        "brand-identifier-missing",
-        409,
-        "لم يتم ضبط رمز العلامة التجاري لفواتير المناقلات. تواصل مع الإدارة قبل إنشاء الفاتورة.",
-    );
-  }
-  if (!/^[A-Z0-9]{2,16}$/.test(code)) {
-    throw new CommandError(
-        "brand-identifier-invalid",
-        409,
-        "رمز العلامة التجاري لفواتير المناقلات غير صالح.",
-    );
-  }
-  return {id: brandId, code};
-}
-
-function validateBrandCounter(snapshot, brand) {
-  if (!snapshot.exists) return null;
+function transferCounterNextNumber(snapshot, supplyingBranch) {
+  // Mirror the Collection voucher counter's lazy zero start while retaining
+  // the Transfer counter namespace and its established branch identity.
+  if (!snapshot.exists) return 0;
   const data = snapshot.data();
   if (!Number.isSafeInteger(data?.next_number) ||
       data.next_number < 0 || data.next_number > 1000) {
-    throw new CommandError("brand-counter-invalid", 409, "The brand invoice counter is invalid.");
+    throw new CommandError("counter-invalid", 409, "The invoice counter is invalid.");
   }
-  if (data.brand_id !== undefined && data.brand_id !== brand.id) {
-    throw new CommandError("brand-counter-invalid", 409, "The brand invoice counter does not match.");
+  if (data.branch_id !== undefined && data.branch_id !== supplyingBranch.id) {
+    throw new CommandError("counter-invalid", 409, "The invoice counter branch does not match.");
   }
-  if (data.brand_code !== undefined &&
-      String(data.brand_code).trim().toUpperCase() !== brand.code) {
-    throw new CommandError("brand-counter-invalid", 409, "The brand invoice counter code does not match.");
+  if (data.branch_code !== undefined &&
+      String(data.branch_code).trim().toUpperCase() !== supplyingBranch.code) {
+    throw new CommandError("counter-invalid", 409, "The invoice counter branch code does not match.");
   }
   return data.next_number;
-}
-
-async function initialBrandSequence(transaction, firestore, brand) {
-  const counterSnapshot = await transaction.get(
-      firestore.collection(COLLECTIONS.invoices)
-          .where("invoice_number", ">=", `${brand.code}-000`)
-          .where("invoice_number", "<=", `${brand.code}-999`)
-          .orderBy("invoice_number", "desc")
-          .limit(1),
-  );
-  if (counterSnapshot.empty) return 0;
-  const invoiceNumber = String(counterSnapshot.docs[0].data()?.invoice_number || "");
-  const match = new RegExp(`^${brand.code}-(\\d{3})$`).exec(invoiceNumber);
-  if (!match) return 0;
-  return Number(match[1]) + 1;
 }
 
 function responseFor(invoiceId, invoiceNumber, status, revision) {
@@ -868,9 +834,11 @@ async function createDirectInvoice({
       const receivingRef = firestore
           .collection(COLLECTIONS.branches)
           .doc(payload.receiving_branch_id);
-      const [supplyingSnapshot, receivingSnapshot] = await Promise.all([
+      const counterRef = firestore.collection(COLLECTIONS.counters).doc(actor.branchId);
+      const [supplyingSnapshot, receivingSnapshot, counterSnapshot] = await Promise.all([
         transaction.get(supplyingRef),
         transaction.get(receivingRef),
+        transaction.get(counterRef),
       ]);
       const supplying = cleanBranch(supplyingSnapshot, actor.branchId);
       const receiving = cleanBranch(receivingSnapshot, payload.receiving_branch_id);
@@ -886,25 +854,17 @@ async function createDirectInvoice({
         transaction.get(firestore.collection(COLLECTIONS.brands).doc(supplying.brandId)),
         transaction.get(firestore.collection(COLLECTIONS.brands).doc(receiving.brandId)),
       ]);
-      const supplyingBrandData = requireBrand(supplyingBrandSnapshot, supplying.brandId);
+      requireBrand(supplyingBrandSnapshot, supplying.brandId);
       const receivingBrandData = requireBrand(receivingBrandSnapshot, receiving.brandId);
-      const supplyingBrand = brandIdentifier(supplyingBrandData, supplying.brandId);
-      const brandCounterRef = firestore
-          .collection(COLLECTIONS.brandCounters)
-          .doc(supplyingBrand.id);
-      const brandCounterSnapshot = await transaction.get(brandCounterRef);
-      let nextNumber = validateBrandCounter(brandCounterSnapshot, supplyingBrand);
-      if (nextNumber === null) {
-        nextNumber = await initialBrandSequence(transaction, firestore, supplyingBrand);
-      }
+      const nextNumber = transferCounterNextNumber(counterSnapshot, supplying);
       if (nextNumber > 999) {
         throw new CommandError(
-            "brand-counter-exhausted",
+            "counter-exhausted",
             409,
-            "وصل تسلسل فواتير العلامة إلى 999. يلزم اعتماد سياسة ترقيم جديدة قبل إنشاء فاتورة أخرى.",
+            "وصل تسلسل فواتير الفرع إلى 999. يلزم اعتماد سياسة ترقيم جديدة قبل إنشاء فاتورة أخرى.",
         );
       }
-      const invoiceNumber = brandInvoiceNumberFor(supplyingBrand.code, nextNumber);
+      const invoiceNumber = invoiceNumberFor(supplying.code, nextNumber);
       assertCanonicalMainBranch(receiving, receivingBrandData);
 
       const productRefs = payload.items.map((item) =>
@@ -994,7 +954,6 @@ async function createDirectInvoice({
         sending_branch_id: supplying.id,
         sending_branch_name: supplying.name,
         sending_brand_id: supplying.brandId,
-        sending_brand_code: supplyingBrand.code,
         receiving_branch_id: receiving.id,
         receiving_branch_name: receiving.name,
         receiving_branch_type: isMainBranch(receiving.data) ? "main" : "branch",
@@ -1023,9 +982,9 @@ async function createDirectInvoice({
         event: createdEvent,
         revision: 1,
       });
-      transaction.set(brandCounterRef, {
-        brand_id: supplyingBrand.id,
-        brand_code: supplyingBrand.code,
+      transaction.set(counterRef, {
+        branch_id: supplying.id,
+        branch_code: supplying.code,
         next_number: nextNumber + 1,
         last_invoice_number: invoiceNumber,
         last_updated: timestamp,

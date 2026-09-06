@@ -7,7 +7,6 @@ const {
   canonicalRequestHash,
   invoiceItemDigest,
   invoiceNumberFor,
-  brandInvoiceNumberFor,
   productPriceLatestKey,
   utf8ByteLength,
   validateCreatePayload,
@@ -164,22 +163,13 @@ test("idempotency keys have an ASCII minimum and maximum", () => {
   assert.throws(() => validateIdempotencyKey("contains space"), /idempotency-key/);
 });
 
-test("legacy invoice number formatting preserves zero and values above four digits", () => {
-  assert.equal(invoiceNumberFor("ab", 0), "AB0000");
-  assert.equal(invoiceNumberFor("AB", 10000), "AB10000");
+test("transfer numbers follow the Collection branch-code and three-digit format", () => {
+  assert.equal(invoiceNumberFor("ab", 0), "AB000");
+  assert.equal(invoiceNumberFor("TTH", 9), "TTH009");
+  assert.equal(invoiceNumberFor("AB", 999), "AB999");
   assert.throws(
-      () => invoiceNumberFor("A1", 1),
-      (error) => error.code === "branch-code-invalid",
-  );
-});
-
-test("brand transfer numbers are fixed to the three-digit brand sequence", () => {
-  assert.equal(brandInvoiceNumberFor("eql", 0), "EQL-000");
-  assert.equal(brandInvoiceNumberFor("ASA", 9), "ASA-009");
-  assert.equal(brandInvoiceNumberFor("ASA", 999), "ASA-999");
-  assert.throws(
-      () => brandInvoiceNumberFor("ASA", 1000),
-      (error) => error.code === "brand-counter-invalid",
+      () => invoiceNumberFor("AB", 1000),
+      (error) => error.code === "counter-invalid",
   );
 });
 
