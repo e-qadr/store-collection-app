@@ -109,6 +109,16 @@ beforeEach(async () => {
       uniqueKeyId: 'seed-name-key-b',
       name: 'منتج اقليد',
     }));
+    writes.set(doc(database, 'products', 'seed-product-b-inactive'), {
+      ...seededProduct({
+        id: 'seed-product-b-inactive',
+        brandId: brandB,
+        groupId: 'group-b',
+        uniqueKeyId: 'seed-name-key-b-inactive',
+        name: 'Archived brand B product',
+      }),
+      active: false,
+    });
     await writes.commit();
   });
 });
@@ -455,12 +465,14 @@ async function seedPricePairWithoutRules(options = {}) {
   });
 }
 
-test('branch users can read only catalog documents for their branch brand', async () => {
+test('managers can read active receiving-brand catalog documents without price access', async () => {
   const manager = databaseFor('manager-a');
   const employee = databaseFor('employee-a');
 
   await assertSucceeds(getDoc(doc(manager, 'products', 'seed-product-a')));
-  await assertFails(getDoc(doc(manager, 'products', 'seed-product-b')));
+  await assertSucceeds(getDoc(doc(manager, 'products', 'seed-product-b')));
+  await assertFails(getDoc(doc(manager, 'products', 'seed-product-b-inactive')));
+  await assertSucceeds(getDoc(doc(manager, 'product_groups', 'group-b')));
   await assertSucceeds(getDoc(doc(employee, 'product_groups', 'group-a')));
   await assertFails(getDoc(doc(employee, 'product_groups', 'group-b')));
 
@@ -469,6 +481,16 @@ test('branch users can read only catalog documents for their branch brand', asyn
     where('brand_id', '==', brandA),
   )));
   await assertFails(getDocs(collection(manager, 'products')));
+  await assertSucceeds(getDocs(query(
+    collection(manager, 'products'),
+    where('brand_id', '==', brandB),
+    where('active', '==', true),
+  )));
+  await assertSucceeds(getDocs(query(
+    collection(manager, 'product_groups'),
+    where('brand_id', '==', brandB),
+    where('active', '==', true),
+  )));
   await assertFails(getDocs(query(
     collection(manager, 'products'),
     where('brand_id', '==', brandB),

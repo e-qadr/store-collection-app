@@ -58,7 +58,12 @@ service cloud.firestore {
     function mayReadCatalogDocument(data) {
       return operationalUser() &&
         (catalogSupervisor() ||
-          (branchBrandId().size() > 0 && data.brand_id == branchBrandId()));
+          (branchBrandId().size() > 0 && data.brand_id == branchBrandId()) ||
+          // A manager may choose a receiving branch from another brand only
+          // for an inter-branch transfer. The client catalog is price-free;
+          // inactive documents and all protected-price collections remain
+          // inaccessible.
+          (role() == 'manager' && data.get('active', false) == true));
     }
 
     function brandExists(brandId) {

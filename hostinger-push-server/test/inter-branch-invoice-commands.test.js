@@ -33,6 +33,13 @@ function seed({includeCounter = true} = {}) {
         isActive: true,
         mustChangePassword: false,
       },
+      "manager-b": {
+        name: "مدير العلامة ب",
+        role: "manager",
+        branchId: "branch-b",
+        isActive: true,
+        mustChangePassword: false,
+      },
       collector: {
         name: "المدير العام",
         role: "collector",
@@ -86,6 +93,13 @@ function seed({includeCounter = true} = {}) {
         brand_id: "brand-a",
         branch_code: "BB",
         branch_manager_id: "manager-r",
+      },
+      "branch-b": {
+        id: "branch-b",
+        name: "فرع العلامة ب",
+        brand_id: "brand-b",
+        branch_code: "CC",
+        branch_manager_id: "manager-b",
       },
       "main-a": {
         id: "main-a",
@@ -152,6 +166,11 @@ function seed({includeCounter = true} = {}) {
       "branch-s": {
         branch_id: "branch-s",
         branch_code: "AA",
+        next_number: 1,
+      },
+      "branch-b": {
+        branch_id: "branch-b",
+        branch_code: "CC",
         next_number: 1,
       },
     } : {},
@@ -743,7 +762,7 @@ test("counter starting at one allocates the first v2 invoice as 0001", async () 
   assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 2);
 });
 
-test("main branches are same-brand destinations received and priced by the collector", async () => {
+test("main branches remain collector destinations and may receive cross-brand transfers", async () => {
   const firestore = new FakeFirestore(seed());
   await withServer(firestore, async (baseUrl) => {
     let response = await post(baseUrl, "/v1/inter-branch-invoices", {
@@ -822,12 +841,17 @@ test("main branches are same-brand destinations received and priced by the colle
       key: "cross-brand-main-0001",
       body: {
         receiving_branch_id: "main-b",
-        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 1}],
+        items: [{product_id: "product-b", unit_id: "primary", supplied_quantity: 1}],
       },
     });
-    assert.equal(response.status, 403);
-    assert.equal((await response.json()).error.code, "cross-brand-transfer");
-    assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 2);
+    assert.equal(response.status, 201);
+    const crossBrand = await response.json();
+    const crossBrandInvoice = firestore.document(
+        "inter_branch_invoices", crossBrand.invoice_id);
+    const [crossBrandItem] = invoiceItems(firestore, crossBrand.invoice_id);
+    assert.equal(crossBrandInvoice.receiving_brand_id, "brand-b");
+    assert.equal(crossBrandItem.product_brand_id, "brand-b");
+    assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 3);
   });
 });
 
@@ -1067,16 +1091,16 @@ test("spoofed identity fields and same-branch selection are rejected", async () 
   assert.equal(firestore.documents("inter_branch_invoices").length, 0);
 });
 
-test("supplying-brand catalog enforcement does not consume the counter", async () => {
+test("cross-brand normal destinations use the receiving catalog in both directions", async () => {
   const firestore = new FakeFirestore(seed());
   await withServer(firestore, async (baseUrl) => {
-    const response = await post(baseUrl, "/v1/inter-branch-invoices", {
+    let response = await post(baseUrl, "/v1/inter-branch-invoices", {
       uid: "manager-s",
       key: "wrong-brand-0001",
       body: {
-        receiving_branch_id: "branch-r",
+        receiving_branch_id: "branch-b",
         items: [{
-          product_id: "product-b",
+          product_id: "product-a",
           unit_id: "primary",
           supplied_quantity: 1,
         }],
@@ -1084,9 +1108,41 @@ test("supplying-brand catalog enforcement does not consume the counter", async (
     });
     assert.equal(response.status, 403);
     assert.equal((await response.json()).error.code, "product-brand-mismatch");
+
+    response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s",
+      key: "cross-normal-a-to-b-0001",
+      body: {
+        receiving_branch_id: "branch-b",
+        items: [{product_id: "product-b", unit_id: "primary", supplied_quantity: 2}],
+      },
+    });
+    assert.equal(response.status, 201);
+    const aToB = await response.json();
+    const aToBInvoice = firestore.document("inter_branch_invoices", aToB.invoice_id);
+    assert.equal(aToBInvoice.sending_brand_id, "brand-a");
+    assert.equal(aToBInvoice.receiving_brand_id, "brand-b");
+    assert.equal(invoiceItems(firestore, aToB.invoice_id)[0].product_brand_id, "brand-b");
+
+    response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-b",
+      key: "cross-normal-b-to-a-0001",
+      body: {
+        receiving_branch_id: "branch-r",
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 2}],
+      },
+    });
+    assert.equal(response.status, 201);
+    const bToA = await response.json();
+    const bToAInvoice = firestore.document("inter_branch_invoices", bToA.invoice_id);
+    assert.equal(bToA.invoice_number, "CC0001");
+    assert.equal(bToAInvoice.sending_brand_id, "brand-b");
+    assert.equal(bToAInvoice.receiving_brand_id, "brand-a");
+    assert.equal(invoiceItems(firestore, bToA.invoice_id)[0].product_brand_id, "brand-a");
   });
-  assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 1);
-  assert.equal(firestore.documents("inter_branch_invoices").length, 0);
+  assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 2);
+  assert.equal(firestore.document("inter_branch_invoice_counters", "branch-b").next_number, 2);
+  assert.equal(firestore.documents("inter_branch_invoices").length, 2);
 });
 
 test("invalid catalog units and inactive products fail without consuming the counter", async () => {

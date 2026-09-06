@@ -17,15 +17,22 @@ import 'package:store_collection_app/theme/app_theme.dart';
 class DirectInvoiceBranchOption {
   final String id;
   final String name;
+  final String brandId;
+  final String brandName;
   final bool isMainBranch;
 
   const DirectInvoiceBranchOption({
     required this.id,
     required this.name,
+    required this.brandId,
+    required this.brandName,
     this.isMainBranch = false,
   });
 
-  String get displayName => isMainBranch ? 'الفرع الرئيسي — $name' : name;
+  /// The picker deliberately shows human names only. `brandId` remains an
+  /// internal catalog-scope key and is never exposed in the UI.
+  String get displayName =>
+      '$brandName — ${isMainBranch ? 'الفرع الرئيسي: ' : ''}$name';
 }
 
 class DirectInvoiceCreationFixture {
@@ -92,8 +99,8 @@ class _NewInterBranchInvoiceScreenState
   bool _loadingProducts = false;
   bool _loadingBranches = false;
   bool _saving = false;
-  String _brandId = '';
   String? _receivingBranchId;
+  String? _receivingBrandId;
   String? _selectedProductId;
   String? _selectedUnitId;
 
@@ -117,9 +124,7 @@ class _NewInterBranchInvoiceScreenState
   Future<_CreationContext> _loadContext() async {
     final fixture = widget.fixture;
     if (fixture != null) {
-      _brandId = fixture.brandId;
       _branches = fixture.branches;
-      _products = fixture.products;
       _items.addAll(
         fixture.initialItems.take(InterBranchInvoiceApiService.maxItems),
       );
@@ -141,9 +146,7 @@ class _NewInterBranchInvoiceScreenState
     if (brandId.isEmpty) {
       throw StateError('الفرع المورد غير مرتبط بعلامة تجارية.');
     }
-    _brandId = brandId;
     await _loadBranches(reset: true);
-    await _loadProducts(reset: true);
     return const _CreationContext();
   }
 
@@ -153,8 +156,8 @@ class _NewInterBranchInvoiceScreenState
     try {
       Query<Map<String, dynamic>> query = FirebaseFirestore.instance
           .collection('branches')
-          .where('brand_id', isEqualTo: _brandId)
-          .limit(30);
+          .orderBy('name')
+          .limit(50);
       if (!reset && _branchCursor != null) {
         query = query.startAfterDocument(_branchCursor!);
       }
@@ -164,6 +167,8 @@ class _NewInterBranchInvoiceScreenState
               .where(
                 (doc) =>
                     doc.id != widget.branchId &&
+                    (doc.data()['brand_id']?.toString().trim().isNotEmpty ??
+                        false) &&
                     doc.data()['active'] != false &&
                     doc.data()['is_active'] != false,
               )
@@ -171,6 +176,16 @@ class _NewInterBranchInvoiceScreenState
                 (doc) => DirectInvoiceBranchOption(
                   id: doc.id,
                   name: doc.data()['name']?.toString() ?? 'فرع غير مسمى',
+                  brandId: doc.data()['brand_id']?.toString().trim() ?? '',
+                  brandName:
+                      doc
+                              .data()['company_name']
+                              ?.toString()
+                              .trim()
+                              .isNotEmpty ==
+                          true
+                      ? doc.data()['company_name'].toString().trim()
+                      : 'علامة تجارية',
                   isMainBranch: doc.data()['branch_type'] == 'main',
                 ),
               )
@@ -191,7 +206,7 @@ class _NewInterBranchInvoiceScreenState
             return left.name.compareTo(right.name);
           });
         _branchCursor = page.docs.isEmpty ? null : page.docs.last;
-        _hasMoreBranches = page.docs.length == 30;
+        _hasMoreBranches = page.docs.length == 50;
       });
     } finally {
       if (mounted) setState(() => _loadingBranches = false);
@@ -199,13 +214,16 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Future<void> _loadProducts({required bool reset}) async {
-    if (_loadingProducts || _brandId.isEmpty || !mounted) return;
+    final receivingBrandId = _receivingBrandId;
+    if (_loadingProducts || receivingBrandId == null || !mounted) return;
     setState(() => _loadingProducts = true);
     try {
       final fixture = widget.fixture;
       if (fixture != null) {
         final loaded = filterCatalogProducts(
-          fixture.products,
+          fixture.products
+              .where((product) => product.brandId == receivingBrandId)
+              .toList(growable: false),
           _searchController.text,
         );
         if (!mounted) return;
@@ -221,7 +239,7 @@ class _NewInterBranchInvoiceScreenState
       }
       final page = await (_catalogService ??= ProductCatalogService())
           .fetchActiveProductsPage(
-            brandId: _brandId,
+            brandId: receivingBrandId,
             search: _searchController.text,
             offset: reset ? 0 : _products.length,
             pageSize: 30,
@@ -254,6 +272,46 @@ class _NewInterBranchInvoiceScreenState
       if (product.id == _selectedProductId) return product;
     }
     return null;
+  }
+
+  DirectInvoiceBranchOption? _branchById(String? branchId) {
+    if (branchId == null) return null;
+    for (final branch in _branches) {
+      if (branch.id == branchId) return branch;
+    }
+    return null;
+  }
+
+  Future<void> _changeReceivingBranch(String? branchId) async {
+    final selectedBranch = _branchById(branchId);
+    final nextBrandId = selectedBranch?.brandId;
+    if (branchId == _receivingBranchId || nextBrandId == null) return;
+
+    final previousBrandId = _receivingBrandId;
+    final changedBrand =
+        previousBrandId != null && previousBrandId != nextBrandId;
+    final clearItems = changedBrand && _items.isNotEmpty;
+    setState(() {
+      _receivingBranchId = branchId;
+      _receivingBrandId = nextBrandId;
+      _products = const [];
+      _hasMoreProducts = false;
+      _selectedProductId = null;
+      _selectedUnitId = null;
+      if (clearItems) _items.clear();
+    });
+
+    if (clearItems) {
+      _showSnack(
+        'تم تغيير علامة الفرع المستلم، لذلك أزيلت مواد الفاتورة المختارة.',
+      );
+    }
+    // Fixtures model the same destination-scoped catalog behavior without a
+    // network read. Production catalog data is fetched lazily by the picker
+    // for this one receiving-brand scope and cached by ProductCatalogService.
+    if (widget.fixture != null) {
+      await _loadProducts(reset: true);
+    }
   }
 
   Future<void> _addItem() async {
@@ -307,9 +365,14 @@ class _NewInterBranchInvoiceScreenState
       );
       return;
     }
+    final receivingBrandId = _receivingBrandId;
+    if (_receivingBranchId == null || receivingBrandId == null) {
+      _showSnack('اختر الفرع المستلم أولاً لعرض كتالوج علامته التجارية.');
+      return;
+    }
     final selection = await showCatalogPicker(
       context,
-      brandId: _brandId,
+      brandId: receivingBrandId,
       service: _catalogService,
       products: widget.fixture == null ? null : _products,
       mode: CatalogPickerMode.transfer,
@@ -501,7 +564,7 @@ class _NewInterBranchInvoiceScreenState
                 .toList(),
             onChanged: _saving
                 ? null
-                : (value) => setState(() => _receivingBranchId = value),
+                : (value) => _changeReceivingBranch(value),
           ),
           if (_hasMoreBranches)
             TextButton.icon(
@@ -524,20 +587,22 @@ class _NewInterBranchInvoiceScreenState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
-            'مواد علامة الفرع المورد',
+            'مواد علامة الفرع المستلم',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(
             key: const Key('transfer-add-catalog-item'),
-            onPressed: _saving ? null : _selectTransferItem,
+            onPressed: _saving || _receivingBranchId == null
+                ? null
+                : _selectTransferItem,
             icon: const Icon(Icons.add_circle_outline_rounded),
             label: const Text('إضافة مادة'),
           ),
           const Padding(
             padding: EdgeInsets.only(top: 8),
             child: Text(
-              'يتم البحث والاختيار محلياً من كتالوج الفرع، بدون تحميل أي أسعار.',
+              'يتم البحث والاختيار من كتالوج علامة الفرع المستلم، بدون تحميل أي أسعار.',
               style: TextStyle(color: AppTheme.textSecondary),
             ),
           ),

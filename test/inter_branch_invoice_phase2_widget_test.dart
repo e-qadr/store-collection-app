@@ -55,7 +55,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('1b. قائمة الوجهة تميّز الفرع الرئيسي للعلامة نفسها', (
+  testWidgets('1b. قائمة الوجهة تعرض الفروع النشطة لكل العلامات بأسماء بشرية', (
     tester,
   ) async {
     await _pumpCreation(tester);
@@ -63,8 +63,16 @@ void main() {
     await tester.tap(find.byType(DropdownButtonFormField<String>).first);
     await tester.pumpAndSettle();
 
-    expect(find.text('الفرع الرئيسي — الفرع الرئيسي للعلامة'), findsOneWidget);
-    expect(find.text('الفرع المستلم 1'), findsOneWidget);
+    expect(
+      find.text('العلامة أ — الفرع الرئيسي: الفرع الرئيسي للعلامة أ'),
+      findsOneWidget,
+    );
+    expect(find.text('العلامة أ — الفرع المستلم 1'), findsOneWidget);
+    expect(find.text('العلامة ب — الفرع المستلم 2'), findsOneWidget);
+    expect(
+      find.text('العلامة ب — الفرع الرئيسي: الفرع الرئيسي للعلامة ب'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('2. البحث في المنتجات واختيار الوحدة يعملان باتجاه RTL', (
@@ -79,6 +87,7 @@ void main() {
       Directionality.of(tester.element(find.byType(Scaffold).first)),
       TextDirection.rtl,
     );
+    await _chooseReceivingBranch(tester);
     await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('shared-catalog-search')), findsOneWidget);
@@ -101,10 +110,76 @@ void main() {
     expect(find.textContaining('3 علبة'), findsOneWidget);
   });
 
+  testWidgets('2b. كتالوج التحويل يتبع علامة الوجهة ويزيل المواد عند تغييرها', (
+    tester,
+  ) async {
+    await _pumpCreation(
+      tester,
+      products: [
+        _product(1, 'منتج العلامة أ'),
+        _product(2, 'منتج العلامة ب', brandId: 'brand-b', groupId: 'group-b'),
+      ],
+    );
+
+    await _chooseReceivingBranch(tester);
+    await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
+    await tester.pumpAndSettle();
+    expect(find.text('منتج العلامة أ'), findsOneWidget);
+    expect(find.text('منتج العلامة ب'), findsNothing);
+    await tester.tap(find.text('منتج العلامة أ'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('shared-catalog-unit-product-1-unit_1')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('purchase-item-quantity')),
+      '1',
+    );
+    await tester.tap(find.byKey(const Key('confirm-purchase-item')));
+    await tester.pumpAndSettle();
+    expect(find.text('منتج العلامة أ'), findsOneWidget);
+
+    await _chooseReceivingBranch(
+      tester,
+      branchDisplayName: 'العلامة ب — الفرع المستلم 2',
+    );
+    expect(
+      find.text(
+        'تم تغيير علامة الفرع المستلم، لذلك أزيلت مواد الفاتورة المختارة.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('منتج العلامة أ'), findsNothing);
+    await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
+    await tester.pumpAndSettle();
+    expect(find.text('منتج العلامة ب'), findsOneWidget);
+    expect(find.text('منتج العلامة أ'), findsNothing);
+    await tester.tap(find.text('منتج العلامة ب'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('shared-catalog-unit-product-2-unit_1')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('purchase-item-quantity')),
+      '1',
+    );
+    await tester.tap(find.byKey(const Key('confirm-purchase-item')));
+    await tester.pumpAndSettle();
+
+    await _chooseReceivingBranch(
+      tester,
+      branchDisplayName: 'العلامة ب — الفرع الرئيسي: الفرع الرئيسي للعلامة ب',
+    );
+    expect(find.text('منتج العلامة ب'), findsOneWidget);
+  });
+
   testWidgets('3. حد الخمسين سطرًا ظاهر ومطبق', (tester) async {
     await _pumpCreation(tester, initialItems: List.generate(50, _commandItem));
 
     expect(find.text('سطور الفاتورة (50/50)'), findsOneWidget);
+    await _chooseReceivingBranch(tester);
     await tester.ensureVisible(find.text('إضافة مادة'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('إضافة مادة'));
@@ -163,23 +238,26 @@ void main() {
             required productId,
             required unitId,
             required currency,
-          }) async => ProductPriceLatest(
-            id: 'latest-1',
-            latestKey: 'latest-1',
-            historyEventId: 'history-1',
-            brandId: brandId,
-            productId: productId,
-            unitId: unitId,
-            unitValue: 'علبة',
-            currency: currency,
-            price: 12.5,
-            sourceInvoiceId: 'INV-OLD',
-            changedBy: 'collector',
-            changedByName: 'المدير العام',
-            changedByRole: 'collector',
-            version: 3,
-            changedAt: DateTime(2026, 7, 1),
-          ),
+          }) async {
+            expect(brandId, 'brand-b');
+            return ProductPriceLatest(
+              id: 'latest-1',
+              latestKey: 'latest-1',
+              historyEventId: 'history-1',
+              brandId: brandId,
+              productId: productId,
+              unitId: unitId,
+              unitValue: 'علبة',
+              currency: currency,
+              price: 12.5,
+              sourceInvoiceId: 'INV-OLD',
+              changedBy: 'collector',
+              changedByName: 'المدير العام',
+              changedByRole: 'collector',
+              version: 3,
+              changedAt: DateTime(2026, 7, 1),
+            );
+          },
       directPriceSubmitter:
           ({
             required invoiceId,
@@ -382,10 +460,30 @@ Future<void> _pumpCreation(
         branches: const [
           DirectInvoiceBranchOption(
             id: 'main-a',
-            name: 'الفرع الرئيسي للعلامة',
+            name: 'الفرع الرئيسي للعلامة أ',
+            brandId: 'brand-a',
+            brandName: 'العلامة أ',
             isMainBranch: true,
           ),
-          DirectInvoiceBranchOption(id: 'branch-b', name: 'الفرع المستلم 1'),
+          DirectInvoiceBranchOption(
+            id: 'branch-b',
+            name: 'الفرع المستلم 1',
+            brandId: 'brand-a',
+            brandName: 'العلامة أ',
+          ),
+          DirectInvoiceBranchOption(
+            id: 'branch-c',
+            name: 'الفرع المستلم 2',
+            brandId: 'brand-b',
+            brandName: 'العلامة ب',
+          ),
+          DirectInvoiceBranchOption(
+            id: 'main-b',
+            name: 'الفرع الرئيسي للعلامة ب',
+            brandId: 'brand-b',
+            brandName: 'العلامة ب',
+            isMainBranch: true,
+          ),
         ],
         products: products ?? [_product(1, 'أرز فاخر')],
         initialItems: initialItems,
@@ -434,10 +532,13 @@ Future<void> _pumpApp(WidgetTester tester, Widget home) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> _chooseReceivingBranch(WidgetTester tester) async {
+Future<void> _chooseReceivingBranch(
+  WidgetTester tester, {
+  String branchDisplayName = 'العلامة أ — الفرع المستلم 1',
+}) async {
   await tester.tap(find.byType(DropdownButtonFormField<String>).first);
   await tester.pumpAndSettle();
-  await tester.tap(find.text('الفرع المستلم 1').last);
+  await tester.tap(find.text(branchDisplayName).last);
   await tester.pumpAndSettle();
 }
 
@@ -446,10 +547,15 @@ Stream<T> _valueStream<T>(T value) => Stream<T>.multi((controller) {
   controller.close();
 }, isBroadcast: true);
 
-ProductCatalogModel _product(int index, String name) => ProductCatalogModel(
+ProductCatalogModel _product(
+  int index,
+  String name, {
+  String brandId = 'brand-a',
+  String groupId = 'group-a',
+}) => ProductCatalogModel(
   id: 'product-$index',
-  brandId: 'brand-a',
-  groupId: 'group-a',
+  brandId: brandId,
+  groupId: groupId,
   name: name,
   normalizedName: name,
   units: const [

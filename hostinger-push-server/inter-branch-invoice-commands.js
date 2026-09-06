@@ -312,7 +312,7 @@ function assertClosedPublicItem(invoice, item, expectedId) {
       item.line_number > invoice.item_count ||
       typeof item.product_id !== "string" || !item.product_id ||
       !Number.isSafeInteger(item.product_version) || item.product_version < 1 ||
-      item.product_brand_id !== invoice.sending_brand_id ||
+      item.product_brand_id !== invoice.receiving_brand_id ||
       typeof item.product_name !== "string" || !item.product_name ||
       Buffer.byteLength(item.product_name, "utf8") > CATALOG_SNAPSHOT_LIMITS.productNameBytes ||
       !optionalStoredString(
@@ -853,13 +853,6 @@ async function createDirectInvoice({
             "A main branch cannot be used as a transfer source.",
         );
       }
-      if (supplying.brandId !== receiving.brandId) {
-        throw new CommandError(
-            "cross-brand-transfer",
-            403,
-            "Transfers must stay within one brand.",
-        );
-      }
       const nextNumber = validateCounter(counterSnapshot, supplying);
       const invoiceNumber = invoiceNumberFor(supplying.code, nextNumber);
 
@@ -886,11 +879,11 @@ async function createDirectInvoice({
             product.version < 1) {
           throw new CommandError("catalog-snapshot-invalid", 409, "A product identity is invalid.");
         }
-        if (String(product.brand_id || "") !== supplying.brandId) {
+        if (String(product.brand_id || "") !== receiving.brandId) {
           throw new CommandError(
               "product-brand-mismatch",
               403,
-              "A selected product does not belong to the supplying brand.",
+              "A selected product does not belong to the receiving branch brand.",
           );
         }
         const groupId = String(product.group_id || "").trim();
@@ -909,8 +902,12 @@ async function createDirectInvoice({
         if (!snapshot.exists ||
             group?.id !== groupId ||
             !activeCatalogDocument(group) ||
-            String(group.brand_id || "") !== supplying.brandId) {
-          throw new CommandError("group-invalid", 409, "A product group is not active for the brand.");
+            String(group.brand_id || "") !== receiving.brandId) {
+          throw new CommandError(
+              "group-invalid",
+              409,
+              "A product group is not active for the receiving branch brand.",
+          );
         }
         groups.set(groupId, group);
       });

@@ -1835,7 +1835,7 @@ class _InterBranchInvoiceDetailsScreenState
     final suggestions = await Future.wait(
       invoice.items.map(
         (item) => _loadPriceSuggestion(
-          brandId: invoice.sendingBrandId,
+          brandId: invoice.receivingBrandId,
           productId: item.productId,
           unitId: item.unitId,
           currency: currency,
