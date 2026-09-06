@@ -762,6 +762,24 @@ test("counter starting at one allocates the first v2 invoice as 0001", async () 
   assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 2);
 });
 
+test("collectors cannot create direct invoices or consume a sender counter", async () => {
+  const firestore = new FakeFirestore(seed());
+  await withServer(firestore, async (baseUrl) => {
+    const response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "collector",
+      key: "collector-direct-create-0001",
+      body: {
+        receiving_branch_id: "branch-r",
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 1}],
+      },
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error.code, "forbidden");
+  });
+  assert.equal(firestore.documents("inter_branch_invoices").length, 0);
+  assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 1);
+});
+
 test("main branches remain collector destinations and may receive cross-brand transfers", async () => {
   const firestore = new FakeFirestore(seed());
   await withServer(firestore, async (baseUrl) => {

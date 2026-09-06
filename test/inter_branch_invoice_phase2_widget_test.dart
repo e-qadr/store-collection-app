@@ -63,16 +63,32 @@ void main() {
     await tester.tap(find.byType(DropdownButtonFormField<String>).first);
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('العلامة أ — الفرع الرئيسي: الفرع الرئيسي للعلامة أ'),
-      findsOneWidget,
-    );
+    expect(find.text('العلامة أ — الفرع الرئيسي'), findsOneWidget);
     expect(find.text('العلامة أ — الفرع المستلم 1'), findsOneWidget);
     expect(find.text('العلامة ب — الفرع المستلم 2'), findsOneWidget);
-    expect(
-      find.text('العلامة ب — الفرع الرئيسي: الفرع الرئيسي للعلامة ب'),
-      findsOneWidget,
+    expect(find.text('العلامة ب — الفرع الرئيسي'), findsOneWidget);
+  });
+
+  test('1c. الفرع الرئيسي يعرض اسم العلامة السليم ولا يعرض نصاً مكسوراً', () {
+    const mainBranch = DirectInvoiceBranchOption(
+      id: 'main-a',
+      name: '?????',
+      brandId: 'brand-a',
+      brandName: 'الأصالة',
+      isMainBranch: true,
     );
+    const missingBrandName = DirectInvoiceBranchOption(
+      id: 'main-unknown',
+      name: '?????',
+      brandId: 'brand-unknown',
+      brandName: '?????',
+      isMainBranch: true,
+    );
+
+    expect(mainBranch.displayName, 'الأصالة — الفرع الرئيسي');
+    expect(missingBrandName.displayName, 'علامة تجارية — الفرع الرئيسي');
+    expect(mainBranch.displayName.contains('?'), isFalse);
+    expect(missingBrandName.displayName.contains('?'), isFalse);
   });
 
   testWidgets('2. البحث في المنتجات واختيار الوحدة يعملان باتجاه RTL', (
@@ -170,7 +186,7 @@ void main() {
 
     await _chooseReceivingBranch(
       tester,
-      branchDisplayName: 'العلامة ب — الفرع الرئيسي: الفرع الرئيسي للعلامة ب',
+      branchDisplayName: 'العلامة ب — الفرع الرئيسي',
     );
     expect(find.text('منتج العلامة ب'), findsOneWidget);
   });
@@ -185,6 +201,45 @@ void main() {
     await tester.tap(find.text('إضافة مادة'));
     await tester.pump();
     expect(find.textContaining('الحد الأقصى 50'), findsOneWidget);
+  });
+
+  testWidgets('3b. المدير العام لا يستطيع فتح شاشة إنشاء التحويل', (
+    tester,
+  ) async {
+    await _pumpCreation(tester, role: UserRole.collector);
+
+    expect(
+      find.text('إنشاء فاتورة التحويل متاح لمدير الفرع فقط.'),
+      findsOneWidget,
+    );
+    expect(find.text('إضافة مادة'), findsNothing);
+    expect(find.text('إنشاء وإرسال للمراجعة'), findsNothing);
+  });
+
+  testWidgets('3c. المدير العام يحتفظ بقائمة التحويلات دون إجراء الإنشاء', (
+    tester,
+  ) async {
+    await _pumpApp(
+      tester,
+      InterBranchInvoicesDashboard(
+        role: UserRole.collector,
+        branchName: 'جميع الفروع',
+        invoiceStream: _valueStream([
+          InterBranchInvoiceRead(
+            id: 'main-receipt',
+            data: _v2Header(
+              status: 'pendingPriceEntry',
+              receivingBranchId: 'main-a',
+            )..['receiving_branch_type'] = 'main',
+          ),
+        ]),
+        showAppBarActions: false,
+      ),
+    );
+
+    expect(find.text('فواتير بانتظار التسعير'), findsOneWidget);
+    expect(find.text('فاتورة جديدة'), findsNothing);
+    expect(find.text('فاتورة تحويل مباشرة'), findsNothing);
   });
 
   testWidgets('4. المدير المستلم يؤكد الكميات والفروقات', (tester) async {
@@ -446,6 +501,7 @@ void main() {
 
 Future<void> _pumpCreation(
   WidgetTester tester, {
+  UserRole role = UserRole.manager,
   List<ProductCatalogModel>? products,
   List<InterBranchInvoiceItem> initialItems = const [],
   DirectInvoiceSubmitter? submitter,
@@ -455,6 +511,7 @@ Future<void> _pumpCreation(
     NewInterBranchInvoiceScreen(
       branchId: 'branch-a',
       branchName: 'الفرع المورد',
+      role: role,
       fixture: DirectInvoiceCreationFixture(
         brandId: 'brand-a',
         branches: const [

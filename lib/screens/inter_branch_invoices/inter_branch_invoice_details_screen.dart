@@ -439,7 +439,7 @@ class _InterBranchInvoiceDetailsScreenState
                     Expanded(
                       child: _invoiceInfoBox(
                         'إلى الفرع',
-                        invoice.receivingBranchName,
+                        invoice.receivingBranchDisplayName,
                         Icons.storefront_rounded,
                       ),
                     ),

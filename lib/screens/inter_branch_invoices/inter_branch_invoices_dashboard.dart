@@ -374,6 +374,7 @@ class _InterBranchInvoicesDashboardState
   }
 
   void _openNewRequest() {
+    if (widget.role != UserRole.manager) return;
     final branchId = widget.branchId;
     if (branchId == null || branchId.isEmpty) return;
     Navigator.push(
@@ -382,6 +383,7 @@ class _InterBranchInvoicesDashboardState
         builder: (_) => NewInterBranchInvoiceScreen(
           branchId: branchId,
           branchName: widget.branchName,
+          role: widget.role,
         ),
       ),
     );
@@ -819,8 +821,7 @@ class _InterBranchInvoicesBoxScreenState
     if (widget.role == UserRole.manager && widget.box == _InvoiceBox.incoming) {
       return invoice.sendingBranchName;
     }
-    if (widget.role != UserRole.manager) return invoice.receivingBranchName;
-    return invoice.receivingBranchName;
+    return invoice.receivingBranchDisplayName;
   }
 
   String _effectiveBranchFilter(List<InterBranchInvoiceRead> invoices) {
@@ -1309,7 +1310,7 @@ class _InterBranchInvoicesBoxScreenState
                         Expanded(
                           child: _miniInfo(
                             'إلى',
-                            invoice.receivingBranchName,
+                            invoice.receivingBranchDisplayName,
                             Icons.call_received_rounded,
                           ),
                         ),

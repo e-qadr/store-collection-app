@@ -94,6 +94,18 @@ void main() {
       );
     });
 
+    test('a malformed historic main-branch name is not shown to the user', () {
+      final invoice = InterBranchInvoiceRead(
+        id: 'main-label',
+        data: <String, dynamic>{
+          InterBranchInvoiceFields.receivingBranchType: 'main',
+          InterBranchInvoiceFields.receivingBranchName: '?????',
+        },
+      );
+
+      expect(invoice.receivingBranchDisplayName, 'الفرع الرئيسي');
+    });
+
     test('price visibility excludes both supplying and receiving managers', () {
       expect(
         InterBranchInvoicePolicy.mayReadProtectedPrices(UserRole.manager),

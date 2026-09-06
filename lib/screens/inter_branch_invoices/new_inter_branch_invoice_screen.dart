@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
@@ -29,10 +30,22 @@ class DirectInvoiceBranchOption {
     this.isMainBranch = false,
   });
 
+  static String _readableLabel(String value, String fallback) {
+    final clean = value.trim();
+    // A few historical synthetic main-branch records contain question-mark
+    // placeholders. Never surface that broken source text to a user.
+    return clean.isEmpty || clean.contains('?') || clean.contains('\uFFFD')
+        ? fallback
+        : clean;
+  }
+
   /// The picker deliberately shows human names only. `brandId` remains an
   /// internal catalog-scope key and is never exposed in the UI.
-  String get displayName =>
-      '$brandName — ${isMainBranch ? 'الفرع الرئيسي: ' : ''}$name';
+  String get displayName {
+    final visibleBrand = _readableLabel(brandName, 'علامة تجارية');
+    if (isMainBranch) return '$visibleBrand — الفرع الرئيسي';
+    return '$visibleBrand — ${_readableLabel(name, 'فرع غير مسمى')}';
+  }
 }
 
 class DirectInvoiceCreationFixture {
@@ -62,6 +75,7 @@ class NewInterBranchInvoiceScreen extends StatefulWidget {
   /// resolves and verifies it; this value is only display/query context.
   final String branchId;
   final String branchName;
+  final UserRole role;
   final DirectInvoiceCreationFixture? fixture;
   final DirectInvoiceSubmitter? submitter;
 
@@ -69,6 +83,7 @@ class NewInterBranchInvoiceScreen extends StatefulWidget {
     super.key,
     required this.branchId,
     required this.branchName,
+    required this.role,
     this.fixture,
     this.submitter,
   });
@@ -99,6 +114,7 @@ class _NewInterBranchInvoiceScreenState
   bool _loadingProducts = false;
   bool _loadingBranches = false;
   bool _saving = false;
+  final Map<String, String> _canonicalBrandNames = <String, String>{};
   String? _receivingBranchId;
   String? _receivingBrandId;
   String? _selectedProductId;
@@ -108,7 +124,9 @@ class _NewInterBranchInvoiceScreenState
   void initState() {
     super.initState();
     _idempotencyKey = InterBranchInvoiceApiService.generateIdempotencyKey();
-    _contextFuture = _loadContext();
+    _contextFuture = widget.role == UserRole.manager
+        ? _loadContext()
+        : Future<_CreationContext>.value(const _CreationContext());
   }
 
   @override
@@ -122,6 +140,9 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Future<_CreationContext> _loadContext() async {
+    if (widget.role != UserRole.manager) {
+      throw StateError('إنشاء فاتورة التحويل متاح لمدير الفرع فقط.');
+    }
     final fixture = widget.fixture;
     if (fixture != null) {
       _branches = fixture.branches;
@@ -162,33 +183,37 @@ class _NewInterBranchInvoiceScreenState
         query = query.startAfterDocument(_branchCursor!);
       }
       final page = await query.get();
+      final destinationDocs = page.docs
+          .where(
+            (doc) =>
+                doc.id != widget.branchId &&
+                (doc.data()['brand_id']?.toString().trim().isNotEmpty ??
+                    false) &&
+                doc.data()['active'] != false &&
+                doc.data()['is_active'] != false,
+          )
+          .toList(growable: false);
+      final canonicalBrandNames = await _loadCanonicalBrandNames(
+        destinationDocs.map(
+          (doc) => doc.data()['brand_id']?.toString().trim() ?? '',
+        ),
+      );
       final loaded =
-          page.docs
-              .where(
-                (doc) =>
-                    doc.id != widget.branchId &&
-                    (doc.data()['brand_id']?.toString().trim().isNotEmpty ??
-                        false) &&
-                    doc.data()['active'] != false &&
-                    doc.data()['is_active'] != false,
-              )
-              .map(
-                (doc) => DirectInvoiceBranchOption(
+          destinationDocs
+              .map((doc) {
+                final data = doc.data();
+                final brandId = data['brand_id']?.toString().trim() ?? '';
+                return DirectInvoiceBranchOption(
                   id: doc.id,
-                  name: doc.data()['name']?.toString() ?? 'فرع غير مسمى',
-                  brandId: doc.data()['brand_id']?.toString().trim() ?? '',
+                  name: data['name']?.toString() ?? 'فرع غير مسمى',
+                  brandId: brandId,
                   brandName:
-                      doc
-                              .data()['company_name']
-                              ?.toString()
-                              .trim()
-                              .isNotEmpty ==
-                          true
-                      ? doc.data()['company_name'].toString().trim()
-                      : 'علامة تجارية',
-                  isMainBranch: doc.data()['branch_type'] == 'main',
-                ),
-              )
+                      canonicalBrandNames[brandId] ??
+                      data['company_name']?.toString() ??
+                      'علامة تجارية',
+                  isMainBranch: data['branch_type'] == 'main',
+                );
+              })
               .toList(growable: true)
             ..sort((left, right) {
               if (left.isMainBranch != right.isMainBranch) {
@@ -211,6 +236,37 @@ class _NewInterBranchInvoiceScreenState
     } finally {
       if (mounted) setState(() => _loadingBranches = false);
     }
+  }
+
+  Future<Map<String, String>> _loadCanonicalBrandNames(
+    Iterable<String> brandIds,
+  ) async {
+    final requestedIds = brandIds.where((id) => id.isNotEmpty).toSet();
+    final missingIds = requestedIds
+        .where((id) => !_canonicalBrandNames.containsKey(id))
+        .toList(growable: false);
+    for (var start = 0; start < missingIds.length; start += 30) {
+      final ids = missingIds.sublist(
+        start,
+        (start + 30).clamp(0, missingIds.length).toInt(),
+      );
+      final snapshot = await FirebaseFirestore.instance
+          .collection('brands')
+          .where(FieldPath.documentId, whereIn: ids)
+          .get();
+      for (final brand in snapshot.docs) {
+        final name = brand.data()['name']?.toString().trim() ?? '';
+        if (name.isNotEmpty &&
+            !name.contains('?') &&
+            !name.contains('\uFFFD')) {
+          _canonicalBrandNames[brand.id] = name;
+        }
+      }
+    }
+    return <String, String>{
+      for (final id in requestedIds)
+        if (_canonicalBrandNames.containsKey(id)) id: _canonicalBrandNames[id]!,
+    };
   }
 
   Future<void> _loadProducts({required bool reset}) async {
@@ -418,6 +474,10 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Future<void> _save() async {
+    if (widget.role != UserRole.manager) {
+      _showSnack('إنشاء فاتورة التحويل متاح لمدير الفرع فقط.');
+      return;
+    }
     if (_receivingBranchId == null || _items.isEmpty) {
       _showSnack('اختر الفرع المستلم وأضف منتجاً واحداً على الأقل.');
       return;
@@ -460,6 +520,27 @@ class _NewInterBranchInvoiceScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (widget.role != UserRole.manager) {
+      return Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          backgroundColor: AppTheme.surfaceColor,
+          appBar: AppBar(
+            title: const Text('فواتير التحويل بين الفروع'),
+            backgroundColor: AppTheme.collectorColor,
+          ),
+          body: const Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'إنشاء فاتورة التحويل متاح لمدير الفرع فقط.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(

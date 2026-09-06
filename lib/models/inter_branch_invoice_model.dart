@@ -259,6 +259,19 @@ class InterBranchInvoiceRead {
       data[InterBranchInvoiceFields.receivingBranchName]?.toString() ?? '';
   bool get isReceivingMainBranch =>
       data[InterBranchInvoiceFields.receivingBranchType]?.toString() == 'main';
+
+  /// Historical synthetic main-branch records sometimes contain a question-mark
+  /// placeholder instead of a readable branch name. Keep old invoices legible
+  /// without changing their stored audit data.
+  String get receivingBranchDisplayName {
+    final name = receivingBranchName.trim();
+    if (isReceivingMainBranch &&
+        (name.isEmpty || name.contains('?') || name.contains('\uFFFD'))) {
+      return 'الفرع الرئيسي';
+    }
+    return name;
+  }
+
   String get sendingBranchName =>
       data[InterBranchInvoiceFields.sendingBranchName]?.toString() ?? '';
   String get receivingBranchId =>
