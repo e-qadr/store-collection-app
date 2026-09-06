@@ -72,15 +72,13 @@ class InterBranchInvoiceService {
     required String invoiceId,
     required UserRole role,
     String? branchId,
-  }) => _v2ItemsQuery(
-    invoiceId: invoiceId,
-    role: role,
-    branchId: branchId,
-  ).snapshots().map(
-    (snapshot) => snapshot.docs
-        .map((document) => document.data())
-        .toList(growable: false),
-  );
+  }) => _v2ItemsQuery(invoiceId: invoiceId, role: role, branchId: branchId)
+      .snapshots()
+      .map(
+        (snapshot) => snapshot.docs
+            .map((document) => document.data())
+            .toList(growable: false),
+      );
 
   Future<List<Map<String, dynamic>>> fetchV2ItemDocuments({
     required String invoiceId,
@@ -144,6 +142,19 @@ class InterBranchInvoiceService {
           ],
         )
         .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(limit)
+        .snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> watchMainBranchReceiptQueue({
+    int limit = 50,
+  }) {
+    return _collection
+        .where(InterBranchInvoiceFields.receivingBranchType, isEqualTo: 'main')
+        .where(
+          InterBranchInvoiceFields.status,
+          isEqualTo: InterBranchInvoiceStatus.pendingReceiverReview.value,
+        )
         .limit(limit)
         .snapshots();
   }
@@ -213,6 +224,36 @@ class InterBranchInvoiceService {
     if (after != null) query = query.startAfterDocument(after);
     final snapshot = await query.get();
     return _page(snapshot, pageSize);
+  }
+
+  Future<InterBranchInvoicePage> fetchMainBranchReceiptPage({
+    int pageSize = 50,
+  }) async {
+    final snapshot = await _collection
+        .where(InterBranchInvoiceFields.receivingBranchType, isEqualTo: 'main')
+        .where(
+          InterBranchInvoiceFields.status,
+          isEqualTo: InterBranchInvoiceStatus.pendingReceiverReview.value,
+        )
+        .limit(pageSize)
+        .get();
+    final invoices =
+        snapshot.docs
+            .map((doc) => InterBranchInvoiceRead(id: doc.id, data: doc.data()))
+            .toList(growable: false)
+          ..sort(
+            (left, right) =>
+                (right.lastUpdated ?? DateTime.fromMillisecondsSinceEpoch(0))
+                    .compareTo(
+                      left.lastUpdated ??
+                          DateTime.fromMillisecondsSinceEpoch(0),
+                    ),
+          );
+    return InterBranchInvoicePage(
+      invoices: invoices,
+      cursor: null,
+      hasMore: false,
+    );
   }
 
   Future<InterBranchInvoicePage> fetchAllPage({

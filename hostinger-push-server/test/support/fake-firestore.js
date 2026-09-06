@@ -49,23 +49,27 @@ class FakeDocumentReference {
 }
 
 class FakeQuery {
-  constructor(firestore, collectionName, filters = [], orderBys = [], collectionGroup = false) {
+  constructor(firestore, collectionName, filters = [], orderBys = [], collectionGroup = false, limitValue = null) {
     this.firestore = firestore;
     this.collectionName = collectionName;
     this.filters = filters;
     this.orderBys = orderBys;
     this.collectionGroup = collectionGroup;
+    this.limitValue = limitValue;
     this.kind = "query";
   }
 
   where(field, operator, value) {
-    if (operator !== "==") throw new Error(`Unsupported fake query operator: ${operator}`);
+    if (!["==", ">=", "<="].includes(operator)) {
+      throw new Error(`Unsupported fake query operator: ${operator}`);
+    }
     return new FakeQuery(
         this.firestore,
         this.collectionName,
-        [...this.filters, {field, value}],
+        [...this.filters, {field, operator, value}],
         this.orderBys,
         this.collectionGroup,
+        this.limitValue,
     );
   }
 
@@ -79,6 +83,18 @@ class FakeQuery {
         this.filters,
         [...this.orderBys, {field, direction}],
         this.collectionGroup,
+        this.limitValue,
+    );
+  }
+
+  limit(value) {
+    return new FakeQuery(
+        this.firestore,
+        this.collectionName,
+        this.filters,
+        this.orderBys,
+        this.collectionGroup,
+        value,
     );
   }
 
@@ -223,8 +239,8 @@ class FakeFirestore {
       [[query.collectionName, this._collection(query.collectionName)]];
     for (const [collectionName, collection] of collections) {
       for (const [id, value] of collection) {
-        if (query.filters.every((filter) =>
-          valueAtFieldPath(value, filter.field) === filter.value)) {
+        if (query.filters.every((filter) => matchesFilter(
+            valueAtFieldPath(value, filter.field), filter))) {
           matches.push({id, value, collectionName});
         }
       }
@@ -238,11 +254,21 @@ class FakeFirestore {
       }
       return left.id.localeCompare(right.id);
     });
-    const documents = matches.map(({id, value, collectionName}) => {
+    const documents = (query.limitValue === null ? matches : matches.slice(0, query.limitValue))
+        .map(({id, value, collectionName}) => {
       const reference = new FakeDocumentReference(this, collectionName, id);
       return new FakeDocumentSnapshot(reference, value);
     });
     return {docs: documents, empty: documents.length === 0, size: documents.length};
+  }
+}
+
+function matchesFilter(actual, filter) {
+  switch (filter.operator) {
+    case "==": return actual === filter.value;
+    case ">=": return actual >= filter.value;
+    case "<=": return actual <= filter.value;
+    default: return false;
   }
 }
 

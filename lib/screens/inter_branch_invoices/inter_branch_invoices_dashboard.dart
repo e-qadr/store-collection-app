@@ -12,7 +12,7 @@ import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
-enum _InvoiceBox { incoming, outgoing }
+enum _InvoiceBox { incoming, outgoing, mainBranchIncoming }
 
 class _BranchFilterOption {
   final String id;
@@ -106,6 +106,7 @@ class _InterBranchInvoicesDashboardState
                     final invoices = snapshot.data ?? const [];
                     final incoming = _incomingInvoices(invoices);
                     final outgoing = _outgoingInvoices(invoices);
+                    final mainBranchIncoming = _mainBranchIncoming(invoices);
                     final dashboardInvoices = widget.role == UserRole.manager
                         ? [...incoming, ...outgoing]
                         : outgoing;
@@ -142,6 +143,19 @@ class _InterBranchInvoicesDashboardState
                             icon: Icons.move_to_inbox_rounded,
                             color: AppTheme.managerColor,
                             onTap: () => _openBox(_InvoiceBox.incoming),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (widget.role == UserRole.collector) ...[
+                          _controlCard(
+                            title: 'وارد الفروع الرئيسية',
+                            subtitle:
+                                'فواتير التحويل المرسلة إلى الفروع الرئيسية بانتظار تأكيد الاستلام.',
+                            countLabel: '${mainBranchIncoming.length}',
+                            icon: Icons.move_to_inbox_rounded,
+                            color: AppTheme.collectorColor,
+                            onTap: () =>
+                                _openBox(_InvoiceBox.mainBranchIncoming),
                           ),
                           const SizedBox(height: 12),
                         ],
@@ -221,7 +235,7 @@ class _InterBranchInvoicesDashboardState
     final fixtureStream = widget.invoiceStream;
     if (fixtureStream != null) return fixtureStream;
     final snapshotStream = switch (widget.role) {
-      UserRole.collector => _invoiceService.watchPricingQueue(),
+      UserRole.collector => _invoiceService.watchInvoices(role: widget.role),
       UserRole.accountant => _invoiceService.watchAccountingQueue(),
       UserRole.manager || UserRole.admin => _invoiceService.watchInvoices(
         role: widget.role,
@@ -450,6 +464,16 @@ class _InterBranchInvoicesDashboardState
     }).toList();
   }
 
+  List<InterBranchInvoiceRead> _mainBranchIncoming(
+    List<InterBranchInvoiceRead> invoices,
+  ) => invoices
+      .where(
+        (invoice) =>
+            invoice.isReceivingMainBranch &&
+            invoice.status == InterBranchInvoiceStatus.pendingReceiverReview,
+      )
+      .toList(growable: false);
+
   List<InterBranchInvoiceRead> _invoiceList(
     QuerySnapshot<Map<String, dynamic>>? snapshot,
   ) {
@@ -548,6 +572,9 @@ class _InterBranchInvoicesBoxScreenState
   Color get _roleColor => _roleColorFor(widget.role);
 
   String get _boxTitle {
+    if (widget.box == _InvoiceBox.mainBranchIncoming) {
+      return 'وارد الفروع الرئيسية';
+    }
     if (widget.role == UserRole.manager && widget.box == _InvoiceBox.incoming) {
       return 'الوارد إلى فرعي';
     }
@@ -585,6 +612,8 @@ class _InterBranchInvoicesBoxScreenState
           sent: widget.box == _InvoiceBox.outgoing,
           after: after,
         ),
+        UserRole.collector when widget.box == _InvoiceBox.mainBranchIncoming =>
+          await _service.fetchMainBranchReceiptPage(),
         UserRole.collector || UserRole.accountant =>
           await _service.fetchQueuePage(role: widget.role, after: after),
         UserRole.admin => await _service.fetchAllPage(
@@ -791,6 +820,16 @@ class _InterBranchInvoicesBoxScreenState
   List<InterBranchInvoiceRead> _scopedInvoices(
     List<InterBranchInvoiceRead> invoices,
   ) {
+    if (widget.box == _InvoiceBox.mainBranchIncoming) {
+      return invoices
+          .where(
+            (invoice) =>
+                invoice.isReceivingMainBranch &&
+                invoice.status ==
+                    InterBranchInvoiceStatus.pendingReceiverReview,
+          )
+          .toList(growable: false);
+    }
     if (widget.role != UserRole.manager) {
       return invoices.where((invoice) {
         return switch (widget.role) {

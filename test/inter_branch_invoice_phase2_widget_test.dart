@@ -224,6 +224,13 @@ void main() {
         branchName: 'جميع الفروع',
         invoiceStream: _valueStream([
           InterBranchInvoiceRead(
+            id: 'main-receipt-a',
+            data: _v2Header(
+              status: 'pendingReceiverReview',
+              receivingBranchId: 'main-a',
+            )..['receiving_branch_type'] = 'main',
+          ),
+          InterBranchInvoiceRead(
             id: 'main-receipt',
             data: _v2Header(
               status: 'pendingPriceEntry',
@@ -236,11 +243,30 @@ void main() {
     );
 
     expect(find.text('فواتير بانتظار التسعير'), findsOneWidget);
+    expect(find.text('وارد الفروع الرئيسية'), findsOneWidget);
     expect(find.text('فاتورة جديدة'), findsNothing);
     expect(find.text('فاتورة تحويل مباشرة'), findsNothing);
   });
 
-  testWidgets('3d. مدير الفرع يرى مداخل إنشاء التحويل من لوحة الفرع', (
+  testWidgets('3d. المدير العام يرى إجراء استلام وارد الفرع الرئيسي', (
+    tester,
+  ) async {
+    await _pumpDetails(
+      tester,
+      role: UserRole.collector,
+      header: _v2Header(
+        status: 'pendingReceiverReview',
+        receivingBranchId: 'main-a',
+      )..['receiving_branch_type'] = 'main',
+    );
+
+    expect(
+      find.widgetWithText(ElevatedButton, 'تأكيد استلام الإدارة الرئيسية'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('3e. مدير الفرع يرى مداخل إنشاء التحويل من لوحة الفرع', (
     tester,
   ) async {
     await _pumpApp(
@@ -411,7 +437,7 @@ void main() {
       'invalid-state',
       'unauthenticated',
       'stale-revision',
-      'counter-uninitialized',
+      'brand-identifier-missing',
     ];
     var attempt = 0;
     await _pumpCreation(

@@ -390,6 +390,21 @@ function invoiceNumberFor(branchCode, nextNumber) {
   return `${code}${String(nextNumber).padStart(4, "0")}`;
 }
 
+function brandInvoiceNumberFor(brandCode, nextNumber) {
+  const code = String(brandCode || "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,16}$/.test(code)) {
+    throw new CommandError(
+        "brand-identifier-invalid",
+        409,
+        "The source brand identifier is not configured.",
+    );
+  }
+  if (!Number.isSafeInteger(nextNumber) || nextNumber < 0 || nextNumber > 999) {
+    throw new CommandError("brand-counter-invalid", 409, "The brand invoice counter is invalid.");
+  }
+  return `${code}-${String(nextNumber).padStart(3, "0")}`;
+}
+
 function publicError(error) {
   if (error instanceof CommandError) {
     return {
@@ -415,6 +430,7 @@ module.exports = {
   assertNoPriceLikeKeys,
   canonicalJson,
   canonicalRequestHash,
+  brandInvoiceNumberFor,
   deterministicDocumentId,
   documentId,
   invoiceItemDigest,

@@ -7,6 +7,7 @@ const {
   canonicalRequestHash,
   invoiceItemDigest,
   invoiceNumberFor,
+  brandInvoiceNumberFor,
   productPriceLatestKey,
   utf8ByteLength,
   validateCreatePayload,
@@ -169,6 +170,16 @@ test("legacy invoice number formatting preserves zero and values above four digi
   assert.throws(
       () => invoiceNumberFor("A1", 1),
       (error) => error.code === "branch-code-invalid",
+  );
+});
+
+test("brand transfer numbers are fixed to the three-digit brand sequence", () => {
+  assert.equal(brandInvoiceNumberFor("eql", 0), "EQL-000");
+  assert.equal(brandInvoiceNumberFor("ASA", 9), "ASA-009");
+  assert.equal(brandInvoiceNumberFor("ASA", 999), "ASA-999");
+  assert.throws(
+      () => brandInvoiceNumberFor("ASA", 1000),
+      (error) => error.code === "brand-counter-invalid",
   );
 });
 
