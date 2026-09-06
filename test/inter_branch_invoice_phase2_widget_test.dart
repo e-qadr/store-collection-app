@@ -208,10 +208,7 @@ void main() {
   ) async {
     await _pumpCreation(tester, role: UserRole.collector);
 
-    expect(
-      find.text('إنشاء فاتورة التحويل متاح لمدير الفرع فقط.'),
-      findsOneWidget,
-    );
+    expect(find.text('لا تملك صلاحية إنشاء فواتير المناقلات.'), findsOneWidget);
     expect(find.text('إضافة مادة'), findsNothing);
     expect(find.text('إنشاء وإرسال للمراجعة'), findsNothing);
   });
@@ -223,6 +220,7 @@ void main() {
       tester,
       InterBranchInvoicesDashboard(
         role: UserRole.collector,
+        branchId: 'branch-a',
         branchName: 'جميع الفروع',
         invoiceStream: _valueStream([
           InterBranchInvoiceRead(
@@ -240,6 +238,24 @@ void main() {
     expect(find.text('فواتير بانتظار التسعير'), findsOneWidget);
     expect(find.text('فاتورة جديدة'), findsNothing);
     expect(find.text('فاتورة تحويل مباشرة'), findsNothing);
+  });
+
+  testWidgets('3d. مدير الفرع يرى مداخل إنشاء التحويل من لوحة الفرع', (
+    tester,
+  ) async {
+    await _pumpApp(
+      tester,
+      InterBranchInvoicesDashboard(
+        role: UserRole.manager,
+        branchId: 'branch-a',
+        branchName: 'فرع المورد',
+        invoiceStream: _valueStream(const []),
+        showAppBarActions: false,
+      ),
+    );
+
+    expect(find.text('فاتورة جديدة'), findsOneWidget);
+    expect(find.text('فاتورة تحويل مباشرة'), findsOneWidget);
   });
 
   testWidgets('4. المدير المستلم يؤكد الكميات والفروقات', (tester) async {

@@ -5,6 +5,39 @@ import 'package:store_collection_app/utils/inter_branch_invoice_policies.dart';
 
 void main() {
   group('direct inter-branch authorization policy', () {
+    test(
+      'only a branch manager with a source branch can create a transfer',
+      () {
+        expect(
+          InterBranchInvoicePolicy.canCreateInterBranchTransfer(
+            role: UserRole.manager,
+            branchId: 'branch-a',
+          ),
+          isTrue,
+        );
+        for (final role in const [
+          UserRole.collector,
+          UserRole.accountant,
+          UserRole.admin,
+        ]) {
+          expect(
+            InterBranchInvoicePolicy.canCreateInterBranchTransfer(
+              role: role,
+              branchId: 'branch-a',
+            ),
+            isFalse,
+          );
+        }
+        expect(
+          InterBranchInvoicePolicy.canCreateInterBranchTransfer(
+            role: UserRole.manager,
+            branchId: null,
+          ),
+          isFalse,
+        );
+      },
+    );
+
     test('only the receiving manager can confirm receipt', () {
       final invoice = _invoice(
         status: InterBranchInvoiceStatus.pendingReceiverReview,

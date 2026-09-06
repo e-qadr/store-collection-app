@@ -23,6 +23,15 @@ enum InterBranchInvoiceListScope {
 class InterBranchInvoicePolicy {
   InterBranchInvoicePolicy._();
 
+  static const creationDeniedMessage = 'لا تملك صلاحية إنشاء فواتير المناقلات.';
+
+  /// Receipt and pricing permissions never imply permission to create a
+  /// transfer. Creation is limited to a branch manager with a source branch.
+  static bool canCreateInterBranchTransfer({
+    required UserRole role,
+    required String? branchId,
+  }) => role == UserRole.manager && (branchId?.trim().isNotEmpty ?? false);
+
   static bool canView({
     required UserRole role,
     required String? branchId,

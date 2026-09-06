@@ -14,6 +14,7 @@ import 'package:store_collection_app/services/inter_branch_invoice_api_service.d
 import 'package:store_collection_app/services/inter_branch_invoice_service.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/inter_branch_invoice_policies.dart';
 
 class DirectInvoiceBranchOption {
   final String id;
@@ -124,10 +125,16 @@ class _NewInterBranchInvoiceScreenState
   void initState() {
     super.initState();
     _idempotencyKey = InterBranchInvoiceApiService.generateIdempotencyKey();
-    _contextFuture = widget.role == UserRole.manager
+    _contextFuture = _canCreateTransfer
         ? _loadContext()
         : Future<_CreationContext>.value(const _CreationContext());
   }
+
+  bool get _canCreateTransfer =>
+      InterBranchInvoicePolicy.canCreateInterBranchTransfer(
+        role: widget.role,
+        branchId: widget.branchId,
+      );
 
   @override
   void dispose() {
@@ -140,8 +147,8 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Future<_CreationContext> _loadContext() async {
-    if (widget.role != UserRole.manager) {
-      throw StateError('إنشاء فاتورة التحويل متاح لمدير الفرع فقط.');
+    if (!_canCreateTransfer) {
+      throw StateError(InterBranchInvoicePolicy.creationDeniedMessage);
     }
     final fixture = widget.fixture;
     if (fixture != null) {
@@ -474,8 +481,8 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Future<void> _save() async {
-    if (widget.role != UserRole.manager) {
-      _showSnack('إنشاء فاتورة التحويل متاح لمدير الفرع فقط.');
+    if (!_canCreateTransfer) {
+      _showSnack(InterBranchInvoicePolicy.creationDeniedMessage);
       return;
     }
     if (_receivingBranchId == null || _items.isEmpty) {
@@ -520,7 +527,7 @@ class _NewInterBranchInvoiceScreenState
 
   @override
   Widget build(BuildContext context) {
-    if (widget.role != UserRole.manager) {
+    if (!_canCreateTransfer) {
       return Directionality(
         textDirection: TextDirection.rtl,
         child: Scaffold(
@@ -533,7 +540,7 @@ class _NewInterBranchInvoiceScreenState
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Text(
-                'إنشاء فاتورة التحويل متاح لمدير الفرع فقط.',
+                InterBranchInvoicePolicy.creationDeniedMessage,
                 textAlign: TextAlign.center,
               ),
             ),

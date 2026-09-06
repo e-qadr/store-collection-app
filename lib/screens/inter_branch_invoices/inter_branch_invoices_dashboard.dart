@@ -7,6 +7,7 @@ import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_
 import 'package:store_collection_app/screens/inter_branch_invoices/new_inter_branch_invoice_screen.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/inter_branch_invoice_policies.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
@@ -49,9 +50,10 @@ class _InterBranchInvoicesDashboardState
       _service ??= InterBranchInvoiceService();
 
   bool get _canCreateInvoice =>
-      widget.role == UserRole.manager &&
-      widget.branchId != null &&
-      widget.branchId!.isNotEmpty;
+      InterBranchInvoicePolicy.canCreateInterBranchTransfer(
+        role: widget.role,
+        branchId: widget.branchId,
+      );
 
   bool get _hasBranch =>
       widget.branchId != null && widget.branchId!.trim().isNotEmpty;
@@ -374,7 +376,7 @@ class _InterBranchInvoicesDashboardState
   }
 
   void _openNewRequest() {
-    if (widget.role != UserRole.manager) return;
+    if (!_canCreateInvoice) return;
     final branchId = widget.branchId;
     if (branchId == null || branchId.isEmpty) return;
     Navigator.push(
