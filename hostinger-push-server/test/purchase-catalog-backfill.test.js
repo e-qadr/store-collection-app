@@ -50,6 +50,8 @@ test("purchase catalog backfill creates only one canonical operation for identic
   assert.equal(plan.counts.safe_products, 1);
   assert.equal(plan.counts.skipped, 0);
   assert.equal(plan.operations[0].source_invoice_item_paths.length, 2);
+  assert.equal(plan.candidates[0].source_snapshot.source_type, "unmatched");
+  assert.equal(containsProtectedKey(plan.candidates[0].source_snapshot), false);
   const product = productForOperation(plan.operations[0], plan);
   assert.equal(product.group_id, "group-1");
   assert.equal(product.units[0].raw_value, "حبة");

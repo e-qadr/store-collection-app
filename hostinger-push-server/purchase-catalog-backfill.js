@@ -104,8 +104,41 @@ function safeOperationFrom({candidate, group}) {
   };
 }
 
+function candidateSourceSnapshot(candidate) {
+  const data = candidate.data;
+  // This is a deliberately closed, public-only copy of the historical line.
+  // The backup must never become a second location for protected price data.
+  return {
+    document_path: candidate.path,
+    id: candidate.id,
+    invoice_id: optionalString(data.invoice_id),
+    workflow_identity: optionalString(data.workflow_identity),
+    receiving_branch_id: optionalString(data.receiving_branch_id),
+    receiving_brand_id: optionalString(data.receiving_brand_id),
+    line_number: Number.isSafeInteger(data.line_number) ? data.line_number : 0,
+    item_id: optionalString(data.item_id),
+    source_type: optionalString(data.source_type),
+    original_material_name: optionalString(data.original_material_name),
+    original_group_text: optionalString(data.original_group_text),
+    original_unit_text: optionalString(data.original_unit_text),
+    canonical_product_id: optionalString(data.canonical_product_id),
+    canonical_group_id: optionalString(data.canonical_group_id),
+    canonical_unit_id: optionalString(data.canonical_unit_id),
+    review_task_id: optionalString(data.review_task_id),
+    review_status: optionalString(data.review_status),
+    ordered_quantity: typeof data.ordered_quantity === "number" ? data.ordered_quantity : null,
+    line_notes: optionalString(data.line_notes),
+  };
+}
+
 function recordSkip(candidate, reason) {
-  return {path: candidate.path, item_id: candidate.id, decision: "skipped", reason};
+  return {
+    path: candidate.path,
+    item_id: candidate.id,
+    source_snapshot: candidateSourceSnapshot(candidate),
+    decision: "skipped",
+    reason,
+  };
 }
 
 // Pure planner used by both the bounded read-only audit and unit tests.
@@ -148,6 +181,7 @@ function buildBackfillPlan({projectId, scannedCount, scanReachedLimit, candidate
       report.push({
         path: candidate.path,
         item_id: candidate.id,
+        source_snapshot: candidateSourceSnapshot(candidate),
         decision: exact.length === 1 ? "already_present" : "skipped",
         ...(exact.length === 1
           ? {product_id: exact[0].id}
@@ -157,8 +191,13 @@ function buildBackfillPlan({projectId, scannedCount, scanReachedLimit, candidate
     }
     const operation = safeOperationFrom({candidate, group: matchingGroups[0]});
     safe.push(operation);
-    report.push({path: candidate.path, item_id: candidate.id, decision: "safe_to_create",
-      product_id: operation.product_id});
+    report.push({
+      path: candidate.path,
+      item_id: candidate.id,
+      source_snapshot: candidateSourceSnapshot(candidate),
+      decision: "safe_to_create",
+      product_id: operation.product_id,
+    });
   }
 
   const operations = [];
@@ -173,9 +212,14 @@ function buildBackfillPlan({projectId, scannedCount, scanReachedLimit, candidate
     if (!compatible) {
       for (const entry of entries) {
         const index = report.findIndex((row) => row.path === entry.source_invoice_item_paths[0]);
-        if (index >= 0) report[index] = recordSkip({
-          path: entry.source_invoice_item_paths[0], id: report[index].item_id,
-        }, "conflicting-safe-candidates-share-a-product-name");
+        if (index >= 0) {
+          const {product_id: ignoredProductId, ...prior} = report[index];
+          report[index] = {
+            ...prior,
+            decision: "skipped",
+            reason: "conflicting-safe-candidates-share-a-product-name",
+          };
+        }
       }
       continue;
     }
@@ -463,6 +507,7 @@ if (require.main === module) {
 
 module.exports = {
   buildBackfillPlan,
+  candidateSourceSnapshot,
   expectedConfirmation,
   expectedProductionConfirmation,
   isCompleteCanonicalItem,
