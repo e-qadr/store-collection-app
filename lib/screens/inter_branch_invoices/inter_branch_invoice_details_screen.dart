@@ -206,7 +206,16 @@ class _InterBranchInvoiceDetailsScreenState
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError) {
-              return const Center(child: Text('تعذر تحميل تفاصيل الفاتورة'));
+              return Center(
+                child: Text(
+                  _detailLoadErrorText(
+                    snapshot.error!,
+                    fallback: 'تعذر تحميل تفاصيل الفاتورة',
+                    permission: 'لا تملك صلاحية عرض هذه الفاتورة.',
+                    missing: 'الفاتورة غير موجودة.',
+                  ),
+                ),
+              );
             }
             final data = snapshot.data;
             if (data == null) {
@@ -235,8 +244,15 @@ class _InterBranchInvoiceDetailsScreenState
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (itemSnapshot.hasError) {
-                    return const Center(
-                      child: Text('تعذر تحميل أصناف الفاتورة'),
+                    return Center(
+                      child: Text(
+                        _detailLoadErrorText(
+                          itemSnapshot.error!,
+                          fallback: 'تعذر تحميل أصناف الفاتورة',
+                          permission: 'لا تملك صلاحية عرض أصناف هذه الفاتورة.',
+                          missing: 'أصناف الفاتورة غير موجودة.',
+                        ),
+                      ),
                     );
                   }
                   final invoice = header.withItemDocuments(
@@ -286,6 +302,24 @@ class _InterBranchInvoiceDetailsScreenState
       branchId: widget.branchId,
       invoice: invoice,
     );
+  }
+
+  String _detailLoadErrorText(
+    Object error, {
+    required String fallback,
+    required String permission,
+    required String missing,
+  }) {
+    if (error is FirebaseException) {
+      return switch (error.code) {
+        'permission-denied' => permission,
+        'not-found' => missing,
+        'unavailable' ||
+        'deadline-exceeded' => 'تعذر الاتصال بالخدمة. حاول لاحقاً.',
+        _ => fallback,
+      };
+    }
+    return fallback;
   }
 
   Future<InterBranchInvoicePriceSnapshot?> _loadProtectedPriceSnapshot(

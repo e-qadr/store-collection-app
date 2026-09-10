@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:store_collection_app/models/enums.dart';
@@ -433,6 +434,30 @@ void main() {
       expect(find.textContaining('تعذر تحميل تفاصيل الفاتورة'), findsNothing);
     },
   );
+
+  testWidgets('6c. أخطاء صلاحية التحويل تظهر بنص عربي آمن ومحدد', (
+    tester,
+  ) async {
+    await _pumpApp(
+      tester,
+      InterBranchInvoiceDetailsScreen(
+        invoiceId: 'invoice-1',
+        role: UserRole.manager,
+        branchId: 'branch-b',
+        branchName: 'فرع الاختبار',
+        invoiceDataStream: Stream<Map<String, dynamic>?>.error(
+          FirebaseException(
+            plugin: 'cloud_firestore',
+            code: 'permission-denied',
+          ),
+        ).asBroadcastStream(),
+        itemDataStream: _valueStream([_v2Item()]),
+      ),
+    );
+
+    expect(find.text('لا تملك صلاحية عرض هذه الفاتورة.'), findsOneWidget);
+    expect(find.text('تعذر تحميل تفاصيل الفاتورة'), findsNothing);
+  });
 
   testWidgets('7. المحاسب يرحل الفاتورة بمرجع محاسبي', (tester) async {
     String? submittedReference;
