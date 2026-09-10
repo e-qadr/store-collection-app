@@ -821,6 +821,7 @@ service cloud.firestore {
           'purchase_number',
           'receiving_branch_id',
           'receiving_branch_name',
+          'receiving_branch_type',
           'receiving_brand_id',
           'branch_ids',
           'item_count',
@@ -857,6 +858,7 @@ service cloud.firestore {
           'purchase_number',
           'receiving_branch_id',
           'receiving_branch_name',
+          'receiving_branch_type',
           'receiving_brand_id',
           'branch_ids',
           'item_count',
@@ -1362,6 +1364,9 @@ service cloud.firestore {
         data.schema_version == 2 &&
         data.workflow_version == 2 &&
         data.creation_mode == 'direct_supplier_invoice' &&
+        (!data.keys().hasAny(['receiving_branch_type']) ||
+          data.receiving_branch_type == 'branch' ||
+          data.receiving_branch_type == 'main') &&
         v2Status(data.status) &&
         data.sending_branch_id != data.receiving_branch_id &&
         data.branch_ids is list && data.branch_ids.size() == 2 &&
@@ -2135,6 +2140,9 @@ service cloud.firestore {
           'status',
           'reason',
           'changes',
+          'has_item_changes',
+          'item_change_count',
+          'item_change_digest',
           'includes_protected_price_changes',
           'required_approvers',
           'approvals',
@@ -2183,7 +2191,9 @@ service cloud.firestore {
           'supplier_invoice_date',
           'general_manager_notes'
         ]) &&
-        data.changes.size() > 0 &&
+        (data.changes.size() > 0 ||
+          data.get('has_item_changes', false) == true ||
+          data.includes_protected_price_changes == true) &&
         (!data.changes.keys().hasAny(['supplier_name']) ||
           validPurchaseAmendmentChange(data.changes.supplier_name)) &&
         (!data.changes.keys().hasAny(['supplier_invoice_number']) ||
@@ -2192,6 +2202,18 @@ service cloud.firestore {
           validPurchaseAmendmentChange(data.changes.supplier_invoice_date)) &&
         (!data.changes.keys().hasAny(['general_manager_notes']) ||
           validPurchaseAmendmentChange(data.changes.general_manager_notes)) &&
+        (!data.keys().hasAny(['has_item_changes']) ||
+          data.has_item_changes is bool) &&
+        (!data.keys().hasAny(['item_change_count']) ||
+          (data.item_change_count is int && data.item_change_count >= 0 &&
+            data.item_change_count <= 50)) &&
+        (!data.keys().hasAny(['item_change_digest']) ||
+          (data.item_change_digest is string && data.item_change_digest.size() == 64)) &&
+        (data.get('has_item_changes', false) == true ?
+          (data.get('item_change_count', 0) > 0 &&
+            data.get('item_change_digest', '') is string &&
+            data.get('item_change_digest', '').size() == 64) :
+          data.get('item_change_count', 0) == 0) &&
         data.includes_protected_price_changes is bool &&
         validPurchaseAmendmentActors(data.required_approvers, 2) &&
         validPurchaseAmendmentActors(data.approvals, 0) &&
@@ -2215,6 +2237,68 @@ service cloud.firestore {
     match /purchase_invoice_amendments/{amendmentId} {
       allow get, list: if mayReadPurchaseAmendment(resource.data);
       allow create, update, delete: if false;
+
+      function validPurchaseAmendmentItemValues(values) {
+        return values is map &&
+          values.keys().hasOnly([
+            'product_id', 'product_version', 'product_name',
+            'product_legacy_code', 'group_id', 'group_name',
+            'group_legacy_code', 'unit_id', 'unit_value', 'unit_raw_value',
+            'ordered_quantity', 'line_notes'
+          ]) &&
+          values.keys().hasAll([
+            'product_id', 'product_version', 'product_name', 'group_id',
+            'group_name', 'unit_id', 'unit_value', 'unit_raw_value',
+            'ordered_quantity', 'line_notes'
+          ]) &&
+          values.product_id is string && values.product_id.size() > 0 &&
+          values.product_version is int && values.product_version > 0 &&
+          values.product_name is string && values.product_name.size() > 0 &&
+          values.group_id is string && values.group_id.size() > 0 &&
+          values.group_name is string && values.group_name.size() > 0 &&
+          values.unit_id is string && values.unit_id.size() > 0 &&
+          values.unit_value is string && values.unit_value.size() > 0 &&
+          values.unit_raw_value is string && values.unit_raw_value.size() > 0 &&
+          values.ordered_quantity is number && values.ordered_quantity > 0 &&
+          values.line_notes is string &&
+          (!values.keys().hasAny(['product_legacy_code']) ||
+            values.product_legacy_code is string) &&
+          (!values.keys().hasAny(['group_legacy_code']) ||
+            values.group_legacy_code is string);
+      }
+
+      function validPurchaseAmendmentItem(itemId, data) {
+        return data is map &&
+          data.keys().hasOnly([
+            'id', 'amendment_id', 'invoice_id', 'receiving_branch_id',
+            'item_id', 'line_number', 'before', 'after'
+          ]) &&
+          data.keys().hasAll([
+            'id', 'amendment_id', 'invoice_id', 'receiving_branch_id',
+            'item_id', 'line_number', 'before', 'after'
+          ]) &&
+          data.id == itemId && data.item_id == itemId &&
+          data.amendment_id == amendmentId &&
+          data.invoice_id is string && data.invoice_id.size() > 0 &&
+          data.receiving_branch_id is string &&
+            data.receiving_branch_id.size() > 0 &&
+          data.line_number is int && data.line_number > 0 &&
+          validPurchaseAmendmentItemValues(data.before) &&
+          validPurchaseAmendmentItemValues(data.after);
+      }
+
+      function mayReadPurchaseAmendmentItem(itemId, data) {
+        return knownPurchaseUser() &&
+          validPurchaseAmendmentItem(itemId, data) &&
+          mayReadPurchaseAmendment(get(
+            /databases/$(database)/documents/purchase_invoice_amendments/$(amendmentId)
+          ).data);
+      }
+
+      match /items/{itemId} {
+        allow get, list: if mayReadPurchaseAmendmentItem(itemId, resource.data);
+        allow create, update, delete: if false;
+      }
     }
 
     match /purchase_invoice_amendment_prices/{amendmentId} {

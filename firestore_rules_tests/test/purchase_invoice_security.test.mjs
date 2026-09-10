@@ -230,6 +230,42 @@ test('public amendment requests are branch-visible while protected amendment pri
       requested_at: timestamp,
       updated_at: timestamp,
     });
+    const amendmentItemValues = {
+      product_id: 'product-1',
+      product_version: 1,
+      product_name: 'Canonical material',
+      group_id: 'group-r',
+      group_name: 'Group R',
+      unit_id: 'unit-1',
+      unit_value: 'Piece',
+      unit_raw_value: 'piece',
+      ordered_quantity: 2,
+      line_notes: '',
+    };
+    await setDoc(doc(
+      database, 'purchase_invoice_amendments', 'amendment-1', 'items', 'item-1',
+    ), {
+      id: 'item-1',
+      amendment_id: 'amendment-1',
+      invoice_id: 'purchase-1',
+      receiving_branch_id: 'branch-r',
+      item_id: 'item-1',
+      line_number: 1,
+      before: amendmentItemValues,
+      after: {...amendmentItemValues, ordered_quantity: 3},
+    });
+    await setDoc(doc(
+      database, 'purchase_invoice_amendments', 'amendment-1', 'items', 'bad-item',
+    ), {
+      id: 'bad-item',
+      amendment_id: 'amendment-1',
+      invoice_id: 'purchase-1',
+      receiving_branch_id: 'branch-r',
+      item_id: 'bad-item',
+      line_number: 2,
+      before: amendmentItemValues,
+      after: {...amendmentItemValues, unit_price: 99},
+    });
     await setDoc(doc(database, 'purchase_invoice_amendment_prices', 'amendment-1'), {
       id: 'amendment-1',
       amendment_id: 'amendment-1',
@@ -242,6 +278,15 @@ test('public amendment requests are branch-visible while protected amendment pri
   )));
   await assertFails(getDoc(doc(
     db('manager-x'), 'purchase_invoice_amendments', 'amendment-1',
+  )));
+  await assertSucceeds(getDoc(doc(
+    db('manager-r'), 'purchase_invoice_amendments', 'amendment-1', 'items', 'item-1',
+  )));
+  await assertFails(getDoc(doc(
+    db('manager-x'), 'purchase_invoice_amendments', 'amendment-1', 'items', 'item-1',
+  )));
+  await assertFails(getDoc(doc(
+    db('manager-r'), 'purchase_invoice_amendments', 'amendment-1', 'items', 'bad-item',
   )));
   await assertFails(getDoc(doc(
     db('manager-r'), 'purchase_invoice_amendment_prices', 'amendment-1',

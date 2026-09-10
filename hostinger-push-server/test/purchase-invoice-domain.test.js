@@ -8,6 +8,7 @@ const {
   normalizeCatalogText,
   productPriceLatestKey,
   purchaseItemDigest,
+  validateAmendmentCreatePayload,
   validateCreatePayload,
   validateCatalogPricePayload,
   validatePostingPayload,
@@ -168,6 +169,24 @@ test("receipt, pricing, posting override, and review payloads are closed", () =>
     action: "mark_synchronized",
     sync_state: "synchronized",
   }), (error) => error.code === "invalid-argument");
+});
+
+test("pre-receipt item amendment payloads preserve an explicit blank note and reject null", () => {
+  const base = {
+    expected_revision: 1,
+    reason: "Correct canonical line",
+    item_changes: [{item_id: "item-1", ordered_quantity: 3, line_notes: ""}],
+  };
+  assert.deepEqual(validateAmendmentCreatePayload(base).item_changes, [{
+    item_id: "item-1", ordered_quantity: 3, line_notes: "",
+  }]);
+  assert.throws(
+      () => validateAmendmentCreatePayload({
+        ...base,
+        item_changes: [{item_id: "item-1", line_notes: null}],
+      }),
+      (error) => error.code === "invalid-argument",
+  );
 });
 
 test("review product validation supports the bounded dynamic catalog unit limit", () => {

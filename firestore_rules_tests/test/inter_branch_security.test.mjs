@@ -153,6 +153,7 @@ function v2Invoice({
     sending_brand_id: brandA,
     receiving_branch_id: 'branch-b',
     receiving_branch_name: 'B',
+    receiving_branch_type: 'branch',
     receiving_brand_id: brandB,
     branch_ids: ['branch-a', 'branch-b'],
     item_count: itemCount,
@@ -257,6 +258,30 @@ test('v2 public invoices are readable only by participant managers and superviso
     collection(managerA, 'inter_branch_invoices'),
     where('branch_ids', 'array-contains', 'branch-c'),
     limit(50),
+  )));
+});
+
+test('v2 transfer headers with a public Main Branch type remain readable to both participant managers', async () => {
+  await seed('inter_branch_invoices', 'invoice-v2-main-type', v2Invoice({
+    id: 'invoice-v2-main-type',
+    extra: {receiving_branch_type: 'main'},
+  }));
+
+  for (const uid of ['manager-a', 'manager-b']) {
+    await assertSucceeds(getDoc(doc(
+      databaseFor(uid), 'inter_branch_invoices', 'invoice-v2-main-type',
+    )));
+  }
+  await assertFails(getDoc(doc(
+    databaseFor('manager-c'), 'inter_branch_invoices', 'invoice-v2-main-type',
+  )));
+
+  await seed('inter_branch_invoices', 'invoice-v2-invalid-branch-type', v2Invoice({
+    id: 'invoice-v2-invalid-branch-type',
+    extra: {receiving_branch_type: 'unexpected'},
+  }));
+  await assertFails(getDoc(doc(
+    databaseFor('manager-a'), 'inter_branch_invoices', 'invoice-v2-invalid-branch-type',
   )));
 });
 

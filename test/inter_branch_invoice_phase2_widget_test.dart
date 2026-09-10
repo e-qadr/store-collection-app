@@ -402,6 +402,38 @@ void main() {
     expect(find.textContaining('إجمالي سعر الفاتورة'), findsNothing);
   });
 
+  testWidgets(
+    '6b. مدير الفرع المورّد يفتح تحويل الفرع الرئيسي دون طلب السعر المحمي',
+    (tester) async {
+      var protectedLoaderCalled = false;
+      final header = _v2Header(
+        sendingBranchId: 'branch-b',
+        receivingBranchId: 'main-a',
+      )..['receiving_branch_type'] = 'main';
+      final item = _v2Item()
+        ..['branch_ids'] = const ['branch-b', 'main-a']
+        ..['sending_branch_id'] = 'branch-b'
+        ..['receiving_branch_id'] = 'main-a';
+
+      await _pumpDetails(
+        tester,
+        role: UserRole.manager,
+        branchId: 'branch-b',
+        header: header,
+        item: item,
+        protectedPriceSnapshotLoader: (_) async {
+          protectedLoaderCalled = true;
+          return null;
+        },
+      );
+
+      expect(find.textContaining('AA0051'), findsOneWidget);
+      expect(find.text('أرز فاخر'), findsOneWidget);
+      expect(protectedLoaderCalled, isFalse);
+      expect(find.textContaining('تعذر تحميل تفاصيل الفاتورة'), findsNothing);
+    },
+  );
+
   testWidgets('7. المحاسب يرحل الفاتورة بمرجع محاسبي', (tester) async {
     String? submittedReference;
     await _pumpDetails(

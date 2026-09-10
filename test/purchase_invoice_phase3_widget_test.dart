@@ -191,6 +191,35 @@ void main() {
     },
   );
 
+  testWidgets(
+    'receiving manager can request a controlled amendment in every pre-final stage',
+    (tester) async {
+      for (final status in const [
+        'pendingReceiverReview',
+        'pendingPriceEntry',
+        'pendingAccountingEntry',
+      ]) {
+        final invoice = fixtureInvoice(status: status);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PurchaseInvoiceDetailsScreen(
+              invoiceId: invoice.id,
+              role: UserRole.manager,
+              branchId: 'branch-r',
+              fixtureInvoice: invoice,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('request-purchase-amendment')),
+          findsOneWidget,
+          reason: status,
+        );
+      }
+    },
+  );
+
   testWidgets('accountant completes missing initial prices before posting', (
     tester,
   ) async {

@@ -326,11 +326,56 @@ function amendmentStringChange(input, field, maximumBytes, {date = false} = {}) 
     requiredString(input[field], field, maximumBytes);
 }
 
+function amendmentItemChange(raw, index) {
+  const field = `item_changes[${index}]`;
+  const item = object(raw, field);
+  onlyKeys(item, new Set([
+    "item_id", "product_id", "unit_id", "ordered_quantity", "line_notes",
+  ]), field);
+  const hasProduct = hasOwn(item, "product_id");
+  const hasUnit = hasOwn(item, "unit_id");
+  const hasQuantity = hasOwn(item, "ordered_quantity");
+  const hasNotes = hasOwn(item, "line_notes");
+  if (!hasProduct && !hasUnit && !hasQuantity && !hasNotes) {
+    throw new PurchaseCommandError(
+        "amendment-no-changes", 400, "An amendment item must include a change.",
+    );
+  }
+  // Selecting another product is always explicit about its unit.  A unit-only
+  // change remains valid and is checked against the existing product later.
+  if (hasProduct && !hasUnit) {
+    throw new PurchaseCommandError(
+        "invalid-argument", 400, `${field}.unit_id is required for a product change.`,
+    );
+  }
+  const quantity = hasQuantity ? number(item.ordered_quantity, `${field}.ordered_quantity`) : undefined;
+  if (quantity !== undefined && quantity <= 0) {
+    throw new PurchaseCommandError(
+        "invalid-argument", 400, `${field}.ordered_quantity is invalid.`,
+    );
+  }
+  const lineNotes = hasNotes ?
+    optionalString(item.line_notes, `${field}.line_notes`, MAX_LINE_NOTES_BYTES, {preserveEmpty: true}) :
+    undefined;
+  if (hasNotes && lineNotes === undefined) {
+    throw new PurchaseCommandError(
+        "invalid-argument", 400, `${field}.line_notes is invalid.`,
+    );
+  }
+  return compact({
+    item_id: documentId(item.item_id, `${field}.item_id`, MAX_ITEM_ID_BYTES),
+    product_id: hasProduct ? documentId(item.product_id, `${field}.product_id`) : undefined,
+    unit_id: hasUnit ? documentId(item.unit_id, `${field}.unit_id`, MAX_UNIT_ID_BYTES) : undefined,
+    ordered_quantity: quantity,
+    line_notes: lineNotes,
+  });
+}
+
 function validateAmendmentCreatePayload(body) {
   const input = object(body);
   onlyKeys(input, new Set([
     "expected_revision", "reason", "supplier_name", "supplier_invoice_number",
-    "supplier_invoice_date", "general_manager_notes", "price_items",
+    "supplier_invoice_date", "general_manager_notes", "price_items", "item_changes",
   ]), "body");
   const changes = compact({
     supplier_name: amendmentStringChange(input, "supplier_name", MAX_SUPPLIER_BYTES),
@@ -359,7 +404,12 @@ function validateAmendmentCreatePayload(body) {
     });
     ensureUniqueItemIds(priceItems);
   }
-  if (Object.keys(changes).length === 0 && !priceItems) {
+  let itemChanges;
+  if (hasOwn(input, "item_changes")) {
+    itemChanges = boundedItems(input.item_changes, "item_changes").map(amendmentItemChange);
+    ensureUniqueItemIds(itemChanges);
+  }
+  if (Object.keys(changes).length === 0 && !priceItems && !itemChanges) {
     throw new PurchaseCommandError(
         "amendment-no-changes", 400, "An amendment must include a change.",
     );
@@ -369,6 +419,7 @@ function validateAmendmentCreatePayload(body) {
     reason: requiredString(input.reason, "reason", MAX_NOTES_BYTES),
     changes,
     price_items: priceItems,
+    item_changes: itemChanges,
   });
 }
 

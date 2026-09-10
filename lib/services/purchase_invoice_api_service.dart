@@ -160,6 +160,32 @@ class PurchaseAmendmentPriceInput {
   Map<String, dynamic> toJson() => {'item_id': itemId, 'unit_price': unitPrice};
 }
 
+/// A public operational line change. Monetary changes stay in the separate
+/// protected amendment-price document and never travel in this payload type.
+class PurchaseAmendmentItemChangeInput {
+  final String itemId;
+  final String? productId;
+  final String? unitId;
+  final double? orderedQuantity;
+  final String? lineNotes;
+
+  const PurchaseAmendmentItemChangeInput({
+    required this.itemId,
+    this.productId,
+    this.unitId,
+    this.orderedQuantity,
+    this.lineNotes,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'item_id': itemId,
+    if (productId != null) 'product_id': productId,
+    if (unitId != null) 'unit_id': unitId,
+    if (orderedQuantity != null) 'ordered_quantity': orderedQuantity,
+    if (lineNotes != null) 'line_notes': lineNotes,
+  };
+}
+
 class PurchaseInvoiceApiService {
   static const maxItems = 50;
   static const supportedCurrencies = {'YER', 'SAR', 'USD'};
@@ -300,6 +326,7 @@ class PurchaseInvoiceApiService {
     String? supplierInvoiceDate,
     String? generalManagerNotes,
     List<PurchaseAmendmentPriceInput>? priceItems,
+    List<PurchaseAmendmentItemChangeInput>? itemChanges,
   }) => _command(
     '/v1/purchase-invoices/${Uri.encodeComponent(invoiceId)}/amendments',
     idempotencyKey,
@@ -315,6 +342,8 @@ class PurchaseInvoiceApiService {
         'general_manager_notes': generalManagerNotes.trim(),
       if (priceItems != null)
         'price_items': priceItems.map((item) => item.toJson()).toList(),
+      if (itemChanges != null)
+        'item_changes': itemChanges.map((item) => item.toJson()).toList(),
     },
   );
 

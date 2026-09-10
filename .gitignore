@@ -58,6 +58,7 @@ android/release-signing/
 **/*.jks
 hostinger-push-server/legacy-price-currency-map.json
 hostinger-push-server/*.migration.local.json
+hostinger-push-server/*.backfill.local.json
 
 # Server dependencies and deployment archives
 node_modules/

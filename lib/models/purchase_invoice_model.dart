@@ -44,6 +44,7 @@ class PurchaseInvoiceCollections {
   static const prices = 'purchase_invoice_prices';
   static const amendments = 'purchase_invoice_amendments';
   static const amendmentPrices = 'purchase_invoice_amendment_prices';
+  static const amendmentItems = 'items';
   static const reviewTasks = 'product_review_tasks';
   static const items = 'items';
 }
@@ -374,6 +375,8 @@ class PurchaseInvoiceAmendment {
   final String reason;
   final Map<String, Map<String, dynamic>> changes;
   final bool includesProtectedPriceChanges;
+  final bool hasItemChanges;
+  final int itemChangeCount;
   final List<PurchaseAmendmentActor> requiredApprovers;
   final List<PurchaseAmendmentActor> approvals;
   final String requestedByName;
@@ -389,6 +392,8 @@ class PurchaseInvoiceAmendment {
     required this.reason,
     required this.changes,
     required this.includesProtectedPriceChanges,
+    this.hasItemChanges = false,
+    this.itemChangeCount = 0,
     required this.requiredApprovers,
     required this.approvals,
     required this.requestedByName,
@@ -431,6 +436,8 @@ class PurchaseInvoiceAmendment {
       changes: changes,
       includesProtectedPriceChanges:
           data['includes_protected_price_changes'] == true,
+      hasItemChanges: data['has_item_changes'] == true,
+      itemChangeCount: (data['item_change_count'] as num?)?.toInt() ?? 0,
       requiredApprovers: actors(data['required_approvers']),
       approvals: actors(data['approvals']),
       requestedByName: data['requested_by_name']?.toString() ?? '',
@@ -448,6 +455,66 @@ class PurchaseInvoiceAmendment {
       .toList(growable: false);
 
   bool approvedBy(String uid) => approvals.any((actor) => actor.uid == uid);
+}
+
+class PurchaseInvoiceAmendmentItem {
+  final String id;
+  final String itemId;
+  final int lineNumber;
+  final PurchaseInvoiceAmendmentItemValues before;
+  final PurchaseInvoiceAmendmentItemValues after;
+
+  const PurchaseInvoiceAmendmentItem({
+    required this.id,
+    required this.itemId,
+    required this.lineNumber,
+    required this.before,
+    required this.after,
+  });
+
+  factory PurchaseInvoiceAmendmentItem.fromMap(
+    String id,
+    Map<String, dynamic> data,
+  ) => PurchaseInvoiceAmendmentItem(
+    id: data['id']?.toString() ?? id,
+    itemId: data['item_id']?.toString() ?? '',
+    lineNumber: (data['line_number'] as num?)?.toInt() ?? 0,
+    before: PurchaseInvoiceAmendmentItemValues.fromMap(
+      Map<String, dynamic>.from(data['before'] as Map? ?? const {}),
+    ),
+    after: PurchaseInvoiceAmendmentItemValues.fromMap(
+      Map<String, dynamic>.from(data['after'] as Map? ?? const {}),
+    ),
+  );
+}
+
+class PurchaseInvoiceAmendmentItemValues {
+  final String productId;
+  final String productName;
+  final String unitId;
+  final String unitValue;
+  final double orderedQuantity;
+  final String lineNotes;
+
+  const PurchaseInvoiceAmendmentItemValues({
+    required this.productId,
+    required this.productName,
+    required this.unitId,
+    required this.unitValue,
+    required this.orderedQuantity,
+    required this.lineNotes,
+  });
+
+  factory PurchaseInvoiceAmendmentItemValues.fromMap(
+    Map<String, dynamic> data,
+  ) => PurchaseInvoiceAmendmentItemValues(
+    productId: data['product_id']?.toString() ?? '',
+    productName: data['product_name']?.toString() ?? '',
+    unitId: data['unit_id']?.toString() ?? '',
+    unitValue: data['unit_value']?.toString() ?? '',
+    orderedQuantity: (data['ordered_quantity'] as num?)?.toDouble() ?? 0,
+    lineNotes: data['line_notes']?.toString() ?? '',
+  );
 }
 
 class PurchaseAmendmentActor {

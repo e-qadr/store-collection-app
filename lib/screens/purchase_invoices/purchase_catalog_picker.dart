@@ -239,6 +239,21 @@ class _PurchaseCatalogPickerDialogState
                 ),
               ),
               const SizedBox(height: 10),
+              // This must stay visible even when the brand already has catalog
+              // products: Purchase creates a canonical product, never an
+              // unmatched substitute.
+              if (widget.onCreateProduct != null) ...[
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: OutlinedButton.icon(
+                    key: const Key('purchase-add-new-catalog-material'),
+                    onPressed: _loading ? null : _createProduct,
+                    icon: const Icon(Icons.add_box_rounded),
+                    label: const Text('إضافة مادة جديدة'),
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
               if (_loading && _products.isEmpty)
                 const Expanded(
                   child: Center(child: CircularProgressIndicator()),
@@ -255,21 +270,7 @@ class _PurchaseCatalogPickerDialogState
               else if (_products.isEmpty)
                 Expanded(
                   child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('لا توجد مواد مطابقة للبحث.'),
-                        if (widget.onCreateProduct != null) ...[
-                          const SizedBox(height: 12),
-                          FilledButton.icon(
-                            key: const Key('purchase-add-new-catalog-material'),
-                            onPressed: _loading ? null : _createProduct,
-                            icon: const Icon(Icons.add_box_rounded),
-                            label: const Text('إضافة مادة جديدة'),
-                          ),
-                        ],
-                      ],
-                    ),
+                    child: const Text('لا توجد مواد مطابقة للبحث.'),
                   ),
                 )
               else

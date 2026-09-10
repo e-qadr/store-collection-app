@@ -7,9 +7,11 @@ import 'package:store_collection_app/models/product_price_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_price_model.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
+import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_pdf_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_service.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
 class PurchaseInvoiceDetailsScreen extends StatefulWidget {
@@ -33,10 +35,61 @@ class PurchaseInvoiceDetailsScreen extends StatefulWidget {
       _PurchaseInvoiceDetailsScreenState();
 }
 
+class _PurchaseAmendmentItemDraft {
+  final PurchaseInvoiceItem original;
+  final TextEditingController quantity;
+  final TextEditingController notes;
+  CatalogSelection? selection;
+
+  _PurchaseAmendmentItemDraft(this.original)
+    : quantity = TextEditingController(
+        text:
+            original.orderedQuantity == original.orderedQuantity.roundToDouble()
+            ? original.orderedQuantity.toInt().toString()
+            : original.orderedQuantity.toString(),
+      ),
+      notes = TextEditingController(text: original.lineNotes);
+
+  String get displayName => selection?.product.name ?? original.displayName;
+  String get displayUnit =>
+      selection?.unit.displayValue ?? original.displayUnit;
+
+  PurchaseAmendmentItemChangeInput? toInput() {
+    final nextQuantity = double.tryParse(quantity.text.trim());
+    if (nextQuantity == null || !nextQuantity.isFinite || nextQuantity <= 0) {
+      throw const FormatException();
+    }
+    final nextNotes = notes.text.trim();
+    final selected = selection;
+    final productChanged =
+        selected != null && selected.product.id != original.canonicalProductId;
+    final unitChanged =
+        selected != null && selected.unit.id != original.canonicalUnitId;
+    final quantityChanged = nextQuantity != original.orderedQuantity;
+    final notesChanged = nextNotes != original.lineNotes;
+    if (!productChanged && !unitChanged && !quantityChanged && !notesChanged) {
+      return null;
+    }
+    return PurchaseAmendmentItemChangeInput(
+      itemId: original.id,
+      productId: selected?.product.id,
+      unitId: selected?.unit.id,
+      orderedQuantity: quantityChanged ? nextQuantity : null,
+      lineNotes: notesChanged ? nextNotes : null,
+    );
+  }
+
+  void dispose() {
+    quantity.dispose();
+    notes.dispose();
+  }
+}
+
 class _PurchaseInvoiceDetailsScreenState
     extends State<PurchaseInvoiceDetailsScreen> {
   late final PurchaseInvoiceService _service = PurchaseInvoiceService();
   late final PurchaseInvoiceApiService _api = PurchaseInvoiceApiService();
+  late final ProductCatalogService _catalog = ProductCatalogService();
   late final Stream<PurchaseInvoiceRead?> _headerStream = _service.watchInvoice(
     widget.invoiceId,
   );
@@ -661,13 +714,23 @@ class _PurchaseInvoiceDetailsScreenState
   }
 
   bool _mayRequestAmendment(PurchaseInvoiceRead invoice) {
-    if (invoice.status != PurchaseInvoiceStatus.pendingReceiverReview) {
+    if (!const {
+      PurchaseInvoiceStatus.pendingReceiverReview,
+      PurchaseInvoiceStatus.pendingPriceEntry,
+      PurchaseInvoiceStatus.pendingAccountingEntry,
+    }.contains(invoice.status)) {
       return false;
     }
     if (widget.role == UserRole.manager) {
       return widget.branchId == invoice.receivingBranchId;
     }
-    return _mayReadPrices;
+    // The approval record is deliberately fixed to the originating General
+    // Manager, the receiving manager, and an accountant. Admins retain full
+    // visibility but do not bypass that required three-party workflow.
+    return const {
+      UserRole.collector,
+      UserRole.accountant,
+    }.contains(widget.role);
   }
 
   Widget _amendmentCard(
@@ -711,6 +774,7 @@ class _PurchaseInvoiceDetailsScreenState
                 '${entry.value['before'] ?? '-'} ← ${entry.value['after'] ?? '-'}',
               ),
             ),
+            if (amendment.hasItemChanges) _amendmentItems(amendment),
             const SizedBox(height: 8),
             Text(
               'تمت الموافقة: '
@@ -779,6 +843,43 @@ class _PurchaseInvoiceDetailsScreenState
         },
       );
 
+  Widget _amendmentItems(PurchaseInvoiceAmendment amendment) =>
+      StreamBuilder<List<PurchaseInvoiceAmendmentItem>>(
+        stream: _service.watchAmendmentItems(amendment.id),
+        builder: (context, snapshot) {
+          final items = snapshot.data ?? const [];
+          if (items.isEmpty) {
+            return const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('يتضمن الطلب تعديلات تشغيلية على المواد.'),
+            );
+          }
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'تعديلات المواد المقترحة',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                ...items.map(
+                  (item) => Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '${item.before.productName} (${item.before.unitValue}، '
+                      '${_number(item.before.orderedQuantity)}) ← '
+                      '${item.after.productName} (${item.after.unitValue}، '
+                      '${_number(item.after.orderedQuantity)})',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+
   String _amendmentFieldLabel(String field) => switch (field) {
     'supplier_name' => 'المورد',
     'supplier_invoice_number' => 'رقم فاتورة المورد',
@@ -800,6 +901,16 @@ class _PurchaseInvoiceDetailsScreenState
       text: invoice.supplierInvoiceDate,
     );
     final notes = TextEditingController(text: invoice.generalManagerNotes);
+    final itemDrafts =
+        invoice.status == PurchaseInvoiceStatus.pendingReceiverReview
+        ? invoice.items
+              .where(
+                (item) =>
+                    !item.isUnmatched && item.canonicalProductId.isNotEmpty,
+              )
+              .map(_PurchaseAmendmentItemDraft.new)
+              .toList(growable: false)
+        : const <_PurchaseAmendmentItemDraft>[];
     final priceControllers = <String, TextEditingController>{
       if (_mayReadPrices)
         for (final item in invoice.items)
@@ -807,79 +918,168 @@ class _PurchaseInvoiceDetailsScreenState
             text: prices?.provisionalPrices[item.id]?.toString() ?? '',
           ),
     };
+    void disposeDraftControllers() {
+      for (final controller in [
+        reason,
+        supplier,
+        supplierNumber,
+        supplierDate,
+        notes,
+        ...priceControllers.values,
+      ]) {
+        controller.dispose();
+      }
+      for (final draft in itemDrafts) {
+        draft.dispose();
+      }
+    }
+
     final accepted = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('طلب تعديل الفاتورة'),
-        content: SizedBox(
-          width: 520,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: reason,
-                  maxLines: 2,
-                  decoration: const InputDecoration(labelText: 'سبب التعديل *'),
-                ),
-                TextField(
-                  controller: supplier,
-                  decoration: const InputDecoration(labelText: 'المورد'),
-                ),
-                TextField(
-                  controller: supplierNumber,
-                  decoration: const InputDecoration(
-                    labelText: 'رقم فاتورة المورد',
-                  ),
-                ),
-                TextField(
-                  controller: supplierDate,
-                  decoration: const InputDecoration(
-                    labelText: 'تاريخ فاتورة المورد (YYYY-MM-DD)',
-                  ),
-                ),
-                TextField(
-                  controller: notes,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظات المدير العام',
-                  ),
-                ),
-                if (_mayReadPrices) ...[
-                  const SizedBox(height: 12),
-                  const Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      'تعديل السعر المحمي (اختياري)',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('طلب تعديل الفاتورة'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: reason,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'سبب التعديل *',
                     ),
                   ),
-                  ...invoice.items.map(
-                    (item) => TextField(
-                      controller: priceControllers[item.id],
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: InputDecoration(
-                        labelText: '${item.displayName} — ${item.displayUnit}',
-                      ),
+                  TextField(
+                    controller: supplier,
+                    decoration: const InputDecoration(labelText: 'المورد'),
+                  ),
+                  TextField(
+                    controller: supplierNumber,
+                    decoration: const InputDecoration(
+                      labelText: 'رقم فاتورة المورد',
                     ),
                   ),
+                  TextField(
+                    controller: supplierDate,
+                    decoration: const InputDecoration(
+                      labelText: 'تاريخ فاتورة المورد (YYYY-MM-DD)',
+                    ),
+                  ),
+                  TextField(
+                    controller: notes,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'ملاحظات المدير العام',
+                    ),
+                  ),
+                  if (itemDrafts.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'تعديل المواد والوحدات والكميات قبل الاستلام',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    ...itemDrafts.map(
+                      (draft) => Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                '${draft.displayName} — ${draft.displayUnit}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: TextButton.icon(
+                                  onPressed: () async {
+                                    final selection =
+                                        await showPurchaseCatalogPicker(
+                                          dialogContext,
+                                          brandId: invoice.receivingBrandId,
+                                          service: _catalog,
+                                        );
+                                    if (selection != null) {
+                                      setDialogState(
+                                        () => draft.selection = selection,
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.inventory_2_outlined),
+                                  label: const Text(
+                                    'اختيار مادة أو وحدة بديلة',
+                                  ),
+                                ),
+                              ),
+                              TextField(
+                                controller: draft.quantity,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                decoration: const InputDecoration(
+                                  labelText: 'الكمية',
+                                ),
+                              ),
+                              TextField(
+                                controller: draft.notes,
+                                maxLines: 2,
+                                decoration: const InputDecoration(
+                                  labelText: 'ملاحظة البند (اختيارية)',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (_mayReadPrices) ...[
+                    const SizedBox(height: 12),
+                    const Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'تعديل السعر المحمي (اختياري)',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    ...invoice.items.map(
+                      (item) => TextField(
+                        controller: priceControllers[item.id],
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText:
+                              '${item.displayName} — ${item.displayUnit}',
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('إرسال للموافقة'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('إرسال للموافقة'),
-          ),
-        ],
       ),
     );
     if (accepted == true) {
@@ -891,6 +1091,7 @@ class _PurchaseInvoiceDetailsScreenState
         final original = prices?.provisionalPrices[item.id];
         if (value == null || value < 0) {
           _message('تحقق من قيمة السعر المحمي.');
+          disposeDraftControllers();
           return;
         }
         if (value != original) {
@@ -904,8 +1105,19 @@ class _PurchaseInvoiceDetailsScreenState
           supplierNumber.text.trim() != invoice.supplierInvoiceNumber ||
           supplierDate.text.trim() != invoice.supplierInvoiceDate ||
           notes.text.trim() != invoice.generalManagerNotes;
+      final itemChanges = <PurchaseAmendmentItemChangeInput>[];
+      try {
+        for (final draft in itemDrafts) {
+          final change = draft.toInput();
+          if (change != null) itemChanges.add(change);
+        }
+      } on FormatException {
+        _message('تحقق من الكمية المقترحة لكل مادة.');
+        disposeDraftControllers();
+        return;
+      }
       if (reason.text.trim().isEmpty ||
-          (!hasHeaderChange && priceItems.isEmpty)) {
+          (!hasHeaderChange && priceItems.isEmpty && itemChanges.isEmpty)) {
         _message('أدخل سبباً وتغييراً واحداً على الأقل.');
       } else {
         await _run(
@@ -929,21 +1141,13 @@ class _PurchaseInvoiceDetailsScreenState
                 ? null
                 : notes.text,
             priceItems: priceItems.isEmpty ? null : priceItems,
+            itemChanges: itemChanges.isEmpty ? null : itemChanges,
             idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
           ),
         );
       }
     }
-    for (final controller in [
-      reason,
-      supplier,
-      supplierNumber,
-      supplierDate,
-      notes,
-      ...priceControllers.values,
-    ]) {
-      controller.dispose();
-    }
+    disposeDraftControllers();
   }
 
   Future<void> _rejectAmendment(

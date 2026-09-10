@@ -128,6 +128,28 @@ class PurchaseInvoiceService {
         });
   }
 
+  Stream<List<PurchaseInvoiceAmendmentItem>> watchAmendmentItems(
+    String amendmentId,
+  ) {
+    if (amendmentId.trim().isEmpty) return Stream.value(const []);
+    return _firestore
+        .collection(PurchaseInvoiceCollections.amendments)
+        .doc(amendmentId.trim())
+        .collection(PurchaseInvoiceCollections.amendmentItems)
+        .orderBy('line_number')
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map(
+                (document) => PurchaseInvoiceAmendmentItem.fromMap(
+                  document.id,
+                  document.data(),
+                ),
+              )
+              .toList(growable: false),
+        );
+  }
+
   Stream<PurchaseInvoiceAmendmentPrice?> watchProtectedAmendmentPrices(
     String amendmentId,
   ) {

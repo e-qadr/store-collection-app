@@ -480,6 +480,74 @@ test("new fully priced purchase confirms protected prices and bypasses the colle
   );
 });
 
+test("a fully approved protected price amendment keeps an accounting-ready invoice confirmed", async () => {
+  const firestore = new FakeFirestore(seed());
+  const payload = createPayload();
+  payload.items = [payload.items[0]];
+  const created = await createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload,
+    idempotencyKey: "confirmed-amendment-create-1",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  const invoiceId = created.responseData.invoice_id;
+  const [item] = publicItems(firestore, invoiceId);
+  await confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      items: [{
+        item_id: item.item_id,
+        received_quantity: 4,
+        damaged_quantity: 0,
+        missing_quantity: 1,
+      }],
+    },
+    idempotencyKey: "confirmed-amendment-receipt-1",
+    timestamp: now,
+  });
+  const amendment = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 2,
+      reason: "Correct a protected agreed price before posting.",
+      changes: {},
+      price_items: [{item_id: item.item_id, unit_price: 12}],
+    },
+    idempotencyKey: "confirmed-amendment-request-1",
+    timestamp: now,
+  });
+  const amendmentId = amendment.responseData.amendment_id;
+  const publicAmendment = firestore.document(COLLECTIONS.amendments, amendmentId);
+  assert.equal(publicAmendment.includes_protected_price_changes, true);
+  assert.doesNotMatch(JSON.stringify(publicAmendment), /unit_price|line_total|invoice_total/);
+  await decidePurchaseAmendment({
+    firestore, actorUid: "manager-r", invoiceId, amendmentId,
+    payload: {expected_revision: 2, decision: "approve"},
+    idempotencyKey: "confirmed-amendment-manager-1", timestamp: now,
+  });
+  await decidePurchaseAmendment({
+    firestore, actorUid: "accountant", invoiceId, amendmentId,
+    payload: {expected_revision: 2, decision: "approve"},
+    idempotencyKey: "confirmed-amendment-accountant-1", timestamp: now,
+  });
+  const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  const price = firestore.document(COLLECTIONS.prices, invoiceId);
+  assert.equal(invoice.status, "pendingAccountingEntry");
+  assert.equal(invoice.revision, 3);
+  assert.equal(price.pricing_state, "confirmed");
+  assert.equal(price.items[0].unit_price, 12);
+  assert.equal(price.items[0].line_total, 48);
+  assert.equal(price.invoice_total, 48);
+  assert.doesNotMatch(JSON.stringify(invoice), /unit_price|line_total|invoice_total/);
+});
+
 test("legacy purchase price drafts remain on the collector pricing path", async () => {
   const firestore = new FakeFirestore(seed());
   const {result} = await createInvoice(firestore, "legacy-price-flow-1");
@@ -998,6 +1066,136 @@ test("controlled amendment waits for all fixed approvers, keeps the invoice auth
   assert.ok(
       firestore.documents(COLLECTIONS.events)
           .some((event) => event.action === "purchase_amendment_applied" && event.revision === 2),
+  );
+});
+
+test("pre-receipt amendment atomically replaces a canonical purchase line without leaking prices", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore);
+  const invoiceId = result.responseData.invoice_id;
+  const original = publicItems(firestore, invoiceId)[0];
+  const created = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      reason: "Correct the selected catalog material before receipt.",
+      changes: {},
+      item_changes: [{
+        item_id: original.item_id,
+        product_id: "product-r-2",
+        unit_id: "box",
+        ordered_quantity: 7,
+        line_notes: "Corrected before receipt",
+      }],
+    },
+    idempotencyKey: "amend-item-create-0001",
+    timestamp: now,
+  });
+  const amendmentId = created.responseData.amendment_id;
+  const publicAmendment = firestore.document(COLLECTIONS.amendments, amendmentId);
+  const amendmentItem = firestore.document(
+      `${COLLECTIONS.amendments}/${amendmentId}/items`, original.item_id,
+  );
+  assert.equal(publicAmendment.has_item_changes, true);
+  assert.equal(publicAmendment.item_change_count, 1);
+  assert.match(publicAmendment.item_change_digest, /^[a-f0-9]{64}$/);
+  assert.equal(amendmentItem.before.product_id, "product-r");
+  assert.equal(amendmentItem.after.product_id, "product-r-2");
+  assert.equal(amendmentItem.after.unit_id, "box");
+  assert.equal(amendmentItem.after.ordered_quantity, 7);
+  assert.doesNotMatch(JSON.stringify(amendmentItem), /unit_price|invoice_total/);
+  assert.equal(publicItems(firestore, invoiceId)[0].canonical_product_id, "product-r");
+
+  await decidePurchaseAmendment({
+    firestore, actorUid: "manager-r", invoiceId, amendmentId,
+    payload: {expected_revision: 1, decision: "approve"},
+    idempotencyKey: "amend-item-manager-0001", timestamp: now,
+  });
+  await decidePurchaseAmendment({
+    firestore, actorUid: "accountant", invoiceId, amendmentId,
+    payload: {expected_revision: 1, decision: "approve"},
+    idempotencyKey: "amend-item-accountant-0001", timestamp: now,
+  });
+
+  const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  const amendedItem = publicItems(firestore, invoiceId)[0];
+  const protectedPrice = firestore.document(COLLECTIONS.prices, invoiceId);
+  assert.equal(invoice.revision, 2);
+  assert.equal(amendedItem.canonical_product_id, "product-r-2");
+  assert.equal(amendedItem.canonical_product_version, 2);
+  assert.equal(amendedItem.canonical_unit_id, "box");
+  assert.equal(amendedItem.ordered_quantity, 7);
+  assert.equal(amendedItem.line_notes, "Corrected before receipt");
+  assert.equal(protectedPrice.item_digest, invoice.item_digest);
+  assert.equal(
+      protectedPrice.provisional_items.some((item) => item.item_id === original.item_id),
+      false,
+  );
+});
+
+test("header-only amendments remain available through every pre-final purchase state", async () => {
+  for (const status of ["pendingReceiverReview", "pendingPriceEntry", "pendingAccountingEntry"]) {
+    const firestore = new FakeFirestore(seed());
+    const {result} = await createInvoice(firestore, `create-${status}`);
+    const invoiceId = result.responseData.invoice_id;
+    await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).update({status});
+    const created = await createPurchaseAmendment({
+      firestore,
+      actorUid: "collector",
+      invoiceId,
+      payload: {
+        expected_revision: 1,
+        reason: `Correct supplier reference during ${status}.`,
+        changes: {supplier_invoice_number: `S-${status}`},
+      },
+      idempotencyKey: `amend-stage-${status}`,
+      timestamp: now,
+    });
+    assert.equal(created.statusCode, 201);
+    await decidePurchaseAmendment({
+      firestore, actorUid: "manager-r", invoiceId,
+      amendmentId: created.responseData.amendment_id,
+      payload: {expected_revision: 1, decision: "approve"},
+      idempotencyKey: `amend-stage-manager-${status}`, timestamp: now,
+    });
+    await decidePurchaseAmendment({
+      firestore, actorUid: "accountant", invoiceId,
+      amendmentId: created.responseData.amendment_id,
+      payload: {expected_revision: 1, decision: "approve"},
+      idempotencyKey: `amend-stage-accountant-${status}`, timestamp: now,
+    });
+    const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+    assert.equal(invoice.status, status);
+    assert.equal(invoice.revision, 2);
+    assert.equal(invoice.supplier_invoice_number, `S-${status}`);
+  }
+});
+
+test("item amendments are rejected after receipt while final invoices remain blocked", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore);
+  const invoiceId = result.responseData.invoice_id;
+  const item = publicItems(firestore, invoiceId)[0];
+  await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).update({
+    status: "pendingAccountingEntry",
+  });
+  await assert.rejects(
+      () => createPurchaseAmendment({
+        firestore,
+        actorUid: "collector",
+        invoiceId,
+        payload: {
+          expected_revision: 1,
+          reason: "Too late for a line change.",
+          changes: {},
+          item_changes: [{item_id: item.item_id, ordered_quantity: 9}],
+        },
+        idempotencyKey: "amend-item-late-0001",
+        timestamp: now,
+      }),
+      (error) => error.code === "item-amendment-stage-blocked",
   );
 });
 
