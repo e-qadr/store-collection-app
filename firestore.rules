@@ -1131,6 +1131,15 @@ service cloud.firestore {
         (role() == 'collector' || role() == 'accountant' || role() == 'admin');
     }
 
+    // These predicates deliberately assume knownInterBranchUser() has already
+    // been established by their caller. Keeping that expensive profile/active
+    // check outside the per-document read branch avoids re-evaluating it for
+    // each supervisor and participant alternative.
+    function interBranchSupervisorRole() {
+      return role() == 'collector' || role() == 'accountant' ||
+        role() == 'admin';
+    }
+
     function actorBranchId() {
       return profile().get('branchId', '');
     }
@@ -1168,10 +1177,10 @@ service cloud.firestore {
     function mayReadInterBranchInvoice(invoiceId, data) {
       return knownInterBranchUser() &&
         ((workflowVersion(data) == 1 &&
-            (interBranchSupervisor() || managerParticipates(data))) ||
+            (interBranchSupervisorRole() || managerParticipates(data))) ||
           (workflowVersion(data) == 2 &&
             validV2PublicInvoice(invoiceId, data) &&
-            (interBranchSupervisor() || managerParticipates(data))));
+            (interBranchSupervisorRole() || managerParticipates(data))));
     }
 
     function validV2PublicItemData(invoiceId, item) {
@@ -1283,7 +1292,7 @@ service cloud.firestore {
       // metadata. The Admin SDK is the only writer and applies the same closed
       // schema used by strict single-document reads before every atomic write.
       return knownInterBranchUser() &&
-        (interBranchSupervisor() ||
+        (interBranchSupervisorRole() ||
           (role() == 'manager' &&
             item.branch_ids.hasAny([actorBranchId()])));
     }
@@ -1309,42 +1318,28 @@ service cloud.firestore {
         (eventCount < 4 || validV2PublicHistoryEvent(events[3]));
     }
 
+    // Header reads must reject every known financial/private field. Using a
+    // deny-list here is equivalent for backend-owned v2 headers, while
+    // avoiding the quadratic evaluation cost of comparing a 30+ field public
+    // allow-list against every field in a 50-line invoice header.
+    function hasNoV2HeaderPrivateFields(data) {
+      return !data.keys().hasAny([
+        'unit_price',
+        'total_price',
+        'line_total',
+        'invoice_total',
+        'total_amount',
+        'currency',
+        'accounting_notes',
+        'protected_prices',
+        'price_snapshot',
+        'price_history'
+      ]);
+    }
+
     function validV2PublicInvoiceData(data) {
       return data is map &&
-        data.keys().hasOnly([
-          'id',
-          'schema_version',
-          'workflow_version',
-          'creation_mode',
-          'status',
-          'revision',
-          'invoice_number',
-          'branch_code',
-          'sending_branch_id',
-          'sending_branch_name',
-          'sending_brand_id',
-          'receiving_branch_id',
-          'receiving_branch_name',
-          'receiving_brand_id',
-          'branch_ids',
-          'item_count',
-          'item_digest',
-          'invoice_notes',
-          'receiver_notes',
-          'receipt_confirmed_by',
-          'receipt_confirmed_by_name',
-          'receipt_confirmed_at',
-          'accounting_reference',
-          'posted_by',
-          'posted_by_name',
-          'posted_at',
-          'created_by',
-          'created_by_name',
-          'created_by_role',
-          'created_at',
-          'last_updated',
-          'history'
-        ]) && data.keys().hasAll([
+        hasNoV2HeaderPrivateFields(data) && data.keys().hasAll([
           'id',
           'schema_version',
           'workflow_version',
@@ -1397,7 +1392,7 @@ service cloud.firestore {
       // v2 identity/schema checks are applied to direct document reads, while
       // all v2 writes remain backend-only.
       return knownInterBranchUser() &&
-        (interBranchSupervisor() ||
+        (interBranchSupervisorRole() ||
           (role() == 'manager' &&
             data.branch_ids.hasAny([actorBranchId()])));
     }
@@ -2007,14 +2002,151 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Existing application collections retain their current permissions in
-    // Phase 1. Their schema/workflow changes belong to later approved phases.
-    match /transactions/{document=**} {
-      allow read, write: if operationalUser();
+    // Collection vouchers are financial evidence. Creation and every later
+    // transition remain client-operated for legacy compatibility, but no
+    // longer have a blanket operational-user write permission.
+    function collectionManagerFor(data) {
+      return role() == 'manager' &&
+        profile().get('branchId', '') == data.get('branchId', '');
     }
 
-    match /branch_transaction_counters/{document=**} {
-      allow read, write: if operationalUser();
+    function collectionCreatorFor(data) {
+      return role() == 'collector' &&
+        data.get('collectorId', '') == request.auth.uid;
+    }
+
+    function collectionActorForArchive(data) {
+      return collectionCreatorFor(data) || collectionManagerFor(data) ||
+        role() == 'accountant';
+    }
+
+    function collectionAuditUpdate() {
+      return request.resource.data.get('last_updated', null) == request.time &&
+        request.resource.data.get('history', []) is list;
+    }
+
+    function collectionCreateAllowed(data) {
+      return role() == 'collector' && data.get('collectorId', '') ==
+        request.auth.uid && data.get('status', '') == 'pending' &&
+        data.get('branchId', '') is string &&
+        data.get('transaction_number', '') is string &&
+        data.get('history', []) is list;
+    }
+
+    function collectionManagerDecisionAllowed() {
+      let current = resource.data.get('status', '');
+      let next = request.resource.data.get('status', '');
+      return collectionManagerFor(resource.data) &&
+        ((current == 'pending' &&
+            (next == 'approvedByManager' || next == 'rejectedByManager' ||
+              next == 'editRequestedByCollector')) ||
+          (current == 'approvedByCollector' && next == 'approvedByManager') ||
+          (current == 'pendingApprovalOfEdit' &&
+            (next == 'approvedByManager' || next == 'editRequestedByCollector'))) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'manager_notes', 'amount', 'currency', 'dateFrom',
+          'dateTo', 'notes', 'amount_matches', 'cashier_amount',
+          'pending_edit_data', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionCollectorEditAllowed() {
+      return collectionCreatorFor(resource.data) &&
+        resource.data.get('status', '') == 'editRequestedByCollector' &&
+        request.resource.data.get('status', '') == 'pendingApprovalOfEdit' &&
+        request.resource.data.get('pending_edit_data', null) is map &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'pending_edit_data', 'status', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionAccountantTransitionAllowed() {
+      let current = resource.data.get('status', '');
+      let next = request.resource.data.get('status', '');
+      return role() == 'accountant' &&
+        ((current == 'approvedByManager' &&
+            (next == 'editRequestedByCollector' || next == 'approvedByAccountant')) ||
+          (current == 'approvedByCollector' && next == 'approvedByAccountant')) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'manager_notes', 'previous_status', 'accountant_notes',
+          'last_updated', 'history'
+        ]);
+    }
+
+    function collectionArchiveRequestAllowed() {
+      return resource.data.get('archive_status', '') != 'pending' &&
+        resource.data.get('archive_status', '') != 'archived' &&
+        request.resource.data.get('archive_status', '') == 'pending' &&
+        collectionActorForArchive(resource.data) &&
+        request.resource.data.get('archive_requested_by', '') == request.auth.uid &&
+        request.resource.data.get('archive_requested_at', null) == request.time &&
+        request.resource.data.get('archive_approvals', {}) is map &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'archive_status', 'archive_requested_by', 'archive_requested_at',
+          'archive_approvals', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionArchiveApprovalAllowed() {
+      let approvals = request.resource.data.get('archive_approvals', {});
+      let currentApprovals = resource.data.get('archive_approvals', {});
+      return resource.data.get('archive_status', '') == 'pending' &&
+        collectionActorForArchive(resource.data) && approvals is map &&
+        currentApprovals is map &&
+        !currentApprovals.keys().hasAny([role()]) &&
+        approvals.get(role(), {}).get('user_id', '') == request.auth.uid &&
+        (request.resource.data.get('archive_status', '') == 'pending' ||
+          (request.resource.data.get('archive_status', '') == 'archived' &&
+            approvals.keys().hasAll(['collector', 'manager', 'accountant']))) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'archive_status', 'archive_approvals', 'archived_at', 'last_updated',
+          'history'
+        ]);
+    }
+
+    function collectionUpdateAllowed() {
+      return collectionAuditUpdate() &&
+        (collectionManagerDecisionAllowed() || collectionCollectorEditAllowed() ||
+          collectionAccountantTransitionAllowed() || collectionArchiveRequestAllowed() ||
+          collectionArchiveApprovalAllowed());
+    }
+
+    function collectionCounterCreateAllowed(branchId, data) {
+      return role() == 'collector' && data.get('branch_id', '') == branchId &&
+        data.get('next_number', -1) is int && data.next_number >= 1 &&
+        data.get('branch_code', '') is string;
+    }
+
+    function collectionCounterUpdateAllowed(branchId) {
+      return role() == 'collector' &&
+        request.resource.data.get('branch_id', '') == branchId &&
+        request.resource.data.get('branch_code', '') ==
+          resource.data.get('branch_code', '') &&
+        request.resource.data.get('next_number', -1) ==
+          resource.data.get('next_number', 0) + 1 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'next_number'
+        ]);
+    }
+
+    match /transactions/{transactionId} {
+      allow get, list: if operationalUser();
+      allow create: if operationalUser() && collectionCreateAllowed(
+        request.resource.data
+      );
+      allow update: if operationalUser() && collectionUpdateAllowed();
+      allow delete: if false;
+    }
+
+    match /branch_transaction_counters/{branchId} {
+      allow get, list: if operationalUser();
+      allow create: if operationalUser() && collectionCounterCreateAllowed(
+        branchId, request.resource.data
+      );
+      allow update: if operationalUser() && collectionCounterUpdateAllowed(
+        branchId
+      );
+      allow delete: if false;
     }
 
     match /notifications/{notificationId} {
@@ -2122,12 +2254,209 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /cash_expense_requests/{document=**} {
-      allow read, write: if operationalUser();
+    // Cash expenses preserve their existing manager → general-manager →
+    // accountant lifecycle, including the existing unanimous edit-request
+    // gate. Every client mutation below is tied to a role, branch, state and
+    // recorded actor field; documents are never hard-deleted.
+    function cashExpenseManagerFor(data) {
+      return role() == 'manager' &&
+        profile().get('branchId', '') == data.get('branch_id', '');
     }
 
-    match /cash_expense_request_counters/{document=**} {
-      allow read, write: if operationalUser();
+    function cashExpenseAuditUpdate() {
+      return request.resource.data.get('last_updated', null) == request.time &&
+        request.resource.data.get('history', []) is list;
+    }
+
+    function cashExpenseCreateAllowed(data) {
+      return role() == 'manager' &&
+        profile().get('branchId', '') == data.get('branch_id', '') &&
+        data.get('created_by', '') == request.auth.uid &&
+        data.get('status', '') == 'pendingGeneralManagerReview' &&
+        data.get('created_at', null) == request.time &&
+        data.get('last_updated', null) == request.time &&
+        data.get('requested_amount', 0) is number &&
+        data.requested_amount > 0 && data.get('history', []) is list;
+    }
+
+    function cashExpenseGeneralManagerDecisionAllowed() {
+      let next = request.resource.data.get('status', '');
+      let rejection = next == 'rejectedByGeneralManager';
+      let approval = next == 'pendingInvoiceAttachment' ||
+        next == 'pendingAccountingApproval';
+      return role() == 'collector' &&
+        resource.data.get('status', '') == 'pendingGeneralManagerReview' &&
+        (rejection || approval) &&
+        request.resource.data.get('reviewed_by', '') == request.auth.uid &&
+        request.resource.data.get('reviewed_at', null) == request.time &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'rejection_reason', 'general_manager_notes', 'title',
+          'description', 'approved_amount', 'reviewed_by', 'reviewed_at',
+          'last_updated', 'history'
+        ]) &&
+        (rejection ?
+          request.resource.data.get('rejection_reason', '') is string &&
+            request.resource.data.rejection_reason.size() > 0 :
+          request.resource.data.get('approved_amount', 0) is number &&
+            request.resource.data.approved_amount > 0);
+    }
+
+    function cashExpenseInvoiceDecisionAllowed() {
+      return cashExpenseManagerFor(resource.data) &&
+        resource.data.get('status', '') == 'pendingInvoiceAttachment' &&
+        request.resource.data.get('status', '') == 'pendingAccountingApproval' &&
+        request.resource.data.get('invoice_approved_by', '') == request.auth.uid &&
+        request.resource.data.get('invoice_approved_at', null) == request.time &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'invoice_attachment', 'invoice_notes', 'invoice_approved_by',
+          'invoice_approved_at', 'last_updated', 'history'
+        ]);
+    }
+
+    function cashExpenseAccountingDecisionAllowed() {
+      return role() == 'accountant' &&
+        resource.data.get('status', '') == 'pendingAccountingApproval' &&
+        request.resource.data.get('status', '') == 'approvedByAccountant' &&
+        request.resource.data.get('approved_by', '') == request.auth.uid &&
+        request.resource.data.get('approved_at', null) == request.time &&
+        request.resource.data.get('accounting_reference', '') is string &&
+        request.resource.data.accounting_reference.size() > 0 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'accounting_reference', 'accountant_notes', 'approved_by',
+          'approved_at', 'last_updated', 'history'
+        ]);
+    }
+
+    function cashExpenseEditRequesterAllowed() {
+      let current = resource.data.get('status', '');
+      let requestData = request.resource.data.get('edit_request', {});
+      return current != 'approvedByAccountant' &&
+        current != 'rejectedByGeneralManager' &&
+        current != 'editPendingApprovals' &&
+        (cashExpenseManagerFor(resource.data) || role() == 'collector' ||
+          role() == 'accountant') &&
+        request.resource.data.get('status', '') == 'editPendingApprovals' &&
+        request.resource.data.get('previous_status', '') == current &&
+        requestData is map &&
+        requestData.get('reason', '') is string && requestData.reason.size() > 0 &&
+        requestData.get('requested_by', '') == request.auth.uid &&
+        requestData.get('requested_role', '') == role() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'previous_status', 'edit_request', 'edit_approvals',
+          'last_updated', 'history'
+        ]);
+    }
+
+    function cashExpenseManagerEditApprovalAllowed() {
+      let approvals = resource.data.get('edit_approvals', {});
+      let nextApprovals = request.resource.data.get('edit_approvals', {});
+      return cashExpenseManagerFor(resource.data) && approvals is map &&
+        nextApprovals is map && !approvals.keys().hasAny(['manager']) &&
+        nextApprovals.get('manager', {}).get('actor_id', '') == request.auth.uid &&
+        nextApprovals.diff(approvals).affectedKeys().hasOnly(['manager']);
+    }
+
+    function cashExpenseCollectorEditApprovalAllowed() {
+      let approvals = resource.data.get('edit_approvals', {});
+      let nextApprovals = request.resource.data.get('edit_approvals', {});
+      return role() == 'collector' && approvals is map && nextApprovals is map &&
+        !approvals.keys().hasAny(['general_manager']) &&
+        nextApprovals.get('general_manager', {}).get('actor_id', '') ==
+          request.auth.uid &&
+        nextApprovals.diff(approvals).affectedKeys().hasOnly([
+          'general_manager'
+        ]);
+    }
+
+    function cashExpenseAccountantEditApprovalAllowed() {
+      let approvals = resource.data.get('edit_approvals', {});
+      let nextApprovals = request.resource.data.get('edit_approvals', {});
+      return role() == 'accountant' && approvals is map && nextApprovals is map &&
+        !approvals.keys().hasAny(['accountant']) &&
+        nextApprovals.get('accountant', {}).get('actor_id', '') == request.auth.uid &&
+        nextApprovals.diff(approvals).affectedKeys().hasOnly(['accountant']);
+    }
+
+    function cashExpenseEditDecisionAllowed() {
+      let next = request.resource.data.get('status', '');
+      let approvals = request.resource.data.get('edit_approvals', {});
+      let actorApproves = (cashExpenseManagerEditApprovalAllowed() ||
+        cashExpenseCollectorEditApprovalAllowed() ||
+        cashExpenseAccountantEditApprovalAllowed());
+      return resource.data.get('status', '') == 'editPendingApprovals' &&
+        actorApproves && approvals is map &&
+        (next == resource.data.get('previous_status', '') ||
+          next == 'editPendingApprovals' ||
+          (next == 'pendingGeneralManagerReview' &&
+            approvals.get('manager', {}).get('approved', false) == true &&
+            approvals.get('general_manager', {}).get('approved', false) == true &&
+            approvals.get('accountant', {}).get('approved', false) == true)) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'edit_approvals', 'last_updated', 'history'
+        ]);
+    }
+
+    function cashExpenseManagerApplyEditAllowed() {
+      let approvals = resource.data.get('edit_approvals', {});
+      return cashExpenseManagerFor(resource.data) &&
+        resource.data.get('status', '') == 'pendingGeneralManagerReview' &&
+        approvals is map &&
+        approvals.get('manager', {}).get('approved', false) == true &&
+        approvals.get('general_manager', {}).get('approved', false) == true &&
+        approvals.get('accountant', {}).get('approved', false) == true &&
+        request.resource.data.get('status', '') == 'pendingGeneralManagerReview' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'description', 'requested_amount', 'approved_amount',
+          'manager_notes', 'invoice_attachment', 'previous_status',
+          'edit_request', 'edit_approvals', 'last_updated', 'history'
+        ]);
+    }
+
+    function cashExpenseUpdateAllowed() {
+      return cashExpenseAuditUpdate() &&
+        (cashExpenseGeneralManagerDecisionAllowed() ||
+          cashExpenseInvoiceDecisionAllowed() ||
+          cashExpenseAccountingDecisionAllowed() ||
+          cashExpenseEditRequesterAllowed() || cashExpenseEditDecisionAllowed() ||
+          cashExpenseManagerApplyEditAllowed());
+    }
+
+    function cashExpenseCounterCreateAllowed(branchId, data) {
+      return role() == 'manager' && profile().get('branchId', '') == branchId &&
+        data.get('branch_id', '') == branchId &&
+        data.get('next_number', -1) is int && data.next_number >= 2;
+    }
+
+    function cashExpenseCounterUpdateAllowed(branchId) {
+      return role() == 'manager' && profile().get('branchId', '') == branchId &&
+        request.resource.data.get('branch_id', '') == branchId &&
+        request.resource.data.get('branch_code', '') ==
+          resource.data.get('branch_code', '') &&
+        request.resource.data.get('next_number', -1) ==
+          resource.data.get('next_number', 0) + 1 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'next_number', 'last_request_number', 'last_updated'
+        ]) && request.resource.data.get('last_updated', null) == request.time;
+    }
+
+    match /cash_expense_requests/{requestId} {
+      allow get, list: if operationalUser();
+      allow create: if operationalUser() && cashExpenseCreateAllowed(
+        request.resource.data
+      );
+      allow update: if operationalUser() && cashExpenseUpdateAllowed();
+      allow delete: if false;
+    }
+
+    match /cash_expense_request_counters/{branchId} {
+      allow get, list: if operationalUser();
+      allow create: if operationalUser() && cashExpenseCounterCreateAllowed(
+        branchId, request.resource.data
+      );
+      allow update: if operationalUser() && cashExpenseCounterUpdateAllowed(
+        branchId
+      );
+      allow delete: if false;
     }
 
     match /inter_branch_invoices/{invoiceId} {
