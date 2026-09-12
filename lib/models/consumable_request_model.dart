@@ -4,7 +4,9 @@ import 'package:store_collection_app/theme/app_theme.dart';
 
 enum ConsumableRequestStatus {
   pendingCollectorReview,
+  rejectedByCollector,
   pendingAccountingApproval,
+  rejectedByAccountant,
   approvedByAccountant,
 }
 
@@ -15,8 +17,12 @@ extension ConsumableRequestStatusX on ConsumableRequestStatus {
     switch (this) {
       case ConsumableRequestStatus.pendingCollectorReview:
         return 'بانتظار مراجعة المدير العام';
+      case ConsumableRequestStatus.rejectedByCollector:
+        return 'مرفوض من المدير العام';
       case ConsumableRequestStatus.pendingAccountingApproval:
         return 'بانتظار اعتماد المحاسب';
+      case ConsumableRequestStatus.rejectedByAccountant:
+        return 'مرفوض من المحاسب';
       case ConsumableRequestStatus.approvedByAccountant:
         return 'معتمد نهائياً';
     }
@@ -26,14 +32,21 @@ extension ConsumableRequestStatusX on ConsumableRequestStatus {
     switch (this) {
       case ConsumableRequestStatus.pendingCollectorReview:
         return AppTheme.pendingColor;
+      case ConsumableRequestStatus.rejectedByCollector:
+        return AppTheme.errorColor;
       case ConsumableRequestStatus.pendingAccountingApproval:
         return AppTheme.accountantColor;
+      case ConsumableRequestStatus.rejectedByAccountant:
+        return AppTheme.errorColor;
       case ConsumableRequestStatus.approvedByAccountant:
         return AppTheme.successColor;
     }
   }
 
-  bool get isFinal => this == ConsumableRequestStatus.approvedByAccountant;
+  bool get isFinal =>
+      this == ConsumableRequestStatus.approvedByAccountant ||
+      this == ConsumableRequestStatus.rejectedByCollector ||
+      this == ConsumableRequestStatus.rejectedByAccountant;
 }
 
 ConsumableRequestStatus consumableRequestStatusFromString(String? value) {
@@ -66,6 +79,11 @@ class ConsumableRequestFields {
   static const reviewedAt = 'reviewed_at';
   static const approvedBy = 'approved_by';
   static const approvedAt = 'approved_at';
+  static const rejectionReason = 'rejection_reason';
+  static const rejectedBy = 'rejected_by';
+  static const rejectedByName = 'rejected_by_name';
+  static const rejectedByRole = 'rejected_by_role';
+  static const rejectedAt = 'rejected_at';
   static const lastUpdated = 'last_updated';
   static const history = 'history';
 }
@@ -97,6 +115,9 @@ class ConsumableRequestRead {
 
   String get accountingReference =>
       data[ConsumableRequestFields.accountingReference]?.toString() ?? '';
+
+  String get rejectionReason =>
+      data[ConsumableRequestFields.rejectionReason]?.toString() ?? '';
 
   ConsumableRequestStatus get status => consumableRequestStatusFromString(
     data[ConsumableRequestFields.status]?.toString(),

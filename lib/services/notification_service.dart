@@ -289,6 +289,42 @@ class NotificationService {
     );
   }
 
+  Future<void> notifyConsumableRequestRejected({
+    required String requestId,
+    required Map<String, dynamic> requestData,
+  }) async {
+    final branchId = _string(requestData, 'branch_id');
+    final number = _referenceNumber(
+      requestData,
+      keys: const ['request_number'],
+      fallbackPrefix: 'CR',
+      fallbackId: requestId,
+    );
+    final rejectedByRole = _string(requestData, 'rejected_by_role');
+
+    // The requesting manager always receives the decision. If Accounting
+    // rejects after the collector review, the recorded collector is relevant
+    // too. _send de-duplicates recipients and drops the rejecting actor.
+    final recipients = <String>{_string(requestData, 'created_by')};
+    if (rejectedByRole == 'accountant') {
+      recipients.add(_string(requestData, 'reviewed_by'));
+    }
+    recipients.remove(_string(requestData, 'rejected_by'));
+
+    await _send(
+      recipients: recipients,
+      module: consumableRequestsModule,
+      entityCollection: consumableRequestsModule,
+      entityId: requestId,
+      branchId: branchId,
+      referenceNumber: number,
+      notificationType: 'consumable_request_rejected',
+      title: 'تم رفض طلب المستهلكات',
+      message: 'تم رفض طلب المستهلكات رقم $number مع حفظ السبب في سجل الطلب.',
+      extraData: {'consumable_request_id': requestId},
+    );
+  }
+
   Future<void> notifyCashExpenseCreated({
     required String requestId,
     required Map<String, dynamic> requestData,

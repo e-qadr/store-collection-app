@@ -459,6 +459,14 @@ class _ConsumableRequestDetailsScreenState
           () => _showCollectorReview(request),
         ),
       );
+      buttons.add(
+        _actionButton(
+          'رفض',
+          Icons.cancel_outlined,
+          AppTheme.errorColor,
+          () => _showReject(request),
+        ),
+      );
     }
 
     if (widget.role == UserRole.accountant &&
@@ -471,24 +479,43 @@ class _ConsumableRequestDetailsScreenState
           () => _showAccounting(request),
         ),
       );
+      buttons.add(
+        _actionButton(
+          'رفض',
+          Icons.cancel_outlined,
+          AppTheme.errorColor,
+          () => _showReject(request),
+        ),
+      );
     }
 
     if (buttons.isEmpty) return null;
     return _panel(
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(Icons.tune_rounded, color: _roleColor, size: 18),
-          const SizedBox(width: 6),
-          const Expanded(
-            child: Text(
-              'إجراءات الطلب',
-              style: TextStyle(
-                color: AppTheme.textPrimary,
-                fontWeight: FontWeight.bold,
+          Row(
+            children: [
+              Icon(Icons.tune_rounded, color: _roleColor, size: 18),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'إجراءات الطلب',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
-          for (final button in buttons) button,
+          const SizedBox(height: 10),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: buttons,
+          ),
         ],
       ),
     );
@@ -571,6 +598,34 @@ class _ConsumableRequestDetailsScreenState
           notes: notes.text,
         );
       },
+    );
+  }
+
+  Future<void> _showReject(ConsumableRequestRead request) async {
+    final reason = TextEditingController();
+    await _dialog(
+      title: 'رفض طلب المستهلكات',
+      children: [
+        const Text(
+          'سيبقى الطلب وسجلّه محفوظين ولن يمكن تعديله بعد الرفض.',
+          style: TextStyle(color: AppTheme.textSecondary, height: 1.45),
+        ),
+        TextField(
+          controller: reason,
+          autofocus: true,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'سبب الرفض',
+            hintText: 'اكتب سبباً واضحاً للرفض',
+          ),
+        ),
+      ],
+      onSubmit: () => _service.rejectRequest(
+        requestId: request.id,
+        branchId: widget.branchId,
+        reason: reason.text,
+      ),
     );
   }
 
@@ -659,7 +714,9 @@ class _ConsumableRequestDetailsScreenState
     ];
     final current = switch (request.status) {
       ConsumableRequestStatus.pendingCollectorReview => 0,
+      ConsumableRequestStatus.rejectedByCollector => 1,
       ConsumableRequestStatus.pendingAccountingApproval => 1,
+      ConsumableRequestStatus.rejectedByAccountant => 2,
       ConsumableRequestStatus.approvedByAccountant => 2,
     };
 

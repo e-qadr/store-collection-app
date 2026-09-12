@@ -1778,17 +1778,20 @@ service cloud.firestore {
 
     match /brands/{document=**} {
       allow read: if operationalUser();
-      allow write: if adminUser();
+      allow create, update: if adminUser();
+      allow delete: if false;
     }
 
     match /branches/{document=**} {
       allow read: if operationalUser();
-      allow write: if adminUser();
+      allow create, update: if adminUser();
+      allow delete: if false;
     }
 
     match /branch_codes/{document=**} {
       allow read: if operationalUser();
-      allow write: if adminUser();
+      allow create, update: if adminUser();
+      allow delete: if false;
     }
 
     // Phase 1 catalog: product and group documents are deliberately price-free.
@@ -2028,8 +2031,95 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /consumable_requests/{document=**} {
-      allow read, write: if operationalUser();
+    // Consumable requests are inventory/accounting-facing operational records.
+    // Their client workflow is deliberately narrow: branch manager submission,
+    // collector review or rejection, then accountant approval or rejection.
+    // Direct deletion and arbitrary state rewrites are never allowed.
+    function consumableOwnBranch(data) {
+      return data.branch_id is string &&
+        profile().get('branchId', '') == data.branch_id;
+    }
+
+    function consumableCreateAllowed(data) {
+      return role() == 'manager' && consumableOwnBranch(data) &&
+        data.created_by == request.auth.uid &&
+        data.status == 'pendingCollectorReview' &&
+        data.items is list && data.items.size() > 0 && data.items.size() <= 50 &&
+        data.created_at == request.time && data.last_updated == request.time;
+    }
+
+    function consumableCollectorReviewAllowed() {
+      return role() == 'collector' &&
+        resource.data.status == 'pendingCollectorReview' &&
+        request.resource.data.status == 'pendingAccountingApproval' &&
+        request.resource.data.reviewed_by == request.auth.uid &&
+        request.resource.data.reviewed_at == request.time &&
+        request.resource.data.last_updated == request.time &&
+        request.resource.data.diff(resource.data).affectedKeys().hasAll([
+          'items', 'collector_quantity', 'status', 'reviewed_by', 'reviewed_at',
+          'last_updated', 'history'
+        ]) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'items', 'collector_quantity', 'status', 'collector_notes',
+          'reviewed_by', 'reviewed_at', 'last_updated', 'history'
+        ]);
+    }
+
+    function consumableAccountingApprovalAllowed() {
+      return role() == 'accountant' &&
+        resource.data.status == 'pendingAccountingApproval' &&
+        request.resource.data.status == 'approvedByAccountant' &&
+        request.resource.data.approved_by == request.auth.uid &&
+        request.resource.data.approved_at == request.time &&
+        request.resource.data.last_updated == request.time &&
+        request.resource.data.accounting_reference is string &&
+        request.resource.data.accounting_reference.size() > 0 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasAll([
+          'status', 'accounting_reference', 'approved_by', 'approved_at',
+          'last_updated', 'history'
+        ]) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'accounting_reference', 'accountant_notes', 'approved_by',
+          'approved_at', 'last_updated', 'history'
+        ]);
+    }
+
+    function consumableRejectionAllowed() {
+      let collectorDecision = role() == 'collector' &&
+        resource.data.status == 'pendingCollectorReview' &&
+        request.resource.data.status == 'rejectedByCollector' &&
+        request.resource.data.rejected_by_role == 'collector';
+      let accountantDecision = role() == 'accountant' &&
+        resource.data.status == 'pendingAccountingApproval' &&
+        request.resource.data.status == 'rejectedByAccountant' &&
+        request.resource.data.rejected_by_role == 'accountant';
+      return (collectorDecision || accountantDecision) &&
+        request.resource.data.rejected_by == request.auth.uid &&
+        request.resource.data.rejected_by_name is string &&
+        request.resource.data.rejection_reason is string &&
+        request.resource.data.rejection_reason.size() > 0 &&
+        request.resource.data.rejected_at == request.time &&
+        request.resource.data.last_updated == request.time &&
+        request.resource.data.diff(resource.data).affectedKeys().hasAll([
+          'status', 'rejection_reason', 'rejected_by', 'rejected_by_name',
+          'rejected_by_role', 'rejected_at', 'last_updated', 'history'
+        ]) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'rejection_reason', 'rejected_by', 'rejected_by_name',
+          'rejected_by_role', 'rejected_at', 'last_updated', 'history'
+        ]);
+    }
+
+    match /consumable_requests/{requestId} {
+      allow get, list: if operationalUser();
+      allow create: if operationalUser() && consumableCreateAllowed(
+        request.resource.data
+      );
+      allow update: if operationalUser() &&
+        (consumableCollectorReviewAllowed() ||
+          consumableAccountingApprovalAllowed() ||
+          consumableRejectionAllowed());
+      allow delete: if false;
     }
 
     match /cash_expense_requests/{document=**} {

@@ -33,4 +33,11 @@ void main() {
       isFalse,
     );
   });
+
+  test('archived branches cannot receive a manager assignment', () {
+    expect(
+      canAssignUserToBranch(const {'active': false, 'brand_id': 'brand-1'}),
+      isFalse,
+    );
+  });
 }

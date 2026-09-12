@@ -226,6 +226,90 @@ class ConsumableRequestService {
     }
   }
 
+  /// Ends the current review stage without altering the original request.
+  /// A rejected request remains an auditable terminal record; it is never
+  /// deleted or silently returned to a mutable state.
+  Future<void> rejectRequest({
+    required String requestId,
+    required String reason,
+    String? branchId,
+  }) async {
+    final cleanReason = reason.trim();
+    if (cleanReason.isEmpty) {
+      throw Exception('سبب رفض طلب المستهلكات مطلوب.');
+    }
+
+    final actor = await _getCurrentActor();
+    final docRef = _collection.doc(requestId);
+
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(docRef);
+      final data = _dataOrThrow(snapshot);
+      _validateSelectedBranch(data, branchId);
+      final current = consumableRequestStatusFromString(
+        data[ConsumableRequestFields.status]?.toString(),
+      );
+      late final ConsumableRequestStatus rejectedStatus;
+      late final String action;
+      late final String message;
+
+      if (actor['role'] == UserRole.collector.name) {
+        _ensureStatus(
+          data,
+          ConsumableRequestStatus.pendingCollectorReview,
+          'لا يمكن رفض الطلب في هذه المرحلة.',
+        );
+        rejectedStatus = ConsumableRequestStatus.rejectedByCollector;
+        action = 'collector_rejected';
+        message = 'رفض المدير العام طلب المستهلكات.';
+      } else if (actor['role'] == UserRole.accountant.name) {
+        _ensureStatus(
+          data,
+          ConsumableRequestStatus.pendingAccountingApproval,
+          'لا يمكن رفض الطلب في هذه المرحلة.',
+        );
+        rejectedStatus = ConsumableRequestStatus.rejectedByAccountant;
+        action = 'accountant_rejected';
+        message = 'رفض المحاسب طلب المستهلكات.';
+      } else {
+        throw Exception('رفض طلب المستهلكات متاح للمدير العام أو المحاسب فقط.');
+      }
+
+      transaction.update(docRef, {
+        ConsumableRequestFields.status: rejectedStatus.value,
+        ConsumableRequestFields.rejectionReason: cleanReason,
+        ConsumableRequestFields.rejectedBy: actor['uid'],
+        ConsumableRequestFields.rejectedByName: actor['name'],
+        ConsumableRequestFields.rejectedByRole: actor['role'],
+        ConsumableRequestFields.rejectedAt: FieldValue.serverTimestamp(),
+        ConsumableRequestFields.lastUpdated: FieldValue.serverTimestamp(),
+        ConsumableRequestFields.history: FieldValue.arrayUnion([
+          _historyEntry(
+            action: action,
+            message: message,
+            actor: actor,
+            note: cleanReason,
+            changes: {
+              'previous_status': current.value,
+              'resulting_status': rejectedStatus.value,
+            },
+          ),
+        ]),
+      });
+    });
+
+    final savedRequest = await docRef.get();
+    final savedData = savedRequest.data();
+    if (savedData != null) {
+      await _notifySafely(
+        () => _notificationService.notifyConsumableRequestRejected(
+          requestId: requestId,
+          requestData: savedData,
+        ),
+      );
+    }
+  }
+
   Future<Map<String, String>> _getCurrentActor() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {

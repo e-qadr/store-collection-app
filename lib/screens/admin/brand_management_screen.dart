@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
@@ -44,6 +45,7 @@ class _BrandManagementScreenState extends State<BrandManagementScreen> {
       await ref.set({
         'id': ref.id,
         'name': name,
+        if (brandId == null) 'active': true,
         if (brandId == null) 'created_at': FieldValue.serverTimestamp(),
         'updated_at': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -63,7 +65,25 @@ class _BrandManagementScreenState extends State<BrandManagementScreen> {
     }
   }
 
-  Future<void> _deleteBrand(String brandId, String brandName) async {
+  Future<void> _archiveBrand({
+    required String brandId,
+    required String brandName,
+    required bool isActive,
+  }) async {
+    if (!isActive) {
+      await FirebaseFirestore.instance
+          .collection('brands')
+          .doc(brandId)
+          .update({
+            'active': true,
+            'reactivated_at': FieldValue.serverTimestamp(),
+            'reactivated_by': FirebaseAuth.instance.currentUser?.uid ?? '',
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+      _message('تمت إعادة تفعيل العلامة التجارية');
+      return;
+    }
+
     final branches = await FirebaseFirestore.instance
         .collection('branches')
         .where('brand_id', isEqualTo: brandId)
@@ -83,11 +103,30 @@ class _BrandManagementScreenState extends State<BrandManagementScreen> {
     }
 
     if (!mounted) return;
+    final reason = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('حذف العلامة التجارية'),
-        content: Text('هل تريد حذف $brandName؟'),
+        title: const Text('أرشفة العلامة التجارية'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'ستبقى $brandName محفوظة في السجل ولن تظهر في الاختيارات الجديدة.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reason,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'سبب الأرشفة',
+                hintText: 'سبب واضح ومطلوب',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -95,16 +134,30 @@ class _BrandManagementScreenState extends State<BrandManagementScreen> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppTheme.errorColor),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('حذف'),
+            onPressed: () {
+              if (reason.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('سبب الأرشفة مطلوب.')),
+                );
+                return;
+              }
+              Navigator.pop(context, true);
+            },
+            child: const Text('أرشفة'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
 
-    await FirebaseFirestore.instance.collection('brands').doc(brandId).delete();
-    _message('تم حذف العلامة التجارية');
+    await FirebaseFirestore.instance.collection('brands').doc(brandId).update({
+      'active': false,
+      'archived_at': FieldValue.serverTimestamp(),
+      'archived_by': FirebaseAuth.instance.currentUser?.uid ?? '',
+      'archive_reason': reason.text.trim(),
+      'updated_at': FieldValue.serverTimestamp(),
+    });
+    _message('تمت أرشفة العلامة التجارية');
   }
 
   void _showBrandDialog({String? brandId, String name = ''}) {
@@ -221,6 +274,10 @@ class _BrandManagementScreenState extends State<BrandManagementScreen> {
                         final brand = brands[index];
                         final data = brand.data() as Map<String, dynamic>;
                         final name = data['name'] as String? ?? 'بدون اسم';
+                        final isActive =
+                            data['active'] != false &&
+                            data['isActive'] != false &&
+                            data['is_active'] != false;
                         return Container(
                           decoration: AppTheme.cardShadow(),
                           child: ListTile(
@@ -238,25 +295,37 @@ class _BrandManagementScreenState extends State<BrandManagementScreen> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            subtitle: const Text(
-                              'يمكن ربط عدة فروع بهذه العلامة التجارية',
+                            subtitle: Text(
+                              isActive
+                                  ? 'يمكن ربط عدة فروع بهذه العلامة التجارية'
+                                  : 'مؤرشفة — لا تظهر في الاختيارات الجديدة',
                             ),
                             trailing: Wrap(
                               children: [
                                 IconButton(
-                                  tooltip: 'تعديل',
-                                  onPressed: () => _showBrandDialog(
-                                    brandId: brand.id,
-                                    name: name,
-                                  ),
+                                  tooltip: isActive ? 'تعديل' : 'عرض محفوظ',
+                                  onPressed: isActive
+                                      ? () => _showBrandDialog(
+                                          brandId: brand.id,
+                                          name: name,
+                                        )
+                                      : null,
                                   icon: const Icon(Icons.edit_rounded),
                                 ),
                                 IconButton(
-                                  tooltip: 'حذف',
-                                  onPressed: () => _deleteBrand(brand.id, name),
-                                  icon: const Icon(
-                                    Icons.delete_outline_rounded,
-                                    color: AppTheme.errorColor,
+                                  tooltip: isActive ? 'أرشفة' : 'إعادة تفعيل',
+                                  onPressed: () => _archiveBrand(
+                                    brandId: brand.id,
+                                    brandName: name,
+                                    isActive: isActive,
+                                  ),
+                                  icon: Icon(
+                                    isActive
+                                        ? Icons.archive_outlined
+                                        : Icons.unarchive_outlined,
+                                    color: isActive
+                                        ? AppTheme.errorColor
+                                        : AppTheme.successColor,
                                   ),
                                 ),
                               ],

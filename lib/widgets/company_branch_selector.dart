@@ -67,10 +67,17 @@ class _CompanyBranchSelectorState extends State<CompanyBranchSelector> {
                   return const Center(child: Text('تعذر تحميل بيانات الفروع'));
                 }
 
-                final brands = brandsSnapshot.data?.docs.toList() ?? [];
+                final brands = (brandsSnapshot.data?.docs ?? [])
+                    .where((brand) {
+                      final data = brand.data() as Map<String, dynamic>;
+                      return data['active'] != false &&
+                          data['isActive'] != false &&
+                          data['is_active'] != false;
+                    })
+                    .toList(growable: false);
                 final branches = (branchesSnapshot.data?.docs ?? [])
                     .where(
-                      (branch) => !isTransferOnlyMainBranch(
+                      (branch) => isActiveOperationalBranch(
                         branch.data() as Map<String, dynamic>,
                       ),
                     )

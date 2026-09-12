@@ -62,7 +62,7 @@ class GroupedBranchOverview extends StatelessWidget {
         .snapshots()
         .map(
           (snapshot) => snapshot.docs
-              .where((doc) => !isTransferOnlyMainBranch(doc.data()))
+              .where((doc) => isActiveOperationalBranch(doc.data()))
               .map(
                 (doc) => GroupedBranchOverviewBranch(
                   id: doc.id,

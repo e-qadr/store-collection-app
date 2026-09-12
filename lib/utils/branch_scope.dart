@@ -12,4 +12,4 @@ bool isActiveOperationalBranch(Map<String, dynamic> branch) =>
     branch['is_active'] != false;
 
 bool canAssignUserToBranch(Map<String, dynamic> branch) =>
-    !isTransferOnlyMainBranch(branch);
+    isActiveOperationalBranch(branch);

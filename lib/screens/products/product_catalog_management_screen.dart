@@ -205,6 +205,12 @@ class _ProductCatalogManagementContentState
             .snapshots()
             .map(
               (snapshot) => snapshot.docs
+                  .where((document) {
+                    final data = document.data();
+                    return data['active'] != false &&
+                        data['isActive'] != false &&
+                        data['is_active'] != false;
+                  })
                   .map(
                     (document) => CatalogBrandOption(
                       id: document.id,

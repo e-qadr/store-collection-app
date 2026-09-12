@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
@@ -46,6 +47,15 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
       );
       return;
     }
+    if (branchId != null && branchCode != oldBranchCode) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('رمز الفرع ثابت لحماية ترقيم المستندات وسجلها.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
     final firestore = FirebaseFirestore.instance;
     final branchRef = branchId == null
@@ -82,6 +92,9 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
         if (!targetBrand.exists) {
           throw StateError('The selected brand does not exist.');
         }
+        if (targetBrand.data()?['active'] == false) {
+          throw StateError('The selected brand is archived.');
+        }
         final current = currentBranch.data();
         final wasMain = current?['branch_type'] == 'main';
         final currentBrandId = current?['brand_id']?.toString() ?? '';
@@ -106,6 +119,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           'company_name': _selectedBrandName,
           'branch_code': branchCode,
           'branch_type': _isMainBranch ? 'main' : 'branch',
+          if (branchId == null) 'active': true,
           if (_isMainBranch) 'branch_manager_id': FieldValue.delete(),
           if (branchId == null && !_isMainBranch) 'branch_manager_id': null,
         }, SetOptions(merge: true));
@@ -113,11 +127,6 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           'branch_id': branchRef.id,
           'branch_name': name,
         });
-        if (oldBranchCode.isNotEmpty && oldBranchCode != branchCode) {
-          transaction.delete(
-            firestore.collection('branch_codes').doc(oldBranchCode),
-          );
-        }
       });
 
       _branchNameController.clear();
@@ -150,28 +159,76 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
     }
   }
 
-  // حذف فرع
-  Future<void> _deleteBranch(String branchId, String branchCode) async {
+  Future<void> _archiveBranch({
+    required String branchId,
+    required String branchName,
+    required bool isActive,
+    required bool hasManager,
+  }) async {
     final screenContext = context;
 
-    // تأكيد الحذف
-    await showDialog(
+    if (!isActive) {
+      await FirebaseFirestore.instance
+          .collection('branches')
+          .doc(branchId)
+          .update({
+            'active': true,
+            'reactivated_at': FieldValue.serverTimestamp(),
+            'reactivated_by': FirebaseAuth.instance.currentUser?.uid ?? '',
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+      if (screenContext.mounted) {
+        ScaffoldMessenger.of(
+          screenContext,
+        ).showSnackBar(const SnackBar(content: Text('تمت إعادة تفعيل الفرع')));
+      }
+      return;
+    }
+    if (hasManager) {
+      ScaffoldMessenger.of(screenContext).showSnackBar(
+        const SnackBar(
+          content: Text('أزل أو أعد تعيين مدير الفرع قبل أرشفته.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final reason = TextEditingController();
+
+    await showDialog<bool>(
       context: screenContext,
       builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Row(
           children: [
-            Icon(Icons.warning_rounded, color: Colors.red),
+            Icon(Icons.archive_outlined, color: AppTheme.adminColor),
             SizedBox(width: 8),
             Text(
-              'تأكيد الحذف',
-              style: TextStyle(color: Colors.red, fontSize: 18),
+              'أرشفة الفرع',
+              style: TextStyle(color: AppTheme.adminColor, fontSize: 18),
             ),
           ],
         ),
-        content: const Text(
-          'هل أنت متأكد من حذف هذا الفرع؟',
-          style: TextStyle(fontSize: 16),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'سيبقى $branchName ورمزه وسجله محفوظين، ولن يظهر في الاختيارات الجديدة.',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reason,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'سبب الأرشفة',
+                hintText: 'سبب واضح ومطلوب',
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -180,38 +237,44 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
           ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: AppTheme.adminColor,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              final firestore = FirebaseFirestore.instance;
-              final batch = firestore.batch();
-              batch.delete(firestore.collection('branches').doc(branchId));
-              if (branchCode.isNotEmpty) {
-                batch.delete(
-                  firestore.collection('branch_codes').doc(branchCode),
+            onPressed: () {
+              if (reason.text.trim().isEmpty) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(content: Text('سبب الأرشفة مطلوب.')),
                 );
+                return;
               }
-              await batch.commit();
-              if (screenContext.mounted) {
-                ScaffoldMessenger.of(screenContext).showSnackBar(
-                  const SnackBar(
-                    content: Text('تم حذف الفرع'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
+              Navigator.pop(dialogContext, true);
             },
-            icon: const Icon(Icons.delete_rounded, size: 18),
-            label: const Text('حذف'),
+            icon: const Icon(Icons.archive_outlined, size: 18),
+            label: const Text('أرشفة'),
           ),
         ],
       ),
     );
+    if (reason.text.trim().isEmpty) return;
+
+    await FirebaseFirestore.instance
+        .collection('branches')
+        .doc(branchId)
+        .update({
+          'active': false,
+          'archived_at': FieldValue.serverTimestamp(),
+          'archived_by': FirebaseAuth.instance.currentUser?.uid ?? '',
+          'archive_reason': reason.text.trim(),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+    if (screenContext.mounted) {
+      ScaffoldMessenger.of(
+        screenContext,
+      ).showSnackBar(const SnackBar(content: Text('تمت أرشفة الفرع')));
+    }
   }
 
   // نافذة تعيين مدير للفرع
@@ -409,7 +472,14 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                       .orderBy('name')
                       .snapshots(),
                   builder: (context, snapshot) {
-                    final brands = snapshot.data?.docs ?? [];
+                    final brands = (snapshot.data?.docs ?? [])
+                        .where((brand) {
+                          final data = brand.data() as Map<String, dynamic>;
+                          return data['active'] != false &&
+                              data['isActive'] != false &&
+                              data['is_active'] != false;
+                        })
+                        .toList(growable: false);
                     final selectedExists = brands.any(
                       (brand) => brand.id == _selectedBrandId,
                     );
@@ -593,6 +663,10 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                         final doc = branches[index];
                         final data = doc.data() as Map<String, dynamic>;
                         final isMainBranch = data['branch_type'] == 'main';
+                        final isActive =
+                            data['active'] != false &&
+                            data['isActive'] != false &&
+                            data['is_active'] != false;
                         final managerId = (data['branch_manager_id'] as String?)
                             ?.trim();
                         final hasManager = managerId?.isNotEmpty == true;
@@ -605,7 +679,7 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                             borderRadius: BorderRadius.circular(16),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
-                              onTap: isMainBranch
+                              onTap: isMainBranch || !isActive
                                   ? null
                                   : () => _showAssignManagerDialog(
                                       doc.id,
@@ -650,6 +724,17 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                               'الفرع الرئيسي — مسؤولية المدير العام',
                                               style: TextStyle(
                                                 color: AppTheme.collectorColor,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                          if (!isActive) ...[
+                                            const SizedBox(height: 4),
+                                            const Text(
+                                              'مؤرشف — لا يظهر في الاختيارات الجديدة',
+                                              style: TextStyle(
+                                                color: AppTheme.errorColor,
                                                 fontSize: 12,
                                                 fontWeight: FontWeight.bold,
                                               ),
@@ -734,13 +819,14 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                             color: Colors.orange,
                                           ),
                                           tooltip: 'تعديل بيانات الفرع',
-                                          onPressed: () =>
-                                              _showEditBranchDialog(
-                                                doc.id,
-                                                data,
-                                              ),
+                                          onPressed: isActive
+                                              ? () => _showEditBranchDialog(
+                                                  doc.id,
+                                                  data,
+                                                )
+                                              : null,
                                         ),
-                                        if (!isMainBranch)
+                                        if (!isMainBranch && isActive)
                                           IconButton(
                                             icon: const Icon(
                                               Icons.manage_accounts_rounded,
@@ -755,13 +841,24 @@ class _BranchManagementScreenState extends State<BranchManagementScreen> {
                                           ),
                                         if (!isMainBranch)
                                           IconButton(
+                                            tooltip: isActive
+                                                ? 'أرشفة الفرع'
+                                                : 'إعادة تفعيل الفرع',
                                             icon: Icon(
-                                              Icons.delete_outline_rounded,
-                                              color: Colors.red.shade400,
+                                              isActive
+                                                  ? Icons.archive_outlined
+                                                  : Icons.unarchive_outlined,
+                                              color: isActive
+                                                  ? Colors.red.shade400
+                                                  : AppTheme.successColor,
                                             ),
-                                            onPressed: () => _deleteBranch(
-                                              doc.id,
-                                              data['branch_code'] ?? '',
+                                            onPressed: () => _archiveBranch(
+                                              branchId: doc.id,
+                                              branchName:
+                                                  data['name']?.toString() ??
+                                                  'الفرع',
+                                              isActive: isActive,
+                                              hasManager: hasManager,
                                             ),
                                           ),
                                       ],
