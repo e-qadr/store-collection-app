@@ -848,6 +848,9 @@ service cloud.firestore {
           'open_amendment_status',
           'history'
         ]) &&
+        // `receiving_branch_type` is optional here for compatible reads of
+        // headers written before the marker was added. It remains closed when
+        // present via hasOnly above, and new backend writes set it to branch.
         data.keys().hasAll([
           'id',
           'schema_version',
@@ -858,7 +861,6 @@ service cloud.firestore {
           'purchase_number',
           'receiving_branch_id',
           'receiving_branch_name',
-          'receiving_branch_type',
           'receiving_brand_id',
           'branch_ids',
           'item_count',
@@ -880,6 +882,10 @@ service cloud.firestore {
         data.receiving_branch_id is string &&
         data.receiving_branch_id.size() > 0 &&
         data.receiving_branch_name is string &&
+        // Headers created before the normal-branch marker was introduced are
+        // still valid Purchase invoices. New backend writes persist `branch`;
+        // Main Branch remains invalid for this workflow.
+        data.get('receiving_branch_type', 'branch') == 'branch' &&
         data.receiving_brand_id is string && data.receiving_brand_id.size() > 0 &&
         data.branch_ids is list && data.branch_ids.size() == 1 &&
         data.branch_ids[0] == data.receiving_branch_id &&
@@ -920,7 +926,10 @@ service cloud.firestore {
     }
 
     function mayReadPurchaseBranch(data) {
-      return purchaseSupervisor() ||
+      // Every caller has already established knownPurchaseUser(). Keep this
+      // branch check role-only so direct Purchase reads stay below the Rules
+      // expression budget while preserving the same authorization boundary.
+      return role() == 'collector' || role() == 'accountant' || role() == 'admin' ||
         (role() == 'manager' &&
           purchaseActorBranchId() == data.receiving_branch_id);
     }
@@ -2288,10 +2297,18 @@ service cloud.firestore {
       }
 
       function mayReadPurchaseAmendmentItem(itemId, data) {
+        let amendment = get(
+          /databases/$(database)/documents/purchase_invoice_amendments/$(amendmentId)
+        ).data;
+        // Re-validating the entire amendment here exceeds the Rules evaluator
+        // budget for a valid nested item. The parent is backend-only; bind this
+        // public child to that parent and to its receiving branch instead.
         return knownPurchaseUser() &&
           validPurchaseAmendmentItem(itemId, data) &&
-          mayReadPurchaseAmendment(get(
-            /databases/$(database)/documents/purchase_invoice_amendments/$(amendmentId)
+          amendment.id == amendmentId && amendment.invoice_id is string &&
+          amendment.invoice_id == data.invoice_id &&
+          mayReadPurchaseBranch(get(
+            /databases/$(database)/documents/purchase_invoices/$(amendment.invoice_id)
           ).data);
       }
 

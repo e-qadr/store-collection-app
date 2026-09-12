@@ -157,6 +157,14 @@ async function seedPurchase({status = 'pendingReceiverReview'} = {}) {
     const database = context.firestore();
     const batch = writeBatch(database);
     batch.set(doc(database, 'purchase_invoices', 'purchase-1'), header({status}));
+    // Existing invoices have no type marker; new backend writes do. Both
+    // normal-branch forms must remain readable, while Main Branch stays out.
+    batch.set(doc(database, 'purchase_invoices', 'purchase-typed'), header({
+      id: 'purchase-typed', status, extra: {receiving_branch_type: 'branch'},
+    }));
+    batch.set(doc(database, 'purchase_invoices', 'purchase-main'), header({
+      id: 'purchase-main', status, extra: {receiving_branch_type: 'main'},
+    }));
     batch.set(doc(database, 'purchase_invoices', 'purchase-1', 'items', 'item-1'), item());
     batch.set(doc(database, 'purchase_invoice_events', 'event-1'), event());
     batch.set(doc(database, 'purchase_invoice_prices', 'purchase-1'), {
@@ -173,6 +181,12 @@ async function seedPurchase({status = 'pendingReceiverReview'} = {}) {
 test('purchase headers are branch-scoped for managers and allow supervisor history', async () => {
   await seedPurchase();
   await assertSucceeds(getDoc(doc(db('manager-r'), 'purchase_invoices', 'purchase-1')));
+  await assertSucceeds(getDoc(doc(
+    db('manager-r'), 'purchase_invoices', 'purchase-typed',
+  )));
+  await assertFails(getDoc(doc(
+    db('manager-r'), 'purchase_invoices', 'purchase-main',
+  )));
   await assertFails(getDoc(doc(db('manager-x'), 'purchase_invoices', 'purchase-1')));
   for (const uid of ['collector-user', 'accountant-user', 'admin-user']) {
     await assertSucceeds(getDoc(doc(db(uid), 'purchase_invoices', 'purchase-1')));

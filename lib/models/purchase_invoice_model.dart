@@ -50,6 +50,8 @@ class PurchaseInvoiceCollections {
 }
 
 class PurchaseInvoiceRead {
+  /// Canonical Firestore document identity. This is deliberately distinct
+  /// from [purchaseNumber], which is a human-readable counter value.
   final String id;
   final Map<String, dynamic> data;
   final List<Map<String, dynamic>>? itemDocuments;
@@ -67,6 +69,7 @@ class PurchaseInvoiceRead {
       PurchaseInvoiceRead(id: id, data: data, itemDocuments: items);
 
   int get schemaVersion => (data['schema_version'] as num?)?.toInt() ?? 0;
+  String get documentId => id;
   int get workflowVersion => (data['workflow_version'] as num?)?.toInt() ?? 0;
   String get workflowIdentity => data['workflow_identity']?.toString() ?? '';
   int get revision => (data['revision'] as num?)?.toInt() ?? 0;

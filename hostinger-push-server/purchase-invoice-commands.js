@@ -85,7 +85,7 @@ const PRICE_SOURCE = Object.freeze({
 
 const HEADER_KEYS = new Set([
   "id", "schema_version", "workflow_version", "workflow_identity", "status", "revision",
-  "purchase_number", "receiving_branch_id", "receiving_branch_name", "receiving_brand_id",
+  "purchase_number", "receiving_branch_id", "receiving_branch_name", "receiving_branch_type", "receiving_brand_id",
   "branch_ids", "item_count", "item_digest", "currency", "supplier_name",
   "supplier_invoice_number", "supplier_invoice_date", "general_manager_notes", "receiver_notes",
   "created_by", "created_by_name", "created_by_role", "created_at", "receipt_confirmed_by",
@@ -240,6 +240,7 @@ function assertPublicHeader(invoice, expectedId) {
       !Number.isSafeInteger(invoice.item_count) || invoice.item_count < 1 || invoice.item_count > 50 ||
       typeof invoice.item_digest !== "string" || !/^[a-f0-9]{64}$/.test(invoice.item_digest) ||
       !SUPPORTED_CURRENCIES.has(invoice.currency) ||
+      (invoice.receiving_branch_type !== undefined && invoice.receiving_branch_type !== "branch") ||
       !Array.isArray(invoice.branch_ids) || invoice.branch_ids.length !== 1 ||
       invoice.branch_ids[0] !== invoice.receiving_branch_id ||
       invoice.created_by_role !== "collector" ||
@@ -844,6 +845,10 @@ async function createPurchaseInvoice({
         purchase_number: purchaseNumber,
         receiving_branch_id: branch.id,
         receiving_branch_name: branch.name,
+        // Purchase invoices are never addressed to a transfer-only Main
+        // Branch. Persist the explicit normal-branch marker required by the
+        // public Firestore header schema; older records legitimately lack it.
+        receiving_branch_type: "branch",
         receiving_brand_id: branch.brandId,
         branch_ids: [branch.id],
         item_count: items.length,

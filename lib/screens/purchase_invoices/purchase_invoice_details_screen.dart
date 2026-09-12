@@ -14,6 +14,27 @@ import 'package:store_collection_app/services/purchase_invoice_service.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
+/// Keeps a failed Firestore read distinct from an actual missing Purchase
+/// document. In particular, a protected-price denial must never turn the
+/// public invoice into a false "not found" result.
+String purchaseInvoiceDetailLoadErrorText(
+  Object error, {
+  String fallback = 'تعذر تحميل تفاصيل فاتورة المشتريات.',
+  String missing = 'فاتورة المشتريات غير موجودة.',
+}) {
+  if (error is FirebaseException) {
+    return switch (error.code) {
+      'permission-denied' => 'لا تملك صلاحية عرض فاتورة المشتريات هذه.',
+      'not-found' => missing,
+      'unavailable' ||
+      'deadline-exceeded' => 'تعذر الاتصال بالخدمة. حاول لاحقًا.',
+      _ => fallback,
+    };
+  }
+  if (error is StateError) return missing;
+  return fallback;
+}
+
 class PurchaseInvoiceDetailsScreen extends StatefulWidget {
   final String invoiceId;
   final UserRole role;
@@ -103,7 +124,7 @@ class _PurchaseInvoiceDetailsScreenState
     final key = '${header.id}-${header.revision}-${header.itemDigest}';
     if (_loadedInvoiceKey != key || _invoiceFuture == null) {
       _loadedInvoiceKey = key;
-      _invoiceFuture = _service.loadInvoiceWithItems(widget.invoiceId);
+      _invoiceFuture = _service.loadInvoiceWithItems(header.documentId);
     }
     return _invoiceFuture!;
   }
@@ -128,6 +149,15 @@ class _PurchaseInvoiceDetailsScreenState
             body: Center(child: CircularProgressIndicator()),
           );
         }
+        if (headerSnapshot.hasError) {
+          return Scaffold(
+            body: Center(
+              child: Text(
+                purchaseInvoiceDetailLoadErrorText(headerSnapshot.error!),
+              ),
+            ),
+          );
+        }
         if (header == null) {
           return const Scaffold(
             body: Center(child: Text('فاتورة المشتريات غير موجودة.')),
@@ -137,6 +167,19 @@ class _PurchaseInvoiceDetailsScreenState
           key: ValueKey('${header.id}-${header.revision}-${header.itemDigest}'),
           future: _itemsFor(header),
           builder: (context, invoiceSnapshot) {
+            if (invoiceSnapshot.hasError) {
+              return Scaffold(
+                body: Center(
+                  child: Text(
+                    purchaseInvoiceDetailLoadErrorText(
+                      invoiceSnapshot.error!,
+                      fallback: 'تعذر تحميل أصناف فاتورة المشتريات.',
+                      missing: 'أصناف فاتورة المشتريات غير موجودة.',
+                    ),
+                  ),
+                ),
+              );
+            }
             final invoice = invoiceSnapshot.data;
             if (invoice == null) {
               return const Scaffold(

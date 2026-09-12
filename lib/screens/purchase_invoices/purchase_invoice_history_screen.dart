@@ -13,11 +13,15 @@ enum _HistorySort {
   purchaseNumber,
 }
 
+typedef PurchaseInvoiceDetailBuilder =
+    Widget Function(BuildContext context, PurchaseInvoiceRead invoice);
+
 class PurchaseInvoiceHistoryScreen extends StatefulWidget {
   final UserRole role;
   final String? branchId;
   final String branchName;
   final Stream<List<PurchaseInvoiceRead>>? invoiceStream;
+  final PurchaseInvoiceDetailBuilder? detailBuilder;
 
   const PurchaseInvoiceHistoryScreen({
     super.key,
@@ -25,6 +29,7 @@ class PurchaseInvoiceHistoryScreen extends StatefulWidget {
     required this.branchName,
     this.branchId,
     this.invoiceStream,
+    this.detailBuilder,
   });
 
   @override
@@ -252,11 +257,13 @@ class _PurchaseInvoiceHistoryScreenState
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => PurchaseInvoiceDetailsScreen(
-              invoiceId: invoice.id,
-              role: widget.role,
-              branchId: widget.branchId,
-            ),
+            builder: (detailContext) =>
+                widget.detailBuilder?.call(detailContext, invoice) ??
+                PurchaseInvoiceDetailsScreen(
+                  invoiceId: invoice.documentId,
+                  role: widget.role,
+                  branchId: widget.branchId,
+                ),
           ),
         ),
       ),

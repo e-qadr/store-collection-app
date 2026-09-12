@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:store_collection_app/models/enums.dart';
@@ -49,6 +52,33 @@ PurchaseInvoiceRead fixtureInvoice({
 );
 
 void main() {
+  test(
+    'purchase detail errors distinguish missing, permission, and network',
+    () {
+      expect(
+        purchaseInvoiceDetailLoadErrorText(
+          FirebaseException(plugin: 'cloud_firestore', code: 'not-found'),
+        ),
+        'فاتورة المشتريات غير موجودة.',
+      );
+      expect(
+        purchaseInvoiceDetailLoadErrorText(
+          FirebaseException(
+            plugin: 'cloud_firestore',
+            code: 'permission-denied',
+          ),
+        ),
+        'لا تملك صلاحية عرض فاتورة المشتريات هذه.',
+      );
+      expect(
+        purchaseInvoiceDetailLoadErrorText(
+          FirebaseException(plugin: 'cloud_firestore', code: 'unavailable'),
+        ),
+        'تعذر الاتصال بالخدمة. حاول لاحقًا.',
+      );
+    },
+  );
+
   testWidgets(
     'purchase dashboards are Arabic RTL and expose role-specific controls',
     (tester) async {
@@ -150,6 +180,76 @@ void main() {
       expect(find.byKey(const Key('purchase-history-history-1')), findsNothing);
     },
   );
+
+  testWidgets(
+    'history retains the canonical document ID separately from the PUR number when opening details',
+    (tester) async {
+      final source = fixtureInvoice(status: 'pendingReceiverReview');
+      final invoice = PurchaseInvoiceRead(
+        id: 'firestore-document-id-42',
+        data: {...source.data, 'purchase_number': 'PUR-0042'},
+        itemDocuments: source.itemDocuments,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PurchaseInvoiceHistoryScreen(
+            role: UserRole.collector,
+            branchName: 'جميع الفروع',
+            invoiceStream: Stream.value([invoice]),
+            detailBuilder: (_, selected) =>
+                Scaffold(body: Text('opened:${selected.documentId}')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(invoice.documentId, 'firestore-document-id-42');
+      expect(invoice.purchaseNumber, 'PUR-0042');
+      await tester.tap(
+        find.byKey(const Key('purchase-history-firestore-document-id-42')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('opened:firestore-document-id-42'), findsOneWidget);
+      expect(find.text('opened:PUR-0042'), findsNothing);
+    },
+  );
+
+  testWidgets('history live stream immediately exposes every Purchase status', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final stream = StreamController<List<PurchaseInvoiceRead>>();
+    addTearDown(stream.close);
+    final statuses = [
+      'pendingReceiverReview',
+      'pendingPriceEntry',
+      'pendingAccountingEntry',
+      'postedToAccounting',
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PurchaseInvoiceHistoryScreen(
+          role: UserRole.collector,
+          branchName: 'جميع الفروع',
+          invoiceStream: stream.stream,
+        ),
+      ),
+    );
+    stream.add([
+      for (final status in statuses)
+        PurchaseInvoiceRead(
+          id: 'history-$status',
+          data: fixtureInvoice(status: status).data,
+        ),
+    ]);
+    await tester.pumpAndSettle();
+    for (final status in statuses) {
+      final row = find.byKey(Key('purchase-history-history-$status'));
+      expect(row, findsOneWidget);
+    }
+  });
 
   testWidgets(
     'manager details show quantities and review state but never protected prices',

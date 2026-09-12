@@ -190,6 +190,7 @@ test("collector creates an atomic scalable purchase invoice and unmatched task w
       },
   );
   assert.equal(invoice.status, "pendingReceiverReview");
+  assert.equal(invoice.receiving_branch_type, "branch");
   assert.equal(invoice.item_count, 2);
   assert.equal(invoice.items, undefined);
   assert.equal(items.length, 2);
@@ -204,6 +205,33 @@ test("collector creates an atomic scalable purchase invoice and unmatched task w
   }
   const notificationText = JSON.stringify(firestore.documents(COLLECTIONS.notifications));
   assert.doesNotMatch(notificationText, /unit_price|line_total|invoice_total|accounting_reference|\b9\b/);
+});
+
+test("legacy purchase headers without the branch-type marker remain transition-compatible", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore, "legacy-header-branch-type-1");
+  const invoiceId = result.responseData.invoice_id;
+  // Historical public headers were written before this explicitly persisted
+  // normal-branch marker. They must remain operational without data migration.
+  delete firestore._collection(COLLECTIONS.invoices).get(invoiceId).receiving_branch_type;
+  const items = publicItems(firestore, invoiceId);
+  const receipt = await confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      items: items.map((item) => ({
+        item_id: item.item_id,
+        received_quantity: item.ordered_quantity,
+        damaged_quantity: 0,
+        missing_quantity: 0,
+      })),
+    },
+    idempotencyKey: "legacy-header-branch-type-receipt-1",
+    timestamp: now,
+  });
+  assert.equal(receipt.responseData.status, "pendingAccountingEntry");
 });
 
 test("collector and accountant update protected catalog price memory by product, unit, and currency", async () => {
