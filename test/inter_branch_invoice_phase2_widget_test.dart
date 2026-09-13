@@ -438,6 +438,10 @@ void main() {
   testWidgets('6c. أخطاء صلاحية التحويل تظهر بنص عربي آمن ومحدد', (
     tester,
   ) async {
+    final cachedInvoice = InterBranchInvoiceRead(
+      id: 'invoice-1',
+      data: _v2Header(),
+    );
     await _pumpApp(
       tester,
       InterBranchInvoiceDetailsScreen(
@@ -445,6 +449,7 @@ void main() {
         role: UserRole.manager,
         branchId: 'branch-b',
         branchName: 'فرع الاختبار',
+        cachedInvoice: cachedInvoice,
         invoiceDataStream: Stream<Map<String, dynamic>?>.error(
           FirebaseException(
             plugin: 'cloud_firestore',
@@ -457,6 +462,16 @@ void main() {
 
     expect(find.text('لا تملك صلاحية عرض هذه الفاتورة.'), findsOneWidget);
     expect(find.text('تعذر تحميل تفاصيل الفاتورة'), findsNothing);
+    await tester.tap(
+      find.byKey(const Key('transfer-detail-diagnostic-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('معلومات التشخيص'), findsNWidgets(2));
+    expect(find.textContaining('معرّف المستند: invoice-1'), findsOneWidget);
+    expect(find.textContaining('فرع الإرسال: branch-a'), findsOneWidget);
+    expect(find.textContaining('فرع الاستلام: branch-b'), findsOneWidget);
+    expect(find.textContaining('رمز الخطأ: permission-denied'), findsOneWidget);
+    expect(find.textContaining('token'), findsNothing);
   });
 
   testWidgets('7. المحاسب يرحل الفاتورة بمرجع محاسبي', (tester) async {

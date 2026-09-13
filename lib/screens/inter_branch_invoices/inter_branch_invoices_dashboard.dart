@@ -1285,6 +1285,7 @@ class _InterBranchInvoicesBoxScreenState
                       role: widget.role,
                       branchId: widget.branchId,
                       branchName: widget.branchName,
+                      cachedInvoice: invoice,
                     ),
                   ),
                 );

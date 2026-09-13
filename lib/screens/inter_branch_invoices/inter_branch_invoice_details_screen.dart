@@ -1,11 +1,14 @@
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
+import 'package:store_collection_app/models/inter_branch_invoice_detail_diagnostic.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_price_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_api_service.dart';
@@ -69,6 +72,11 @@ class InterBranchInvoiceDetailsScreen extends StatefulWidget {
   final UserRole role;
   final String? branchId;
   final String branchName;
+
+  /// A public header that was already authorized by the History query. It is
+  /// used only to explain a later direct-read failure; it never replaces the
+  /// Firestore detail read or grants access to protected data.
+  final InterBranchInvoiceRead? cachedInvoice;
   final Stream<Map<String, dynamic>?>? invoiceDataStream;
   final Stream<List<Map<String, dynamic>>>? itemDataStream;
   final ProtectedPriceSnapshotLoader? protectedPriceSnapshotLoader;
@@ -84,6 +92,7 @@ class InterBranchInvoiceDetailsScreen extends StatefulWidget {
     required this.role,
     required this.branchName,
     this.branchId,
+    this.cachedInvoice,
     this.invoiceDataStream,
     this.itemDataStream,
     this.protectedPriceSnapshotLoader,
@@ -105,6 +114,7 @@ class _InterBranchInvoiceDetailsScreenState
   ProductPriceService? _priceService;
   final _numberFormat = NumberFormat('#,##0.##');
   final _dateFormat = DateFormat('yyyy/MM/dd HH:mm');
+  InterBranchInvoiceDetailDiagnostic? _lastDetailDiagnostic;
 
   bool get _showsPrices =>
       InterBranchInvoicePolicy.mayReadProtectedPrices(widget.role);
@@ -206,13 +216,32 @@ class _InterBranchInvoiceDetailsScreenState
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError) {
+              final diagnostic = _recordPermissionDiagnostic(snapshot.error!);
               return Center(
-                child: Text(
-                  _detailLoadErrorText(
-                    snapshot.error!,
-                    fallback: 'تعذر تحميل تفاصيل الفاتورة',
-                    permission: 'لا تملك صلاحية عرض هذه الفاتورة.',
-                    missing: 'الفاتورة غير موجودة.',
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _detailLoadErrorText(
+                          snapshot.error!,
+                          fallback: 'تعذر تحميل تفاصيل الفاتورة',
+                          permission: 'لا تملك صلاحية عرض هذه الفاتورة.',
+                          missing: 'الفاتورة غير موجودة.',
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (diagnostic != null) ...[
+                        const SizedBox(height: 14),
+                        OutlinedButton.icon(
+                          key: const Key('transfer-detail-diagnostic-button'),
+                          onPressed: () => _showDiagnosticPanel(diagnostic),
+                          icon: const Icon(Icons.info_outline_rounded),
+                          label: const Text('معلومات التشخيص'),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               );
@@ -320,6 +349,80 @@ class _InterBranchInvoiceDetailsScreenState
       };
     }
     return fallback;
+  }
+
+  InterBranchInvoiceDetailDiagnostic? _recordPermissionDiagnostic(
+    Object error,
+  ) {
+    if (error is! FirebaseException || error.code != 'permission-denied') {
+      return null;
+    }
+    final diagnostic = InterBranchInvoiceDetailDiagnostic.forPermissionFailure(
+      firebaseUid: _firebaseUid(),
+      role: widget.role,
+      branchId: widget.branchId,
+      branchName: widget.branchName,
+      firebaseProjectId: _firebaseProjectId(),
+      invoiceId: widget.invoiceId,
+      errorCode: error.code,
+      cachedInvoice: widget.cachedInvoice,
+    );
+    // This is intentionally memory-only. It is not logged, uploaded, or
+    // written to Firestore/shared preferences.
+    _lastDetailDiagnostic = diagnostic;
+    return _lastDetailDiagnostic;
+  }
+
+  String? _firebaseUid() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _firebaseProjectId() {
+    try {
+      return Firebase.app().options.projectId;
+    } catch (_) {
+      return 'غير متاح';
+    }
+  }
+
+  void _showDiagnosticPanel(InterBranchInvoiceDetailDiagnostic diagnostic) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'معلومات التشخيص',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...diagnostic.toSafeDisplayMap().entries.map(
+                    (entry) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: SelectableText('${entry.key}: ${entry.value}'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<InterBranchInvoicePriceSnapshot?> _loadProtectedPriceSnapshot(
