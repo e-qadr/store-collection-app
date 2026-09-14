@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/account/account_settings_screen.dart';
+import 'package:store_collection_app/screens/branch_requests/branch_requests_dashboard.dart';
 import 'package:store_collection_app/screens/cash_expenses/cash_expenses_dashboard.dart';
 import 'package:store_collection_app/screens/dashboards/accountant_branches_screen.dart';
 import 'package:store_collection_app/screens/dashboards/accountant_dashboard.dart';
@@ -145,6 +146,18 @@ class SystemSelectionScreen extends StatelessWidget {
                       color: AppTheme.warningColor,
                       onTap: () => _openConsumableRequestsSystem(context),
                     ),
+                    if (role == UserRole.manager ||
+                        role == UserRole.collector) ...[
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'طلبات الفروع',
+                        subtitle:
+                            'طلبات الاحتياج والنقص والصيانة والمهام الموجهة للمدير العام',
+                        icon: Icons.assignment_rounded,
+                        color: AppTheme.primaryOlive,
+                        onTap: () => _openBranchRequestsSystem(context),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     ActionCard(
                       title: 'سندات الصرف والمنصرفات النقدية',
@@ -334,6 +347,22 @@ class SystemSelectionScreen extends StatelessWidget {
           role: role,
           branchId: id.isEmpty ? null : id,
           branchName: id.isEmpty ? 'جميع الفروع' : branchName,
+        ),
+      ),
+    );
+  }
+
+  void _openBranchRequestsSystem(BuildContext context) {
+    if (role != UserRole.manager && role != UserRole.collector) return;
+    final id = branchId?.trim() ?? '';
+    if (role == UserRole.manager && id.isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BranchRequestsDashboard(
+          role: role,
+          branchId: id.isEmpty ? null : id,
+          branchName: role == UserRole.collector ? 'جميع الفروع' : branchName,
         ),
       ),
     );

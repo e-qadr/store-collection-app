@@ -8,6 +8,7 @@ class NotificationService {
   static const transactionsModule = 'transactions';
   static const consumableRequestsModule = 'consumable_requests';
   static const cashExpenseRequestsModule = 'cash_expense_requests';
+  static const branchRequestsModule = 'branch_requests';
   static const interBranchInvoicesModule = 'inter_branch_invoices';
   static const purchaseInvoicesModule = 'purchase_invoices';
 
@@ -231,6 +232,50 @@ class NotificationService {
       title: 'طلب مستهلكات جديد',
       message: 'طلب المستهلكات رقم $number بانتظار مراجعة المدير العام.',
       extraData: {'consumable_request_id': requestId},
+    );
+  }
+
+  Future<void> notifyBranchRequestCreated({
+    required String requestId,
+    required Map<String, dynamic> requestData,
+  }) async {
+    final branchId = _string(requestData, 'branch_id');
+    final title = _string(requestData, 'title');
+    await _send(
+      recipients: await _usersByRole('collector'),
+      module: branchRequestsModule,
+      entityCollection: branchRequestsModule,
+      entityId: requestId,
+      branchId: branchId,
+      referenceNumber: requestId,
+      notificationType: 'branch_request_created',
+      title: 'طلب جديد من فرع',
+      message:
+          'ورد طلب جديد من الفرع: ${title.isEmpty ? 'بدون عنوان' : title}.',
+      extraData: {'branch_request_id': requestId},
+    );
+  }
+
+  Future<void> notifyBranchRequestCompleted({
+    required String requestId,
+    required Map<String, dynamic> requestData,
+  }) async {
+    final branchId = _string(requestData, 'branch_id');
+    final title = _string(requestData, 'title');
+    await _send(
+      recipients: {
+        _string(requestData, 'created_by'),
+        ...await _branchManagers(branchId),
+      },
+      module: branchRequestsModule,
+      entityCollection: branchRequestsModule,
+      entityId: requestId,
+      branchId: branchId,
+      referenceNumber: requestId,
+      notificationType: 'branch_request_completed',
+      title: 'تم إكمال طلب الفرع',
+      message: 'تم إكمال طلبك: ${title.isEmpty ? 'بدون عنوان' : title}.',
+      extraData: {'branch_request_id': requestId},
     );
   }
 

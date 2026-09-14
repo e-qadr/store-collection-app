@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/cash_expenses/cash_expense_details_screen.dart';
+import 'package:store_collection_app/screens/branch_requests/branch_requests_dashboard.dart';
 import 'package:store_collection_app/screens/consumables/consumable_request_details_screen.dart';
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoice_details_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_details_screen.dart';
@@ -225,6 +226,12 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       return;
     }
 
+    if (module == NotificationService.branchRequestsModule ||
+        collection == NotificationService.branchRequestsModule) {
+      await _openBranchRequests(data);
+      return;
+    }
+
     if (module == NotificationService.interBranchInvoicesModule ||
         collection == NotificationService.interBranchInvoicesModule) {
       await _openInterBranchInvoice(data);
@@ -285,6 +292,21 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       MaterialPageRoute(
         builder: (context) => CashExpenseDetailsScreen(
           requestId: requestId,
+          role: targetContext.role,
+          branchId: targetContext.branchId,
+          branchName: targetContext.branchName,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openBranchRequests(Map<String, dynamic> data) async {
+    final targetContext = await _loadTargetContext(data);
+    if (!mounted || targetContext == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BranchRequestsDashboard(
           role: targetContext.role,
           branchId: targetContext.branchId,
           branchName: targetContext.branchName,

@@ -2254,6 +2254,101 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Branch requests are intentionally separate from inventory, purchases,
+    // expenses and transfers. A branch manager can create and read only its
+    // own requests; the collector is the General Manager for this workflow
+    // and alone performs the immutable new → in-progress → completed path.
+    function branchRequestOwnBranch(data) {
+      return role() == 'manager' &&
+        data.get('branch_id', '') == profile().get('branchId', '');
+    }
+
+    function validBranchRequestHistory(history) {
+      return history is list && history.size() > 0;
+    }
+
+    function validBranchRequestCreate(requestId, data) {
+      return role() == 'manager' &&
+        data.keys().hasOnly([
+          'id', 'branch_id', 'branch_name', 'title', 'description',
+          'category', 'priority', 'status', 'created_by', 'created_by_name',
+          'created_at', 'last_updated', 'history'
+        ]) &&
+        data.keys().hasAll([
+          'id', 'branch_id', 'branch_name', 'title', 'description',
+          'category', 'priority', 'status', 'created_by', 'created_by_name',
+          'created_at', 'last_updated', 'history'
+        ]) &&
+        data.id == requestId &&
+        data.branch_id is string && data.branch_id.size() > 0 &&
+        data.branch_id == profile().get('branchId', '') &&
+        data.branch_name is string && data.branch_name.size() > 0 &&
+        data.title is string && data.title.size() > 0 && data.title.size() <= 120 &&
+        data.description is string && data.description.size() > 0 &&
+          data.description.size() <= 2000 &&
+        (data.category == 'shortage' || data.category == 'need' ||
+          data.category == 'maintenance' || data.category == 'general' ||
+          data.category == 'other') &&
+        (data.priority == 'normal' || data.priority == 'important' ||
+          data.priority == 'urgent') &&
+        data.status == 'new' &&
+        data.created_by == request.auth.uid &&
+        data.created_by_name is string && data.created_by_name.size() > 0 &&
+        data.created_at == request.time && data.last_updated == request.time &&
+        validBranchRequestHistory(data.history) && data.history.size() == 1;
+    }
+
+    function branchRequestHistoryAdvanced() {
+      return request.resource.data.history is list &&
+        resource.data.history is list &&
+        request.resource.data.history.hasAll(resource.data.history) &&
+        request.resource.data.history.size() == resource.data.history.size() + 1;
+    }
+
+    function branchRequestStartAllowed() {
+      return role() == 'collector' &&
+        resource.data.status == 'new' &&
+        request.resource.data.status == 'in_progress' &&
+        request.resource.data.started_by == request.auth.uid &&
+        request.resource.data.started_by_name is string &&
+          request.resource.data.started_by_name.size() > 0 &&
+        request.resource.data.started_at == request.time &&
+        request.resource.data.last_updated == request.time &&
+        branchRequestHistoryAdvanced() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'started_by', 'started_by_name', 'started_at',
+          'last_updated', 'history'
+        ]);
+    }
+
+    function branchRequestCompletionAllowed() {
+      return role() == 'collector' &&
+        resource.data.status == 'in_progress' &&
+        request.resource.data.status == 'completed' &&
+        request.resource.data.completed_by == request.auth.uid &&
+        request.resource.data.completed_by_name is string &&
+          request.resource.data.completed_by_name.size() > 0 &&
+        request.resource.data.completed_at == request.time &&
+        request.resource.data.completion_note is string &&
+          request.resource.data.completion_note.size() <= 1000 &&
+        request.resource.data.last_updated == request.time &&
+        branchRequestHistoryAdvanced() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'completed_by', 'completed_by_name', 'completed_at',
+          'completion_note', 'last_updated', 'history'
+        ]);
+    }
+
+    match /branch_requests/{requestId} {
+      allow get, list: if operationalUser() &&
+        (role() == 'collector' || branchRequestOwnBranch(resource.data));
+      allow create: if operationalUser() &&
+        validBranchRequestCreate(requestId, request.resource.data);
+      allow update: if operationalUser() &&
+        (branchRequestStartAllowed() || branchRequestCompletionAllowed());
+      allow delete: if false;
+    }
+
     // Cash expenses preserve their existing manager → general-manager →
     // accountant lifecycle, including the existing unanimous edit-request
     // gate. Every client mutation below is tied to a role, branch, state and
