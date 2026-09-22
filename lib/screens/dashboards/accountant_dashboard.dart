@@ -4,6 +4,7 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
 import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
+import 'package:store_collection_app/screens/transactions/reserved_collection_vouchers_screen.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
@@ -330,6 +331,24 @@ class AccountantDashboard extends StatelessWidget {
                             ),
                           );
                         },
+                      ),
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'مراجعة وحجز سند تحصيل',
+                        subtitle:
+                            'مراجعة دخل الفرع وحجز رقم رسمي بانتظار التحصيل الفعلي',
+                        icon: Icons.bookmark_add_rounded,
+                        color: AppTheme.accountantColor,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ReservedCollectionVouchersScreen(
+                              role: UserRole.accountant,
+                              branchId: branchId,
+                              branchName: branchName,
+                            ),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 12),
                       ActionCard(

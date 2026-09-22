@@ -8,6 +8,9 @@ enum UserRole {
 
 // حالة السند المالي
 enum TransactionStatus {
+  reservedForCollection,
+  collectionDifferencePendingReview,
+  reservedCancelled,
   pending,
   approvedByCollector,
   approvedByManager,

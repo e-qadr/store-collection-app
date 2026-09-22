@@ -76,6 +76,75 @@ class NotificationService {
     );
   }
 
+  Future<void> notifyCollectionVoucherReserved({
+    required String transactionId,
+    required Map<String, dynamic> transactionData,
+  }) async {
+    final branchId = _string(transactionData, 'branchId');
+    final number = _referenceNumber(
+      transactionData,
+      keys: const ['transaction_number'],
+      fallbackPrefix: 'TR',
+      fallbackId: transactionId,
+    );
+    await _send(
+      recipients: {
+        ...await _branchManagers(branchId),
+        ...await _usersByRole('collector'),
+      },
+      module: transactionsModule,
+      entityCollection: 'transactions',
+      entityId: transactionId,
+      branchId: branchId,
+      referenceNumber: number,
+      notificationType: 'collection_voucher_reserved',
+      title: 'سند تحصيل مراجع بانتظار التحصيل',
+      message: 'حجز المحاسب السند رقم $number بانتظار الاستلام الفعلي.',
+      extraData: {
+        'transaction_id': transactionId,
+        'transaction_number': number,
+      },
+    );
+  }
+
+  Future<void> notifyCollectionVoucherCollected({
+    required String transactionId,
+    required Map<String, dynamic> transactionData,
+    required bool differencePendingReview,
+  }) async {
+    final branchId = _string(transactionData, 'branchId');
+    final number = _referenceNumber(
+      transactionData,
+      keys: const ['transaction_number'],
+      fallbackPrefix: 'TR',
+      fallbackId: transactionId,
+    );
+    await _send(
+      recipients: {
+        ...await _branchManagers(branchId),
+        ...await _usersByRole('accountant'),
+      },
+      module: transactionsModule,
+      entityCollection: 'transactions',
+      entityId: transactionId,
+      branchId: branchId,
+      referenceNumber: number,
+      notificationType: differencePendingReview
+          ? 'collection_voucher_difference_pending_review'
+          : 'collection_voucher_physically_collected',
+      title: differencePendingReview
+          ? 'فرق تحصيل بانتظار مراجعة المحاسب'
+          : 'تم التحصيل الفعلي للسند',
+      message: differencePendingReview
+          ? 'سجل المدير العام فرقاً في السند رقم $number ويحتاج مراجعة المحاسب.'
+          : 'تم التحصيل الفعلي للسند رقم $number ودخل مساره المعتاد.',
+      extraData: {
+        'transaction_id': transactionId,
+        'transaction_number': number,
+      },
+    );
+  }
+
   Future<void> notifyForStatus({
     required String transactionId,
     required String newStatus,

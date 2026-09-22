@@ -2015,6 +2015,20 @@ service cloud.firestore {
         data.get('collectorId', '') == request.auth.uid;
     }
 
+    function reservedCollectionVoucher(data) {
+      return data.get('status', '') == 'reservedForCollection' ||
+        data.get('status', '') == 'collectionDifferencePendingReview' ||
+        data.get('status', '') == 'reservedCancelled';
+    }
+
+    // Existing vouchers retain their established operational read behavior.
+    // Only the new accountant-reserved records are branch-private to managers.
+    function mayReadCollectionVoucher(data) {
+      return !reservedCollectionVoucher(data) ||
+        role() == 'collector' || role() == 'accountant' ||
+        collectionManagerFor(data);
+    }
+
     function collectionActorForArchive(data) {
       return collectionCreatorFor(data) || collectionManagerFor(data) ||
         role() == 'accountant';
@@ -2031,6 +2045,107 @@ service cloud.firestore {
         data.get('branchId', '') is string &&
         data.get('transaction_number', '') is string &&
         data.get('history', []) is list;
+    }
+
+    function collectionReservedCreateAllowed(data) {
+      return role() == 'accountant' &&
+        data.get('status', '') == 'reservedForCollection' &&
+        data.get('collection_workflow', '') == 'accountant_reserved' &&
+        data.get('collectorId', '') == '' &&
+        data.get('branchId', '') is string &&
+        data.get('transaction_number', '') is string &&
+        data.get('amount', -1) is number && data.amount > 0 &&
+        data.get('reviewed_amount', -1) is number &&
+          data.reviewed_amount == data.amount &&
+        data.get('reviewed_by', '') == request.auth.uid &&
+        data.get('reviewed_by_name', '') is string &&
+        data.get('reviewed_at', null) == request.time &&
+        data.get('reservation_at', null) == request.time &&
+        data.get('physical_collection_completed', null) == false &&
+        data.get('history', []) is list;
+    }
+
+    function collectionReservedAccountantUpdateAllowed() {
+      return role() == 'accountant' &&
+        resource.data.get('status', '') == 'reservedForCollection' &&
+        request.resource.data.get('status', '') == 'reservedForCollection' &&
+        request.resource.data.get('reviewed_by', '') == request.auth.uid &&
+        request.resource.data.get('reviewed_by_name', '') is string &&
+        request.resource.data.get('reviewed_at', null) == request.time &&
+        request.resource.data.get('amount', -1) is number &&
+        request.resource.data.amount > 0 &&
+        request.resource.data.get('reviewed_amount', -1) ==
+          request.resource.data.amount &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'amount', 'reviewed_amount', 'currency', 'dateFrom', 'dateTo',
+          'notes', 'reservation_reference', 'reviewed_by', 'reviewed_by_name',
+          'reviewed_at', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionReservedCancellationAllowed() {
+      return role() == 'accountant' &&
+        resource.data.get('status', '') == 'reservedForCollection' &&
+        request.resource.data.get('status', '') == 'reservedCancelled' &&
+        request.resource.data.get('reservation_cancelled_by', '') ==
+          request.auth.uid &&
+        request.resource.data.get('reservation_cancelled_by_name', '') is string &&
+        request.resource.data.get('reservation_cancelled_at', null) == request.time &&
+        request.resource.data.get('reservation_cancellation_reason', '') is string &&
+        request.resource.data.reservation_cancellation_reason.size() > 0 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'reservation_cancelled_by', 'reservation_cancelled_by_name',
+          'reservation_cancelled_at', 'reservation_cancellation_reason',
+          'last_updated', 'history'
+        ]);
+    }
+
+    function collectionReservedPhysicalReceiptAllowed() {
+      let next = request.resource.data.get('status', '');
+      let hasDifference = next == 'collectionDifferencePendingReview';
+      return role() == 'collector' &&
+        resource.data.get('status', '') == 'reservedForCollection' &&
+        (next == 'pending' || hasDifference) &&
+        request.resource.data.get('collectorId', '') == request.auth.uid &&
+        request.resource.data.get('physical_collection_completed', null) == true &&
+        request.resource.data.get('physical_collected_by', '') == request.auth.uid &&
+        request.resource.data.get('physical_collected_by_name', '') is string &&
+        request.resource.data.get('physical_collected_at', null) == request.time &&
+        request.resource.data.get('physical_collection_amount', -1) is number &&
+        request.resource.data.physical_collection_amount > 0 &&
+        request.resource.data.get('reviewed_amount', -1) == resource.data.amount &&
+        request.resource.data.amount == resource.data.amount &&
+        (hasDifference ?
+          (request.resource.data.get('collection_difference_reason', '') is string &&
+            request.resource.data.collection_difference_reason.size() > 0 &&
+            request.resource.data.get('collection_difference', null) is number) :
+          (!request.resource.data.keys().hasAny([
+            'collection_difference', 'collection_difference_reason'
+          ]))) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'collectorId', 'physical_collection_completed',
+          'physical_collected_by', 'physical_collected_by_name',
+          'physical_collected_at', 'physical_collection_amount',
+          'collection_difference', 'collection_difference_reason',
+          'last_updated', 'history'
+        ]);
+    }
+
+    function collectionReservedDifferenceReviewAllowed() {
+      return role() == 'accountant' &&
+        resource.data.get('status', '') == 'collectionDifferencePendingReview' &&
+        request.resource.data.get('status', '') == 'pending' &&
+        request.resource.data.get('physical_collection_amount', null) is number &&
+        request.resource.data.amount == request.resource.data.physical_collection_amount &&
+        request.resource.data.get('difference_reviewed_by', '') == request.auth.uid &&
+        request.resource.data.get('difference_reviewed_by_name', '') is string &&
+        request.resource.data.get('difference_reviewed_at', null) == request.time &&
+        request.resource.data.get('accountant_notes', '') is string &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'amount', 'status', 'difference_reviewed_by',
+          'difference_reviewed_by_name', 'difference_reviewed_at',
+          'accountant_notes', 'last_updated', 'history'
+        ]);
     }
 
     function collectionManagerDecisionAllowed() {
@@ -2108,17 +2223,22 @@ service cloud.firestore {
       return collectionAuditUpdate() &&
         (collectionManagerDecisionAllowed() || collectionCollectorEditAllowed() ||
           collectionAccountantTransitionAllowed() || collectionArchiveRequestAllowed() ||
-          collectionArchiveApprovalAllowed());
+          collectionArchiveApprovalAllowed() ||
+          collectionReservedAccountantUpdateAllowed() ||
+          collectionReservedCancellationAllowed() ||
+          collectionReservedPhysicalReceiptAllowed() ||
+          collectionReservedDifferenceReviewAllowed());
     }
 
     function collectionCounterCreateAllowed(branchId, data) {
-      return role() == 'collector' && data.get('branch_id', '') == branchId &&
+      return (role() == 'collector' || role() == 'accountant') &&
+        data.get('branch_id', '') == branchId &&
         data.get('next_number', -1) is int && data.next_number >= 1 &&
         data.get('branch_code', '') is string;
     }
 
     function collectionCounterUpdateAllowed(branchId) {
-      return role() == 'collector' &&
+      return (role() == 'collector' || role() == 'accountant') &&
         request.resource.data.get('branch_id', '') == branchId &&
         request.resource.data.get('branch_code', '') ==
           resource.data.get('branch_code', '') &&
@@ -2130,9 +2250,13 @@ service cloud.firestore {
     }
 
     match /transactions/{transactionId} {
-      allow get, list: if operationalUser();
-      allow create: if operationalUser() && collectionCreateAllowed(
-        request.resource.data
+      allow get, list: if operationalUser() &&
+        mayReadCollectionVoucher(resource.data);
+      // Check the narrow accountant-reservation shape first, so its valid
+      // create does not have to traverse the legacy direct-collection path.
+      allow create: if operationalUser() && (
+        collectionReservedCreateAllowed(request.resource.data) ||
+        collectionCreateAllowed(request.resource.data)
       );
       allow update: if operationalUser() && collectionUpdateAllowed();
       allow delete: if false;

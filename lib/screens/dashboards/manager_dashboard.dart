@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/screens/transactions/manager_approvals_screen.dart';
+import 'package:store_collection_app/screens/transactions/reserved_collection_vouchers_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
@@ -63,6 +65,24 @@ class ManagerDashboard extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (context) => BranchTransactionsScreen(
+                              branchId: branchId,
+                              branchName: branchName,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ActionCard(
+                        title: 'السندات المحجوزة للتحصيل',
+                        subtitle:
+                            'عرض أرقام السندات التي راجعها المحاسب بانتظار التحصيل',
+                        icon: Icons.bookmark_outline_rounded,
+                        color: AppTheme.managerColor,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ReservedCollectionVouchersScreen(
+                              role: UserRole.manager,
                               branchId: branchId,
                               branchName: branchName,
                             ),

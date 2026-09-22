@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/transactions/new_transaction_screen.dart';
+import 'package:store_collection_app/screens/transactions/reserved_collection_vouchers_screen.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/screens/transactions/collector_edit_requests_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
@@ -74,6 +76,25 @@ class CollectorDashboard extends StatelessWidget {
                             ),
                           );
                         },
+                      ),
+                      const SizedBox(height: 12),
+
+                      ActionCard(
+                        title: 'سندات جاهزة للتحصيل',
+                        subtitle:
+                            'إكمال السندات التي راجعها المحاسب بعد الاستلام الفعلي',
+                        icon: Icons.bookmark_added_rounded,
+                        color: AppTheme.collectorColor,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ReservedCollectionVouchersScreen(
+                              role: UserRole.collector,
+                              branchId: branchId,
+                              branchName: branchName,
+                            ),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 12),
 

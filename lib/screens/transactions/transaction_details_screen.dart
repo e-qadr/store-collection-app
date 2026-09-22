@@ -59,6 +59,12 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
 
   String _getStatusText(String status) {
     switch (status) {
+      case 'reservedForCollection':
+        return 'مراجع من المحاسب - بانتظار التحصيل';
+      case 'collectionDifferencePendingReview':
+        return 'فرق التحصيل بانتظار مراجعة المحاسب';
+      case 'reservedCancelled':
+        return 'مسودة محجوزة ملغاة';
       case 'pending':
         return 'قيد الانتظار (سند جديد)';
       case 'approvedByCollector':

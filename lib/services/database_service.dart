@@ -1,6 +1,9 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/transaction_model.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 import 'package:store_collection_app/utils/archive_workflow.dart';
@@ -40,6 +43,7 @@ class DatabaseService {
     return {
       'action': action,
       'message': message,
+      'actor_id': actor['uid'],
       'actor_name': actor['name'],
       'actor_role': actor['role'],
       'timestamp': Timestamp.now(),
@@ -50,6 +54,12 @@ class DatabaseService {
   // أداة مساعدة لترجمة الحالة للسجل التاريخي
   String _getStatusArabicText(String status) {
     switch (status) {
+      case 'reservedForCollection':
+        return 'مراجع من المحاسب - بانتظار التحصيل';
+      case 'collectionDifferencePendingReview':
+        return 'فرق تحصيل بانتظار مراجعة المحاسب';
+      case 'reservedCancelled':
+        return 'مسودة محجوزة ملغاة';
       case 'pending':
         return 'قيد الانتظار';
       case 'approvedByCollector':
@@ -138,6 +148,292 @@ class DatabaseService {
       debugPrint('Database Error: $e');
       rethrow;
     }
+  }
+
+  /// Creates the optional accountant-prepared path. It deliberately allocates
+  /// from the same branch counter as the direct collector path, in the same
+  /// Firestore transaction, so a reserved number can never be duplicated.
+  Future<String> reserveReviewedCollectionVoucher({
+    required String branchId,
+    required double reviewedAmount,
+    required String currency,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    String reference = '',
+    String note = '',
+  }) async {
+    if (reviewedAmount <= 0)
+      throw Exception('المبلغ المراجع يجب أن يكون أكبر من صفر.');
+    final actor = await _getCurrentActor();
+    if (actor['role'] != 'accountant') {
+      throw Exception('حجز سند مراجع متاح للمحاسب فقط.');
+    }
+    final transactionRef = _firestore.collection('transactions').doc();
+    final branchRef = _firestore.collection('branches').doc(branchId);
+    final counterRef = _firestore
+        .collection('branch_transaction_counters')
+        .doc(branchId);
+    final now = DateTime.now();
+
+    final number = await _firestore.runTransaction((transaction) async {
+      final branch = await transaction.get(branchRef);
+      if (!branch.exists) throw Exception('الفرع المحدد غير موجود.');
+      final code = (branch.data()?['branch_code']?.toString() ?? '')
+          .trim()
+          .toUpperCase();
+      if (code.isEmpty) throw Exception('رمز الفرع غير متوفر.');
+      final counter = await transaction.get(counterRef);
+      final next = (counter.data()?['next_number'] as num?)?.toInt() ?? 0;
+      if (next > 999)
+        throw Exception('وصل ترقيم هذا الفرع إلى الحد الأقصى 999.');
+      final number = '$code${next.toString().padLeft(3, '0')}';
+      final voucher =
+          TransactionModel(
+              id: transactionRef.id,
+              transactionNumber: number,
+              branchId: branchId,
+              collectorId: '',
+              amount: reviewedAmount,
+              dateFrom: dateFrom,
+              dateTo: dateTo,
+              transactionDate: now,
+              notes: note.trim(),
+              status: TransactionStatus.reservedForCollection,
+              timestamp: now,
+              currency: currency,
+              amountMatches: null,
+              history: [],
+            ).toJson()
+            ..['branch_code'] = code
+            ..['collection_workflow'] = 'accountant_reserved'
+            ..['reviewed_amount'] = reviewedAmount
+            ..['reviewed_by'] = actor['uid']
+            ..['reviewed_by_name'] = actor['name']
+            ..['reviewed_at'] = FieldValue.serverTimestamp()
+            ..['reservation_at'] = FieldValue.serverTimestamp()
+            ..['reservation_reference'] = reference.trim()
+            ..['physical_collection_completed'] = false
+            ..['history'] = [
+              _historyEntry(
+                action: 'accountant_reserved',
+                message:
+                    'راجع المحاسب الدخل وحجز السند بانتظار التحصيل الفعلي.',
+                actor: actor,
+                changes: {
+                  'reviewed_amount': reviewedAmount,
+                  'reference': reference.trim(),
+                },
+              ),
+            ];
+      transaction.set(transactionRef, voucher);
+      transaction.set(counterRef, {
+        'branch_id': branchId,
+        'branch_code': code,
+        'next_number': next + 1,
+      });
+      return number;
+    });
+    final saved = await transactionRef.get();
+    await _notifySafely(
+      () => _notificationService.notifyCollectionVoucherReserved(
+        transactionId: transactionRef.id,
+        transactionData: saved.data()!,
+      ),
+    );
+    return number;
+  }
+
+  Future<void> updateReservedCollectionVoucher({
+    required String transactionId,
+    required double reviewedAmount,
+    required String currency,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    String reference = '',
+    String note = '',
+  }) async {
+    final actor = await _getCurrentActor();
+    if (actor['role'] != 'accountant')
+      throw Exception('تعديل المسودة متاح للمحاسب فقط.');
+    if (reviewedAmount <= 0)
+      throw Exception('المبلغ المراجع يجب أن يكون أكبر من صفر.');
+    final ref = _firestore.collection('transactions').doc(transactionId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      final data = snapshot.data();
+      if (data == null || data['status'] != 'reservedForCollection') {
+        throw Exception('لا يمكن تعديل هذا السند بعد بدء التحصيل.');
+      }
+      transaction.update(ref, {
+        'amount': reviewedAmount,
+        'reviewed_amount': reviewedAmount,
+        'currency': currency,
+        'dateFrom': Timestamp.fromDate(dateFrom),
+        'dateTo': Timestamp.fromDate(dateTo),
+        'notes': note.trim(),
+        'reservation_reference': reference.trim(),
+        'reviewed_by': actor['uid'],
+        'reviewed_by_name': actor['name'],
+        'reviewed_at': FieldValue.serverTimestamp(),
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([
+          _historyEntry(
+            action: 'accountant_reservation_updated',
+            message: 'حدّث المحاسب معلومات المسودة المحجوزة.',
+            actor: actor,
+            changes: {
+              'reviewed_amount': reviewedAmount,
+              'reference': reference.trim(),
+            },
+          ),
+        ]),
+      });
+    });
+  }
+
+  Future<void> cancelReservedCollectionVoucher({
+    required String transactionId,
+    required String reason,
+  }) async {
+    final cleanReason = reason.trim();
+    if (cleanReason.isEmpty) throw Exception('سبب إلغاء المسودة مطلوب.');
+    final actor = await _getCurrentActor();
+    if (actor['role'] != 'accountant')
+      throw Exception('إلغاء المسودة متاح للمحاسب فقط.');
+    final ref = _firestore.collection('transactions').doc(transactionId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      final data = snapshot.data();
+      if (data == null || data['status'] != 'reservedForCollection') {
+        throw Exception('لا يمكن إلغاء هذا السند.');
+      }
+      transaction.update(ref, {
+        'status': 'reservedCancelled',
+        'reservation_cancelled_by': actor['uid'],
+        'reservation_cancelled_by_name': actor['name'],
+        'reservation_cancelled_at': FieldValue.serverTimestamp(),
+        'reservation_cancellation_reason': cleanReason,
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([
+          _historyEntry(
+            action: 'accountant_reservation_cancelled',
+            message: 'ألغى المحاسب المسودة المحجوزة دون إعادة رقمها.',
+            actor: actor,
+            changes: {'reason': cleanReason},
+          ),
+        ]),
+      });
+    });
+  }
+
+  /// Records only the physical receipt. A matching amount enters the existing
+  /// pending Collection workflow; a mismatch stays visible to the accountant
+  /// until a reasoned review authorizes the correction.
+  Future<void> collectReservedCollectionVoucher({
+    required String transactionId,
+    required double physicalAmount,
+    required String differenceReason,
+  }) async {
+    if (physicalAmount <= 0)
+      throw Exception('المبلغ المحصل يجب أن يكون أكبر من صفر.');
+    final actor = await _getCurrentActor();
+    if (actor['role'] != 'collector')
+      throw Exception('التحصيل الفعلي متاح للمدير العام فقط.');
+    final ref = _firestore.collection('transactions').doc(transactionId);
+    var requiresReview = false;
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      final data = snapshot.data();
+      if (data == null || data['status'] != 'reservedForCollection') {
+        throw Exception('هذا السند ليس بانتظار التحصيل.');
+      }
+      final reviewed =
+          (data['reviewed_amount'] as num?)?.toDouble() ??
+          (data['amount'] as num?)?.toDouble() ??
+          0;
+      requiresReview = reviewed != physicalAmount;
+      final reason = differenceReason.trim();
+      if (requiresReview && reason.isEmpty) {
+        throw Exception('سبب فرق مبلغ التحصيل مطلوب.');
+      }
+      transaction.update(ref, {
+        'collectorId': actor['uid'],
+        'physical_collection_completed': true,
+        'physical_collected_by': actor['uid'],
+        'physical_collected_by_name': actor['name'],
+        'physical_collected_at': FieldValue.serverTimestamp(),
+        'physical_collection_amount': physicalAmount,
+        'status': requiresReview
+            ? 'collectionDifferencePendingReview'
+            : 'pending',
+        if (requiresReview) ...{
+          'collection_difference': physicalAmount - reviewed,
+          'collection_difference_reason': reason,
+        },
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([
+          _historyEntry(
+            action: requiresReview
+                ? 'physical_collection_difference'
+                : 'physical_collection_completed',
+            message: requiresReview
+                ? 'سجل المدير العام التحصيل الفعلي مع فرق بانتظار مراجعة المحاسب.'
+                : 'سجل المدير العام التحصيل الفعلي وأدخل السند في مسار التحصيل المعتاد.',
+            actor: actor,
+            changes: {
+              'physical_amount': physicalAmount,
+              'reviewed_amount': reviewed,
+            },
+          ),
+        ]),
+      });
+    });
+    final saved = await ref.get();
+    await _notifySafely(
+      () => _notificationService.notifyCollectionVoucherCollected(
+        transactionId: transactionId,
+        transactionData: saved.data()!,
+        differencePendingReview: requiresReview,
+      ),
+    );
+  }
+
+  Future<void> approveReservedCollectionDifference({
+    required String transactionId,
+    required String note,
+  }) async {
+    final actor = await _getCurrentActor();
+    if (actor['role'] != 'accountant')
+      throw Exception('مراجعة فرق التحصيل متاحة للمحاسب فقط.');
+    final ref = _firestore.collection('transactions').doc(transactionId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      final data = snapshot.data();
+      if (data == null ||
+          data['status'] != 'collectionDifferencePendingReview') {
+        throw Exception('لا يوجد فرق تحصيل بانتظار المراجعة.');
+      }
+      final physical = (data['physical_collection_amount'] as num?)?.toDouble();
+      if (physical == null) throw Exception('مبلغ التحصيل الفعلي غير متوفر.');
+      transaction.update(ref, {
+        'amount': physical,
+        'status': 'pending',
+        'difference_reviewed_by': actor['uid'],
+        'difference_reviewed_by_name': actor['name'],
+        'difference_reviewed_at': FieldValue.serverTimestamp(),
+        'accountant_notes': note.trim(),
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([
+          _historyEntry(
+            action: 'collection_difference_approved',
+            message:
+                'راجع المحاسب فرق التحصيل وأعاد السند لمسار التحصيل المعتاد.',
+            actor: actor,
+            changes: {'approved_amount': physical, 'note': note.trim()},
+          ),
+        ]),
+      });
+    });
   }
 
   // 2. جلب السندات مع الفلاتر
