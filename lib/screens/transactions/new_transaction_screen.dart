@@ -5,8 +5,8 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/transaction_model.dart';
 import 'package:store_collection_app/services/database_service.dart';
 import 'package:intl/intl.dart' hide TextDirection;
-import 'package:flutter/services.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/widgets/collection_amount_input_formatter.dart';
 
 class NewTransactionScreen extends StatefulWidget {
   final String branchId;
@@ -616,54 +616,6 @@ class _NewTransactionScreenState extends State<NewTransactionScreen> {
           ],
         ),
       ),
-    );
-  }
-}
-
-// منسق أرقام ذكي يحافظ على موقع المؤشر عند التعديل في المنتصف
-class ThousandsSeparatorInputFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    if (newValue.text.isEmpty) return newValue;
-
-    String selectionText = newValue.text.replaceAll(',', '');
-    final parts = selectionText.split('.');
-
-    String formatted = parts[0].replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    );
-
-    if (parts.length > 1) {
-      formatted += '.${parts[1]}';
-    }
-
-    int commasBefore = 0;
-    for (
-      int i = 0;
-      i < newValue.selection.end && i < newValue.text.length;
-      i++
-    ) {
-      if (newValue.text[i] == ',') commasBefore++;
-    }
-
-    int rawCharsBefore = newValue.selection.end - commasBefore;
-    int newSelectionIndex = 0;
-    int count = 0;
-
-    while (newSelectionIndex < formatted.length && count < rawCharsBefore) {
-      if (formatted[newSelectionIndex] != ',') {
-        count++;
-      }
-      newSelectionIndex++;
-    }
-
-    return TextEditingValue(
-      text: formatted,
-      selection: TextSelection.collapsed(offset: newSelectionIndex),
     );
   }
 }

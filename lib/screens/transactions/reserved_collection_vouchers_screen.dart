@@ -40,19 +40,10 @@ class _ReservedCollectionVouchersScreenState
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
-        floatingActionButton: _isAccountant
-            ? FloatingActionButton.extended(
-                key: const Key('reserve-collection-voucher'),
-                onPressed: () => _showReservationForm(),
-                backgroundColor: AppTheme.accountantColor,
-                icon: const Icon(Icons.bookmark_add_rounded),
-                label: const Text('حجز سند مراجع'),
-              )
-            : null,
         appBar: AppBar(
           backgroundColor: _roleColor,
           title: Text(
-            _isAccountant ? 'مراجعة وحجز سندات التحصيل' : 'سندات جاهزة للتحصيل',
+            _isAccountant ? 'سجل السندات المحجوزة' : 'سندات جاهزة للتحصيل',
           ),
           actions: const [NotificationBell()],
         ),
@@ -79,7 +70,7 @@ class _ReservedCollectionVouchersScreenState
             if (vouchers.isEmpty) {
               return _empty(
                 _isAccountant
-                    ? 'لا توجد مسودات محجوزة لهذا الفرع. يمكنك مراجعة دخل الفرع وحجز رقم جديد.'
+                    ? 'لا توجد مسودات محجوزة لهذا الفرع.'
                     : 'لا توجد سندات مراجعـة بانتظار التحصيل في هذا الفرع.',
               );
             }
@@ -233,7 +224,7 @@ class _ReservedCollectionVouchersScreenState
         spacing: 8,
         children: [
           OutlinedButton.icon(
-            onPressed: () => _showReservationForm(id: id, existing: data),
+            onPressed: () => _showReservationEditForm(id: id, existing: data),
             icon: const Icon(Icons.edit_outlined),
             label: const Text('تعديل'),
           ),
@@ -255,22 +246,22 @@ class _ReservedCollectionVouchersScreenState
     return const SizedBox.shrink();
   }
 
-  Future<void> _showReservationForm({
-    String? id,
-    Map<String, dynamic>? existing,
+  Future<void> _showReservationEditForm({
+    required String id,
+    required Map<String, dynamic> existing,
   }) async {
     final amount = TextEditingController(
-      text: existing?['reviewed_amount']?.toString() ?? '',
+      text: existing['reviewed_amount']?.toString() ?? '',
     );
     final reference = TextEditingController(
-      text: existing?['reservation_reference']?.toString() ?? '',
+      text: existing['reservation_reference']?.toString() ?? '',
     );
     final note = TextEditingController(
-      text: existing?['notes']?.toString() ?? '',
+      text: existing['notes']?.toString() ?? '',
     );
-    var currency = existing?['currency']?.toString() ?? 'YER';
-    var from = _asDate(existing?['dateFrom']) ?? DateTime.now();
-    var to = _asDate(existing?['dateTo']) ?? DateTime.now();
+    var currency = existing['currency']?.toString() ?? 'YER';
+    var from = _asDate(existing['dateFrom']) ?? DateTime.now();
+    var to = _asDate(existing['dateTo']) ?? DateTime.now();
     var saving = false;
     await showModalBottomSheet<void>(
       context: context,
@@ -289,7 +280,7 @@ class _ReservedCollectionVouchersScreenState
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  id == null ? 'حجز سند تحصيل مراجع' : 'تعديل السند المحجوز',
+                  'تعديل السند المحجوز',
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -366,36 +357,17 @@ class _ReservedCollectionVouchersScreenState
                           }
                           setSheetState(() => saving = true);
                           try {
-                            if (id == null) {
-                              final number = await _database
-                                  .reserveReviewedCollectionVoucher(
-                                    branchId: widget.branchId,
-                                    reviewedAmount: value,
-                                    currency: currency,
-                                    dateFrom: from,
-                                    dateTo: to,
-                                    reference: reference.text,
-                                    note: note.text,
-                                  );
-                              if (context.mounted) Navigator.pop(context);
-                              if (mounted)
-                                _message(
-                                  'تم حجز السند رقم $number بانتظار التحصيل.',
-                                );
-                            } else {
-                              await _database.updateReservedCollectionVoucher(
-                                transactionId: id,
-                                reviewedAmount: value,
-                                currency: currency,
-                                dateFrom: from,
-                                dateTo: to,
-                                reference: reference.text,
-                                note: note.text,
-                              );
-                              if (context.mounted) Navigator.pop(context);
-                              if (mounted)
-                                _message('تم تعديل المسودة المحجوزة.');
-                            }
+                            await _database.updateReservedCollectionVoucher(
+                              transactionId: id,
+                              reviewedAmount: value,
+                              currency: currency,
+                              dateFrom: from,
+                              dateTo: to,
+                              reference: reference.text,
+                              note: note.text,
+                            );
+                            if (context.mounted) Navigator.pop(context);
+                            if (mounted) _message('تم تعديل المسودة المحجوزة.');
                           } catch (error) {
                             _message(
                               'تعذر حفظ المسودة: ${error.toString().replaceFirst('Exception: ', '')}',
@@ -404,7 +376,7 @@ class _ReservedCollectionVouchersScreenState
                           }
                         },
                   icon: const Icon(Icons.bookmark_added_rounded),
-                  label: Text(id == null ? 'حجز الرقم الرسمي' : 'حفظ التعديل'),
+                  label: const Text('حفظ التعديل'),
                 ),
               ],
             ),

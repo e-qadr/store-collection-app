@@ -1,10 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/enums.dart';
-import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
-import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
-import 'package:store_collection_app/screens/transactions/reserved_collection_vouchers_screen.dart';
+import 'package:store_collection_app/screens/transactions/accountant_collection_review_screen.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
@@ -269,44 +267,6 @@ class AccountantDashboard extends StatelessWidget {
                       // ── Summary Stats ──────────────────────────────────
                       _buildAccountantStats(),
                       const SizedBox(height: 12),
-                      ActionCard(
-                        title: 'فواتير التحويل بين الفروع',
-                        subtitle:
-                            'قائمة عامة بالفواتير التي تنتظر الترحيل المحاسبي',
-                        icon: Icons.account_balance_wallet_rounded,
-                        color: AppTheme.accountantColor,
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  InterBranchInvoicesDashboard(
-                                    role: UserRole.accountant,
-                                    branchName: 'جميع الفروع',
-                                  ),
-                            ),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      ActionCard(
-                        title: 'دليل المواد والمنتجات',
-                        subtitle:
-                            'إدارة كتالوج العلامات والمجموعات وأرشفة المنتجات وسجلها',
-                        icon: Icons.inventory_2_rounded,
-                        color: AppTheme.accountantColor,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                const ProductCatalogManagementScreen(
-                                  role: UserRole.accountant,
-                                ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-
                       // ── Quick Actions ──────────────────────────────────
                       const SectionHeader(
                         title: 'الإجراءات السريعة',
@@ -342,7 +302,7 @@ class AccountantDashboard extends StatelessWidget {
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => ReservedCollectionVouchersScreen(
+                            builder: (_) => AccountantCollectionReviewScreen(
                               role: UserRole.accountant,
                               branchId: branchId,
                               branchName: branchName,
