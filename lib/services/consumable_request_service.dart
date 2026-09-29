@@ -53,37 +53,70 @@ class ConsumableRequestService {
     _validateManagerBranch(actor, branchId);
 
     final doc = _collection.doc();
-    final requestNumber = 'CR-${DateTime.now().millisecondsSinceEpoch}';
-    await doc.set({
-      'id': doc.id,
-      ConsumableRequestFields.requestNumber: requestNumber,
-      ConsumableRequestFields.branchId: branchId,
-      ConsumableRequestFields.branchName: branchName,
-      ConsumableRequestFields.items: requestItems
-          .map((item) => item.toMap())
-          .toList(),
-      ConsumableRequestFields.itemName: requestItems.first.name,
-      ConsumableRequestFields.unit: requestItems.first.unit,
-      ConsumableRequestFields.requestedQuantity:
-          requestItems.first.requestedQuantity,
-      ConsumableRequestFields.collectorQuantity:
-          requestItems.first.collectorQuantity,
-      ConsumableRequestFields.status:
-          ConsumableRequestStatus.pendingCollectorReview.value,
-      if ((notes ?? '').trim().isNotEmpty)
-        ConsumableRequestFields.managerNotes: notes!.trim(),
-      ConsumableRequestFields.createdBy: actor['uid'],
-      ConsumableRequestFields.createdAt: FieldValue.serverTimestamp(),
-      ConsumableRequestFields.lastUpdated: FieldValue.serverTimestamp(),
-      ConsumableRequestFields.history: [
-        _historyEntry(
-          action: 'request_created',
-          message: 'تم إنشاء طلب استهلاك منتجات للعرض',
-          actor: actor,
-          note: notes,
-          changes: {'items_count': requestItems.length},
-        ),
-      ],
+    await _firestore.runTransaction((transaction) async {
+      final branchRef = _firestore.collection('branches').doc(branchId);
+      final counterRef = _firestore
+          .collection(ConsumableRequestFields.counterCollection)
+          .doc(branchId);
+      final branchSnapshot = await transaction.get(branchRef);
+      if (!branchSnapshot.exists) throw Exception('الفرع المحدد غير موجود.');
+      final branchCode = (branchSnapshot.data()?['branch_code'] ?? '')
+          .toString()
+          .trim()
+          .toUpperCase();
+      if (branchCode.isEmpty) {
+        throw Exception('يجب ضبط رمز الفرع قبل إنشاء طلب الاستهلاك.');
+      }
+      final counterSnapshot = await transaction.get(counterRef);
+      final storedNext = (counterSnapshot.data()?['next_number'] as num?)
+          ?.toInt();
+      final nextNumber = storedNext == null || storedNext < 0 ? 0 : storedNext;
+      if (nextNumber > 999) {
+        throw Exception(
+          'وصل ترقيم طلبات الاستهلاك لهذا الفرع إلى الحد الأقصى.',
+        );
+      }
+      final requestNumber =
+          '$branchCode${nextNumber.toString().padLeft(3, '0')}';
+      transaction.set(doc, {
+        'id': doc.id,
+        ConsumableRequestFields.requestNumber: requestNumber,
+        ConsumableRequestFields.branchId: branchId,
+        ConsumableRequestFields.branchName: branchName,
+        ConsumableRequestFields.branchCode: branchCode,
+        ConsumableRequestFields.items: requestItems
+            .map((item) => item.toMap())
+            .toList(),
+        ConsumableRequestFields.itemName: requestItems.first.name,
+        ConsumableRequestFields.unit: requestItems.first.unit,
+        ConsumableRequestFields.requestedQuantity:
+            requestItems.first.requestedQuantity,
+        ConsumableRequestFields.collectorQuantity:
+            requestItems.first.collectorQuantity,
+        ConsumableRequestFields.status:
+            ConsumableRequestStatus.pendingCollectorReview.value,
+        if ((notes ?? '').trim().isNotEmpty)
+          ConsumableRequestFields.managerNotes: notes!.trim(),
+        ConsumableRequestFields.createdBy: actor['uid'],
+        ConsumableRequestFields.createdAt: FieldValue.serverTimestamp(),
+        ConsumableRequestFields.lastUpdated: FieldValue.serverTimestamp(),
+        ConsumableRequestFields.history: [
+          _historyEntry(
+            action: 'request_created',
+            message: 'تم إنشاء طلب استهلاك منتجات للعرض',
+            actor: actor,
+            note: notes,
+            changes: {'items_count': requestItems.length},
+          ),
+        ],
+      });
+      transaction.set(counterRef, {
+        'branch_id': branchId,
+        'branch_code': branchCode,
+        'next_number': nextNumber + 1,
+        'last_request_number': requestNumber,
+        'last_updated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     });
     final savedRequest = await doc.get();
     final savedData = savedRequest.data();

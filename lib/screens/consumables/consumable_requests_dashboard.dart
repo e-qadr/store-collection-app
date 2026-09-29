@@ -12,6 +12,8 @@ import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 import 'package:store_collection_app/widgets/grouped_branch_overview.dart';
 
+enum _ConsumableListFilter { all, needsAction, finalRecords }
+
 class ConsumableRequestsDashboard extends StatefulWidget {
   final UserRole role;
   final String? branchId;
@@ -34,6 +36,7 @@ class _ConsumableRequestsDashboardState
   final _service = ConsumableRequestService();
   final _dateFormat = DateFormat('yyyy/MM/dd');
   final _numberFormat = NumberFormat('#,##0.##');
+  _ConsumableListFilter _filter = _ConsumableListFilter.all;
 
   bool get _hasBranch =>
       widget.branchId != null && widget.branchId!.trim().isNotEmpty;
@@ -106,6 +109,9 @@ class _ConsumableRequestsDashboardState
                     }
 
                     final requests = _requestList(snapshot.data);
+                    final visibleRequests = requests
+                        .where(_matchesFilter)
+                        .toList(growable: false);
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -136,14 +142,14 @@ class _ConsumableRequestsDashboardState
                             subtitle:
                                 'اختر فرعاً قبل فتح نظام طلبات المستهلكات.',
                           )
-                        else if (requests.isEmpty)
+                        else if (visibleRequests.isEmpty)
                           _emptyState(
                             icon: Icons.inventory_2_outlined,
                             title: 'لا توجد طلبات حتى الآن',
                             subtitle: _emptySubtitle,
                           )
                         else
-                          _requestsList(requests),
+                          _requestsList(visibleRequests),
                       ],
                     );
                   },
@@ -226,47 +232,74 @@ class _ConsumableRequestsDashboardState
     return Row(
       children: [
         Expanded(
-          child: StatCard(
-            label: 'الإجمالي',
-            value: '${requests.length}',
-            icon: Icons.inventory_2_rounded,
-            color: AppTheme.warningColor,
-            bgColor: const Color(0xFFFFF3E0),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => setState(() => _filter = _ConsumableListFilter.all),
+            child: StatCard(
+              label: 'الإجمالي',
+              value: '${requests.length}',
+              icon: Icons.inventory_2_rounded,
+              color: AppTheme.warningColor,
+              bgColor: const Color(0xFFFFF3E0),
+            ),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: StatCard(
-            label: widget.role == UserRole.accountant
-                ? 'بانتظار محاسب'
-                : 'بانتظار مدير عام',
-            value: widget.role == UserRole.accountant
-                ? '$pendingAccounting'
-                : '$pendingCollector',
-            icon: widget.role == UserRole.accountant
-                ? Icons.calculate_rounded
-                : Icons.person_search_rounded,
-            color: widget.role == UserRole.accountant
-                ? AppTheme.accountantColor
-                : AppTheme.collectorColor,
-            bgColor: widget.role == UserRole.accountant
-                ? const Color(0xFFEDE7F6)
-                : const Color(0xFFE0F2F1),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () =>
+                setState(() => _filter = _ConsumableListFilter.needsAction),
+            child: StatCard(
+              label: widget.role == UserRole.accountant
+                  ? 'بانتظار محاسب'
+                  : 'بانتظار مدير عام',
+              value: widget.role == UserRole.accountant
+                  ? '$pendingAccounting'
+                  : '$pendingCollector',
+              icon: widget.role == UserRole.accountant
+                  ? Icons.calculate_rounded
+                  : Icons.person_search_rounded,
+              color: widget.role == UserRole.accountant
+                  ? AppTheme.accountantColor
+                  : AppTheme.collectorColor,
+              bgColor: widget.role == UserRole.accountant
+                  ? const Color(0xFFEDE7F6)
+                  : const Color(0xFFE0F2F1),
+            ),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: StatCard(
-            label: 'معتمد',
-            value: '$approved',
-            icon: Icons.verified_rounded,
-            color: AppTheme.successColor,
-            bgColor: const Color(0xFFE8F5E9),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () =>
+                setState(() => _filter = _ConsumableListFilter.finalRecords),
+            child: StatCard(
+              label: 'معتمد',
+              value: '$approved',
+              icon: Icons.verified_rounded,
+              color: AppTheme.successColor,
+              bgColor: const Color(0xFFE8F5E9),
+            ),
           ),
         ),
       ],
     );
   }
+
+  bool _matchesFilter(ConsumableRequestRead request) => switch (_filter) {
+    _ConsumableListFilter.all => true,
+    _ConsumableListFilter.finalRecords => request.status.isFinal,
+    _ConsumableListFilter.needsAction => switch (widget.role) {
+      UserRole.collector =>
+        request.status == ConsumableRequestStatus.pendingCollectorReview,
+      UserRole.accountant =>
+        request.status == ConsumableRequestStatus.pendingAccountingApproval,
+      UserRole.manager => !request.status.isFinal,
+      UserRole.admin => false,
+    },
+  };
 
   Widget _controlCard({
     required String title,

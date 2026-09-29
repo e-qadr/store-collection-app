@@ -9,7 +9,7 @@ import 'package:store_collection_app/utils/branch_scope.dart';
 
 enum GroupedBranchOverviewKind { expenses, consumption }
 
-const groupedBranchPreviewLimit = 5;
+const groupedBranchPreviewLimit = 3;
 const expenseGroupedBranchPreviewLimit = 3;
 
 bool usesGroupedBranchOverview(UserRole role, String? branchId) {
@@ -208,7 +208,7 @@ class _BranchSection extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'آخر 5 سجلات',
+              'آخر 3 طلبات',
               style: TextStyle(color: AppTheme.textSecondary),
             ),
             const Divider(height: 20),

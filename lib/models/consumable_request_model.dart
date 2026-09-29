@@ -60,6 +60,7 @@ class ConsumableRequestFields {
   ConsumableRequestFields._();
 
   static const collection = 'consumable_requests';
+  static const counterCollection = 'consumable_request_counters';
   static const items = 'items';
   static const itemName = 'item_name';
   static const requestedQuantity = 'requested_quantity';
@@ -67,6 +68,7 @@ class ConsumableRequestFields {
   static const unit = 'unit';
   static const branchId = 'branch_id';
   static const branchName = 'branch_name';
+  static const branchCode = 'branch_code';
   static const requestNumber = 'request_number';
   static const status = 'status';
   static const managerNotes = 'manager_notes';

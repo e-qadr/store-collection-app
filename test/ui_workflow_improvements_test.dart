@@ -64,7 +64,7 @@ void main() {
     expect(usesGroupedBranchOverview(UserRole.accountant, ''), isTrue);
     expect(usesGroupedBranchOverview(UserRole.manager, null), isFalse);
     expect(usesGroupedBranchOverview(UserRole.collector, 'branch-1'), isFalse);
-    expect(groupedBranchPreviewLimit, 5);
+      expect(groupedBranchPreviewLimit, 3);
   });
 
   test('catalog group display resolves names and never falls back to IDs', () {

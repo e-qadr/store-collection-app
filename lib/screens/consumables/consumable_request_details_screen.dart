@@ -55,6 +55,21 @@ class _ConsumableRequestDetailsScreenState
           title: const Text('تفاصيل طلب المستهلكات'),
           backgroundColor: _roleColor,
         ),
+        bottomNavigationBar:
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection(ConsumableRequestFields.collection)
+                  .doc(widget.requestId)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final data = snapshot.data?.data();
+                if (data == null) return const SizedBox.shrink();
+                return _actions(
+                      ConsumableRequestRead(id: widget.requestId, data: data),
+                    ) ??
+                    const SizedBox.shrink();
+              },
+            ),
         body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection(ConsumableRequestFields.collection)
@@ -86,12 +101,12 @@ class _ConsumableRequestDetailsScreenState
                 ),
               );
             }
-            final actions = _actions(request);
             return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 132),
               children: [
                 _requestDocument(request),
-                if (actions != null) ...[const SizedBox(height: 12), actions],
+                const SizedBox(height: 12),
+                _statusGuidance(request),
                 const SizedBox(height: 12),
                 _statusTimeline(request),
                 const SizedBox(height: 12),
@@ -490,33 +505,38 @@ class _ConsumableRequestDetailsScreenState
     }
 
     if (buttons.isEmpty) return null;
-    return _panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.tune_rounded, color: _roleColor, size: 18),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'إجراءات الطلب',
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+    final guidance = widget.role == UserRole.collector
+        ? 'راجع الكميات المطلوبة ثم اقبلها أو عدّلها قبل إرسالها للمحاسب.'
+        : 'أدخل المرجع المحاسبي ثم اعتمد الطلب نهائياً، أو ارفضه مع توضيح السبب.';
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(18, 9, 18, 12),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: AppTheme.dividerColor)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              guidance,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                height: 1.35,
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            alignment: WrapAlignment.end,
-            spacing: 8,
-            runSpacing: 8,
-            children: buttons,
-          ),
-        ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 8,
+              children: buttons,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -754,6 +774,90 @@ class _ConsumableRequestDetailsScreenState
               isActive: index == current,
               activeLabel: index == current ? request.status.label : null,
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusGuidance(ConsumableRequestRead request) {
+    final (title, message, color, icon) = switch (request.status) {
+      ConsumableRequestStatus.pendingCollectorReview
+          when widget.role == UserRole.collector =>
+        (
+          'إجراء مطلوب منك',
+          'راجع الكميات الآن ثم اقبل الطلب أو عدّلها أو ارفضه بسبب واضح.',
+          AppTheme.collectorColor,
+          Icons.fact_check_rounded,
+        ),
+      ConsumableRequestStatus.pendingCollectorReview => (
+        'بانتظار مراجعة المدير العام',
+        'لا يلزمك إجراء الآن. ستنتقل المراجعة إلى المحاسب بعد قرار المدير العام.',
+        AppTheme.pendingColor,
+        Icons.hourglass_top_rounded,
+      ),
+      ConsumableRequestStatus.pendingAccountingApproval
+          when widget.role == UserRole.accountant =>
+        (
+          'إجراء مطلوب منك',
+          'أدخل المرجع المحاسبي ثم اعتمد الطلب، أو ارفضه مع ذكر السبب.',
+          AppTheme.accountantColor,
+          Icons.calculate_rounded,
+        ),
+      ConsumableRequestStatus.pendingAccountingApproval => (
+        'بانتظار اعتماد المحاسب',
+        'تمت مراجعة الكميات. لا يلزمك إجراء الآن.',
+        AppTheme.accountantColor,
+        Icons.hourglass_top_rounded,
+      ),
+      ConsumableRequestStatus.approvedByAccountant => (
+        'تم الاعتماد النهائي',
+        'أُدخل الطلب في النظام المحاسبي وأصبح سجلاً مقفلاً للرجوع إليه.',
+        AppTheme.successColor,
+        Icons.verified_rounded,
+      ),
+      ConsumableRequestStatus.rejectedByCollector => (
+        'تم الرفض من المدير العام',
+        'راجع سبب الرفض في سجل الطلب، ثم أنشئ طلباً جديداً عند الحاجة.',
+        AppTheme.errorColor,
+        Icons.cancel_outlined,
+      ),
+      ConsumableRequestStatus.rejectedByAccountant => (
+        'تم الرفض من المحاسب',
+        'راجع سبب الرفض في سجل الطلب، ثم أنشئ طلباً جديداً عند الحاجة.',
+        AppTheme.errorColor,
+        Icons.cancel_outlined,
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: .16)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

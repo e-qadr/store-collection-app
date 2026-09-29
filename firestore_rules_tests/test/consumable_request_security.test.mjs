@@ -83,6 +83,20 @@ test('only the assigned manager can create a pending consumable request', async 
   }));
 });
 
+test('consumable numbering counter is branch-scoped and advances one sequence at a time', async () => {
+  const counter = doc(db('manager-r'), 'consumable_request_counters', 'branch-r');
+  await assertSucceeds(setDoc(counter, {
+    branch_id: 'branch-r', branch_code: 'RT', next_number: 1,
+    last_request_number: 'RT000', last_updated: serverTimestamp(),
+  }));
+  await assertSucceeds(updateDoc(counter, {
+    next_number: 2, last_request_number: 'RT001', last_updated: serverTimestamp(),
+  }));
+  await assertFails(updateDoc(doc(db('manager-x'), 'consumable_request_counters', 'branch-r'), {
+    next_number: 3, last_request_number: 'RT002', last_updated: serverTimestamp(),
+  }));
+});
+
 test('collector rejection requires a reason and preserves the request', async () => {
   const reference = doc(db('collector-user'), 'consumable_requests', 'request-1');
   await assertFails(updateDoc(reference, {

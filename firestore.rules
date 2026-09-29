@@ -2304,6 +2304,29 @@ service cloud.firestore {
         data.created_at == request.time && data.last_updated == request.time;
     }
 
+    function consumableCounterCreateAllowed(branchId, data) {
+      return role() == 'manager' && profile().get('branchId', '') == branchId &&
+        data.get('branch_id', '') == branchId &&
+        data.get('branch_code', '') is string &&
+        data.get('branch_code', '').size() > 0 &&
+        data.get('next_number', -1) is int && data.next_number >= 1 &&
+        data.get('last_request_number', '') is string &&
+        data.get('last_request_number', '').size() > 0 &&
+        data.get('last_updated', null) == request.time;
+    }
+
+    function consumableCounterUpdateAllowed(branchId) {
+      return role() == 'manager' && profile().get('branchId', '') == branchId &&
+        request.resource.data.get('branch_id', '') == branchId &&
+        request.resource.data.get('branch_code', '') ==
+          resource.data.get('branch_code', '') &&
+        request.resource.data.get('next_number', -1) ==
+          resource.data.get('next_number', 0) + 1 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'next_number', 'last_request_number', 'last_updated'
+        ]) && request.resource.data.get('last_updated', null) == request.time;
+    }
+
     function consumableCollectorReviewAllowed() {
       return role() == 'collector' &&
         resource.data.status == 'pendingCollectorReview' &&
@@ -2375,6 +2398,15 @@ service cloud.firestore {
         (consumableCollectorReviewAllowed() ||
           consumableAccountingApprovalAllowed() ||
           consumableRejectionAllowed());
+      allow delete: if false;
+    }
+
+    match /consumable_request_counters/{branchId} {
+      allow get, list: if operationalUser();
+      allow create: if operationalUser() && consumableCounterCreateAllowed(
+        branchId, request.resource.data
+      );
+      allow update: if operationalUser() && consumableCounterUpdateAllowed(branchId);
       allow delete: if false;
     }
 
