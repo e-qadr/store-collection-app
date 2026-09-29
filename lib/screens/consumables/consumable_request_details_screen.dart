@@ -210,24 +210,42 @@ class _ConsumableRequestDetailsScreenState
           ),
           Padding(
             padding: const EdgeInsets.all(12),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _infoBox('الفرع', request.branchName, Icons.storefront_rounded),
-                _infoBox(
-                  'تاريخ الطلب',
-                  _formatDate(request.createdAt),
-                  Icons.date_range_rounded,
-                ),
-                _infoBox(
-                  'المرجع المحاسبي',
-                  request.accountingReference.isEmpty
-                      ? 'لم يعتمد بعد'
-                      : request.accountingReference,
-                  Icons.receipt_long_rounded,
-                ),
-              ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceColor,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.dividerColor),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _infoBox(
+                      'الفرع',
+                      request.branchName,
+                      Icons.storefront_rounded,
+                    ),
+                  ),
+                  _verticalDivider(),
+                  Expanded(
+                    child: _infoBox(
+                      'تاريخ الطلب',
+                      _formatDate(request.createdAt),
+                      Icons.date_range_rounded,
+                    ),
+                  ),
+                  _verticalDivider(),
+                  Expanded(
+                    child: _infoBox(
+                      'المرجع المحاسبي',
+                      request.accountingReference.isEmpty
+                          ? 'لم يعتمد بعد'
+                          : request.accountingReference,
+                      Icons.receipt_long_rounded,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -236,47 +254,38 @@ class _ConsumableRequestDetailsScreenState
   }
 
   Widget _infoBox(String label, String value, IconData icon) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 140, maxWidth: 230),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.dividerColor),
-      ),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 17, color: _roleColor),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value.isEmpty ? '-' : value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 4),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value.isEmpty ? '-' : value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],
       ),
     );
   }
+
+  Widget _verticalDivider() =>
+      Container(width: 1, height: 54, color: AppTheme.dividerColor);
 
   Widget _productsTable(ConsumableRequestRead request) {
     return Column(
@@ -299,100 +308,70 @@ class _ConsumableRequestDetailsScreenState
           ],
         ),
         const SizedBox(height: 10),
-        Container(
-          decoration: BoxDecoration(
-            color: _roleColor.withValues(alpha: 0.035),
-            border: Border.all(color: AppTheme.dividerColor),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            children: request.items
-                .asMap()
-                .entries
-                .map((entry) {
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: AppTheme.dividerColor),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowHeight: 38,
+                dataRowMinHeight: 44,
+                dataRowMaxHeight: 58,
+                horizontalMargin: 12,
+                columnSpacing: 22,
+                headingRowColor: WidgetStatePropertyAll(
+                  _roleColor.withValues(alpha: 0.08),
+                ),
+                columns: const [
+                  DataColumn(label: Text('#')),
+                  DataColumn(label: Text('المنتج')),
+                  DataColumn(label: Text('الوحدة')),
+                  DataColumn(label: Text('المطلوب')),
+                  DataColumn(label: Text('بعد مراجعة المدير العام')),
+                ],
+                rows: request.items.asMap().entries.map((entry) {
                   final item = entry.value;
                   final changed =
                       item.requestedQuantity != item.collectorQuantity;
-                  return Container(
-                    padding: const EdgeInsets.all(11),
-                    decoration: BoxDecoration(
-                      border: entry.key == 0
-                          ? null
-                          : const Border(
-                              top: BorderSide(color: AppTheme.dividerColor),
-                            ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 28,
-                          height: 28,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: _roleColor.withValues(alpha: 0.10),
-                            shape: BoxShape.circle,
-                          ),
+                  return DataRow(
+                    cells: [
+                      DataCell(Text('${entry.key + 1}')),
+                      DataCell(
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 190),
                           child: Text(
-                            '${entry.key + 1}',
-                            style: TextStyle(
-                              color: _roleColor,
-                              fontWeight: FontWeight.bold,
+                            item.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.textPrimary,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
-                        const SizedBox(width: 9),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.name,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: AppTheme.textPrimary,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'المطلوب: ${_formatNumber(item.requestedQuantity)} ${item.unit}',
-                                style: const TextStyle(
-                                  color: AppTheme.textSecondary,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
+                      ),
+                      DataCell(Text(item.unit)),
+                      DataCell(Text(_formatNumber(item.requestedQuantity))),
+                      DataCell(
+                        Text(
+                          _formatNumber(item.collectorQuantity),
+                          style: TextStyle(
+                            color: changed
+                                ? AppTheme.warningColor
+                                : AppTheme.successColor,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            const Text(
-                              'بعد المراجعة',
-                              style: TextStyle(
-                                color: AppTheme.textSecondary,
-                                fontSize: 10,
-                              ),
-                            ),
-                            Text(
-                              '${_formatNumber(item.collectorQuantity)} ${item.unit}',
-                              style: TextStyle(
-                                color: changed
-                                    ? AppTheme.warningColor
-                                    : AppTheme.successColor,
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   );
-                })
-                .toList(growable: false),
+                }).toList(),
+              ),
+            ),
           ),
         ),
       ],
@@ -407,37 +386,33 @@ class _ConsumableRequestDetailsScreenState
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppTheme.dividerColor),
       ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: Row(
         children: [
-          _summaryTile(
-            'عدد المنتجات',
-            '${request.items.length}',
-            Icons.category_rounded,
-            _roleColor,
+          Expanded(
+            child: _summaryTile(
+              'عدد المنتجات',
+              '${request.items.length}',
+              Icons.category_rounded,
+              _roleColor,
+            ),
           ),
-          _summaryTile(
-            'إجمالي المطلوب',
-            _formatNumber(request.totalRequestedQuantity),
-            Icons.playlist_add_check_rounded,
-            AppTheme.managerColor,
+          const SizedBox(width: 7),
+          Expanded(
+            child: _summaryTile(
+              'إجمالي المطلوب',
+              _formatNumber(request.totalRequestedQuantity),
+              Icons.playlist_add_check_rounded,
+              AppTheme.managerColor,
+            ),
           ),
-          _summaryTile(
-            'إجمالي المدير العام',
-            _formatNumber(request.totalCollectorQuantity),
-            Icons.inventory_rounded,
-            AppTheme.collectorColor,
-          ),
-          _summaryTile(
-            'تعديل الكمية',
-            request.hasQuantityChanges ? 'يوجد تعديل' : 'بدون تعديل',
-            request.hasQuantityChanges
-                ? Icons.edit_note_rounded
-                : Icons.check_circle_rounded,
-            request.hasQuantityChanges
-                ? AppTheme.warningColor
-                : AppTheme.successColor,
+          const SizedBox(width: 7),
+          Expanded(
+            child: _summaryTile(
+              'إجمالي المدير العام',
+              _formatNumber(request.totalCollectorQuantity),
+              Icons.inventory_rounded,
+              AppTheme.collectorColor,
+            ),
           ),
         ],
       ),
@@ -446,44 +421,34 @@ class _ConsumableRequestDetailsScreenState
 
   Widget _summaryTile(String label, String value, IconData icon, Color color) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 132, maxWidth: 190),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withValues(alpha: 0.16)),
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(width: 7),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 11,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+          Icon(icon, color: color, size: 17),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ],
