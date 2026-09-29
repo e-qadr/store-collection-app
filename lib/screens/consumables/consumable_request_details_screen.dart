@@ -299,70 +299,100 @@ class _ConsumableRequestDetailsScreenState
           ],
         ),
         const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border.all(color: AppTheme.dividerColor),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                headingRowHeight: 38,
-                dataRowMinHeight: 44,
-                dataRowMaxHeight: 58,
-                horizontalMargin: 12,
-                columnSpacing: 22,
-                headingRowColor: WidgetStatePropertyAll(
-                  _roleColor.withValues(alpha: 0.08),
-                ),
-                columns: const [
-                  DataColumn(label: Text('#')),
-                  DataColumn(label: Text('المنتج')),
-                  DataColumn(label: Text('الوحدة')),
-                  DataColumn(label: Text('المطلوب')),
-                  DataColumn(label: Text('بعد مراجعة المدير العام')),
-                ],
-                rows: request.items.asMap().entries.map((entry) {
+        Container(
+          decoration: BoxDecoration(
+            color: _roleColor.withValues(alpha: 0.035),
+            border: Border.all(color: AppTheme.dividerColor),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            children: request.items
+                .asMap()
+                .entries
+                .map((entry) {
                   final item = entry.value;
                   final changed =
                       item.requestedQuantity != item.collectorQuantity;
-                  return DataRow(
-                    cells: [
-                      DataCell(Text('${entry.key + 1}')),
-                      DataCell(
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 190),
+                  return Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      border: entry.key == 0
+                          ? null
+                          : const Border(
+                              top: BorderSide(color: AppTheme.dividerColor),
+                            ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 28,
+                          height: 28,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: _roleColor.withValues(alpha: 0.10),
+                            shape: BoxShape.circle,
+                          ),
                           child: Text(
-                            item.name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppTheme.textPrimary,
-                              fontWeight: FontWeight.w600,
+                            '${entry.key + 1}',
+                            style: TextStyle(
+                              color: _roleColor,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
-                      ),
-                      DataCell(Text(item.unit)),
-                      DataCell(Text(_formatNumber(item.requestedQuantity))),
-                      DataCell(
-                        Text(
-                          _formatNumber(item.collectorQuantity),
-                          style: TextStyle(
-                            color: changed
-                                ? AppTheme.warningColor
-                                : AppTheme.successColor,
-                            fontWeight: FontWeight.bold,
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.textPrimary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'المطلوب: ${_formatNumber(item.requestedQuantity)} ${item.unit}',
+                                style: const TextStyle(
+                                  color: AppTheme.textSecondary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            const Text(
+                              'بعد المراجعة',
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 10,
+                              ),
+                            ),
+                            Text(
+                              '${_formatNumber(item.collectorQuantity)} ${item.unit}',
+                              style: TextStyle(
+                                color: changed
+                                    ? AppTheme.warningColor
+                                    : AppTheme.successColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   );
-                }).toList(),
-              ),
-            ),
+                })
+                .toList(growable: false),
           ),
         ),
       ],
