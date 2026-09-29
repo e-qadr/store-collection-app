@@ -32,6 +32,8 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
   final _service = CashExpenseService();
   final _dateFormat = DateFormat('yyyy/MM/dd');
   final _numberFormat = NumberFormat('#,##0.##');
+  String _query = '';
+  _ExpenseListFilter _selectedFilter = _ExpenseListFilter.all;
 
   bool get _hasBranch =>
       widget.branchId != null && widget.branchId!.trim().isNotEmpty;
@@ -73,7 +75,7 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
             ? FloatingActionButton.extended(
                 onPressed: _openNewRequest,
                 icon: const Icon(Icons.add_rounded),
-                label: const Text('طلب جديد'),
+                label: const Text('إضافة سند صرف'),
                 backgroundColor: AppTheme.managerColor,
               )
             : null,
@@ -104,28 +106,15 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
                     }
 
                     final requests = _requestList(snapshot.data);
+                    final visibleRequests = _visibleRequests(requests);
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _buildStats(requests),
-                        const SizedBox(height: 24),
-                        const SectionHeader(
-                          title: 'نظام المصروفات النقدية',
-                          icon: Icons.payments_rounded,
-                          color: AppTheme.errorColor,
-                        ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 20),
                         if (_canCreate) ...[
-                          _controlCard(
-                            title: 'طلب صرف نقدي جديد',
-                            subtitle:
-                                'إنشاء طلب صرف لمصروف وإرساله للمدير العام.',
-                            countLabel: 'جديد',
-                            icon: Icons.add_circle_outline_rounded,
-                            color: AppTheme.managerColor,
-                            onTap: _openNewRequest,
-                          ),
-                          const SizedBox(height: 12),
+                          _primaryCreateCard(),
+                          const SizedBox(height: 20),
                         ],
                         if (!_hasBranch)
                           _emptyState(
@@ -140,8 +129,22 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
                             title: 'لا توجد طلبات صرف حتى الآن',
                             subtitle: _emptySubtitle,
                           )
-                        else
-                          _requestsList(requests),
+                        else ...[
+                          _requestsHeader(requests.length),
+                          const SizedBox(height: 12),
+                          _searchField(),
+                          const SizedBox(height: 12),
+                          _filterBar(requests),
+                          const SizedBox(height: 14),
+                          if (visibleRequests.isEmpty)
+                            _emptyState(
+                              icon: Icons.search_off_rounded,
+                              title: 'لا توجد نتائج مطابقة',
+                              subtitle: 'غيّر البحث أو اختر عرض كل السندات.',
+                            )
+                          else
+                            _requestsList(visibleRequests),
+                        ],
                       ],
                     );
                   },
@@ -219,23 +222,26 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
         )
         .length;
 
+    final needsAttention = requests.where(_needsAttention).length;
     return Row(
       children: [
         Expanded(
           child: StatCard(
-            label: 'الإجمالي',
-            value: '${requests.length}',
-            icon: Icons.payments_rounded,
-            color: AppTheme.errorColor,
-            bgColor: const Color(0xFFFFEBEE),
+            label: 'تحتاج إجراء',
+            value: '$needsAttention',
+            icon: Icons.priority_high_rounded,
+            color: needsAttention == 0
+                ? AppTheme.successColor
+                : AppTheme.warningColor,
+            bgColor: needsAttention == 0
+                ? const Color(0xFFE8F5E9)
+                : const Color(0xFFFFF3E0),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: StatCard(
-            label: widget.role == UserRole.accountant
-                ? 'بانتظار محاسب'
-                : 'بانتظار مدير عام',
+            label: 'قيد المتابعة',
             value: widget.role == UserRole.accountant
                 ? '$pendingAccounting'
                 : '$pendingGeneralManager',
@@ -264,82 +270,171 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
     );
   }
 
-  Widget _controlCard({
-    required String title,
-    required String subtitle,
-    required String countLabel,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
+  Widget _primaryCreateCard() {
     return Container(
-      decoration: AppTheme.cardShadow(),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: AppTheme.managerGradient,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.managerColor.withValues(alpha: 0.22),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
       child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.transparent,
         child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(20),
+          onTap: _openNewRequest,
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(18),
             child: Row(
               children: [
                 Container(
                   width: 52,
                   height: 52,
                   decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.white.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                  child: Icon(icon, color: color, size: 28),
+                  child: const Icon(
+                    Icons.add_card_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
                 ),
                 const SizedBox(width: 14),
-                Expanded(
+                const Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 16,
+                        'إضافة سند صرف جديد',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
                           fontWeight: FontWeight.bold,
-                          color: AppTheme.textPrimary,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: 4),
                       Text(
-                        subtitle,
-                        style: const TextStyle(
-                          color: AppTheme.textSecondary,
-                          height: 1.35,
-                        ),
+                        'أدخل المصروف ثم أرسله للمراجعة.',
+                        style: TextStyle(color: Colors.white70, height: 1.4),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    countLabel,
-                    style: TextStyle(color: color, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(Icons.chevron_left_rounded, color: color),
+                const Icon(Icons.arrow_back_rounded, color: Colors.white),
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _requestsHeader(int total) => Row(
+    children: [
+      Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: _roleColor.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(Icons.receipt_long_rounded, color: _roleColor),
+      ),
+      const SizedBox(width: 10),
+      const Expanded(
+        child: Text(
+          'سجل سندات الصرف',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: AppTheme.textPrimary,
+          ),
+        ),
+      ),
+      Text('$total سند', style: const TextStyle(color: AppTheme.textSecondary)),
+    ],
+  );
+
+  Widget _searchField() => TextField(
+    onChanged: (value) => setState(() => _query = value.trim()),
+    decoration: const InputDecoration(
+      hintText: 'ابحث برقم السند أو عنوان المصروف',
+      prefixIcon: Icon(Icons.search_rounded),
+      isDense: true,
+    ),
+  );
+
+  Widget _filterBar(List<CashExpenseRead> requests) {
+    final attentionCount = requests.where(_needsAttention).length;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _filterChip(_ExpenseListFilter.all, 'الكل (${requests.length})'),
+          const SizedBox(width: 8),
+          _filterChip(
+            _ExpenseListFilter.attention,
+            'تحتاج إجراء ($attentionCount)',
+          ),
+          const SizedBox(width: 8),
+          _filterChip(
+            _ExpenseListFilter.completed,
+            'معتمدة (${requests.where((item) => item.status == CashExpenseStatus.approvedByAccountant).length})',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterChip(_ExpenseListFilter value, String label) => ChoiceChip(
+    label: Text(label),
+    selected: _selectedFilter == value,
+    selectedColor: _roleColor.withValues(alpha: 0.16),
+    onSelected: (_) => setState(() => _selectedFilter = value),
+  );
+
+  bool _needsAttention(CashExpenseRead request) {
+    switch (widget.role) {
+      case UserRole.manager:
+        return request.status == CashExpenseStatus.pendingInvoiceAttachment ||
+            request.status == CashExpenseStatus.editPendingApprovals;
+      case UserRole.collector:
+        return request.status ==
+                CashExpenseStatus.pendingGeneralManagerReview ||
+            request.status == CashExpenseStatus.editPendingApprovals;
+      case UserRole.accountant:
+        return request.status == CashExpenseStatus.pendingAccountingApproval ||
+            request.status == CashExpenseStatus.editPendingApprovals;
+      case UserRole.admin:
+        return false;
+    }
+  }
+
+  List<CashExpenseRead> _visibleRequests(List<CashExpenseRead> requests) {
+    final query = _query.toLowerCase();
+    return requests.where((request) {
+      final matchesFilter = switch (_selectedFilter) {
+        _ExpenseListFilter.all => true,
+        _ExpenseListFilter.attention => _needsAttention(request),
+        _ExpenseListFilter.completed =>
+          request.status == CashExpenseStatus.approvedByAccountant,
+      };
+      final matchesQuery =
+          query.isEmpty ||
+          request.requestNumber.toLowerCase().contains(query) ||
+          request.title.toLowerCase().contains(query);
+      return matchesFilter && matchesQuery;
+    }).toList();
   }
 
   Widget _requestsList(List<CashExpenseRead> requests) {
@@ -558,6 +653,8 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
 
   String _formatNumber(double value) => _numberFormat.format(value);
 }
+
+enum _ExpenseListFilter { all, attention, completed }
 
 Color _roleColorFor(UserRole role) {
   switch (role) {

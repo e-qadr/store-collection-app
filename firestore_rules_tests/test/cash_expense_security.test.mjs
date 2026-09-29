@@ -79,3 +79,96 @@ test('wrong-branch writes and all hard deletes are denied', async () => {
   }));
   await assertFails(deleteDoc(doc(db('manager-a'), 'cash_expense_requests', 'expense-1')));
 });
+
+function editProposal({title = 'Edited expense', amount = 15} = {}) {
+  return {
+    title, description: 'Edited details', requested_amount: amount,
+    approved_amount: amount, currency: 'YER', manager_notes: 'Edited note',
+    invoice_attachment_action: 'keep',
+  };
+}
+
+function editRequest({requiredParties, party = 'manager', proposal = editProposal()} = {}) {
+  return {
+    reason: 'Correct the amount', requested_by: `${party === 'manager' ? 'manager-a' : party === 'general_manager' ? 'collector-a' : 'accountant-a'}`,
+    requested_by_name: party, requested_role: party === 'general_manager' ? 'collector' : party,
+    requested_party: party, requested_at: timestamp, required_parties: requiredParties, proposal,
+  };
+}
+
+function approval(uid, role, approved = true) {
+  return {approved, actor_id: uid, actor_role: role, decided_at: timestamp};
+}
+
+test('manager can directly edit the full expense data before General Manager review', async () => {
+  await assertSucceeds(updateDoc(doc(db('manager-a'), 'cash_expense_requests', 'expense-1'), {
+    title: 'Directly edited', description: 'Updated before review', requested_amount: 12,
+    approved_amount: 12, currency: 'SAR', manager_notes: 'Updated note',
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  await assertFails(updateDoc(doc(db('manager-b'), 'cash_expense_requests', 'expense-1'), {
+    title: 'Forbidden', requested_amount: 12, approved_amount: 12,
+    last_updated: serverTimestamp(), history: history(),
+  }));
+});
+
+test('only parties who actually reviewed the expense must approve its proposed edit', async () => {
+  await assertSucceeds(updateDoc(doc(db('collector-a'), 'cash_expense_requests', 'expense-1'), {
+    status: 'pendingInvoiceAttachment', reviewed_by: 'collector-a', reviewed_at: serverTimestamp(),
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  const proposal = editProposal();
+  await assertSucceeds(updateDoc(doc(db('manager-a'), 'cash_expense_requests', 'expense-1'), {
+    status: 'editPendingApprovals', previous_status: 'pendingInvoiceAttachment',
+    edit_request: editRequest({requiredParties: ['manager', 'general_manager'], proposal}),
+    edit_approvals: {manager: approval('manager-a', 'manager')},
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  await assertFails(updateDoc(doc(db('accountant-a'), 'cash_expense_requests', 'expense-1'), {
+    edit_approvals: {manager: approval('manager-a', 'manager'), accountant: approval('accountant-a', 'accountant')},
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  await assertSucceeds(updateDoc(doc(db('collector-a'), 'cash_expense_requests', 'expense-1'), {
+    status: 'pendingInvoiceAttachment', title: proposal.title, description: proposal.description,
+    requested_amount: proposal.requested_amount, approved_amount: proposal.approved_amount,
+    currency: proposal.currency, manager_notes: proposal.manager_notes,
+    edit_approvals: {manager: approval('manager-a', 'manager'), general_manager: approval('collector-a', 'collector')},
+    last_updated: serverTimestamp(), history: history(),
+  }));
+});
+
+test('a completed expense edit requires all three actual approval parties before changes apply', async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'cash_expense_requests', 'expense-1'), expense({status: 'approvedByAccountant'}));
+    await updateDoc(doc(context.firestore(), 'cash_expense_requests', 'expense-1'), {
+      reviewed_by: 'collector-a', approved_by: 'accountant-a', accounting_reference: 'ACC-1',
+    });
+  });
+  const proposal = editProposal({title: 'Final corrected expense', amount: 18});
+  await assertSucceeds(updateDoc(doc(db('manager-a'), 'cash_expense_requests', 'expense-1'), {
+    status: 'editPendingApprovals', previous_status: 'approvedByAccountant',
+    edit_request: editRequest({requiredParties: ['manager', 'general_manager', 'accountant'], proposal}),
+    edit_approvals: {manager: approval('manager-a', 'manager')},
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  await assertSucceeds(updateDoc(doc(db('collector-a'), 'cash_expense_requests', 'expense-1'), {
+    edit_approvals: {manager: approval('manager-a', 'manager'), general_manager: approval('collector-a', 'collector')},
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  await assertFails(updateDoc(doc(db('manager-a'), 'cash_expense_requests', 'expense-1'), {
+    status: 'approvedByAccountant', title: proposal.title, description: proposal.description,
+    requested_amount: proposal.requested_amount, approved_amount: proposal.approved_amount,
+    currency: proposal.currency, manager_notes: proposal.manager_notes,
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  await assertSucceeds(updateDoc(doc(db('accountant-a'), 'cash_expense_requests', 'expense-1'), {
+    status: 'approvedByAccountant', title: proposal.title, description: proposal.description,
+    requested_amount: proposal.requested_amount, approved_amount: proposal.approved_amount,
+    currency: proposal.currency, manager_notes: proposal.manager_notes,
+    edit_approvals: {
+      manager: approval('manager-a', 'manager'), general_manager: approval('collector-a', 'collector'),
+      accountant: approval('accountant-a', 'accountant'),
+    },
+    last_updated: serverTimestamp(), history: history(),
+  }));
+});

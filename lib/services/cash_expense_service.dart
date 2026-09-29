@@ -439,142 +439,118 @@ class CashExpenseService {
     }
   }
 
-  Future<void> updateManagerRequestAfterEditApproval({
+  Future<void> requestEdit({
     required String requestId,
+    required String reason,
     required String title,
     required String description,
     required double amount,
+    required String currency,
     String? branchId,
     String? notes,
     Uint8List? invoiceFileBytes,
     String? invoiceFileName,
     String? invoiceContentType,
+    bool removeInvoiceAttachment = false,
   }) async {
+    final cleanReason = reason.trim();
+    if (cleanReason.isEmpty) throw Exception('سبب طلب التعديل مطلوب.');
     final cleanTitle = title.trim();
     if (cleanTitle.isEmpty) throw Exception('عنوان المصروف مطلوب.');
     if (amount <= 0) throw Exception('مبلغ المصروف يجب أن يكون أكبر من صفر.');
 
     final actor = await _getCurrentActor();
     final docRef = _collection.doc(requestId);
-    final snapshot = await docRef.get();
-    final data = _dataOrThrow(snapshot);
-    _validateManagerBranch(
-      actor,
-      data[CashExpenseFields.branchId]?.toString() ?? '',
+    final initialSnapshot = await docRef.get();
+    final initialData = _dataOrThrow(initialSnapshot);
+    _validateSelectedBranch(initialData, branchId);
+    final party = _editPartyForActor(actor, initialData);
+    final currentStatus = cashExpenseStatusFromString(
+      initialData[CashExpenseFields.status]?.toString(),
     );
-    _validateSelectedBranch(data, branchId);
-    _ensureStatus(
-      data,
-      CashExpenseStatus.pendingGeneralManagerReview,
-      'لا يمكن تعديل الطلب في حالته الحالية.',
-    );
-    if (!_allEditApprovalsApproved(data)) {
-      throw Exception('لا يمكن التعديل قبل اكتمال موافقات طلب التعديل.');
+    if (currentStatus == CashExpenseStatus.rejectedByGeneralManager) {
+      throw Exception('لا يمكن تعديل السند المرفوض.');
+    }
+    if (currentStatus == CashExpenseStatus.editPendingApprovals) {
+      throw Exception('يوجد طلب تعديل بانتظار الموافقات حالياً.');
+    }
+    final requiredParties = _requiredEditPartiesFor(initialData);
+    if (!requiredParties.contains(party)) {
+      throw Exception('لا يمكنك طلب تعديل قبل أن تشارك في اعتماد هذا السند.');
     }
 
-    Map<String, dynamic>? replacementInvoiceAttachment;
-    if (invoiceFileBytes != null && invoiceFileBytes.isNotEmpty) {
-      final fileName = (invoiceFileName ?? '').trim();
-      if (fileName.isEmpty) throw Exception('اسم ملف الفاتورة غير صالح.');
-      final uploadedFile = await _invoiceUploadService.uploadInvoice(
-        requestId: requestId,
-        fileBytes: invoiceFileBytes,
-        fileName: fileName,
-        contentType: invoiceContentType ?? _contentTypeFromName(fileName),
-      );
-      replacementInvoiceAttachment = uploadedFile.toMap();
-    }
+    final attachment = await _editedInvoiceAttachment(
+      requestId: requestId,
+      invoiceFileBytes: invoiceFileBytes,
+      invoiceFileName: invoiceFileName,
+      invoiceContentType: invoiceContentType,
+    );
+    final proposal = _editProposal(
+      title: cleanTitle,
+      description: description,
+      amount: amount,
+      currency: currency,
+      notes: notes,
+      invoiceAttachment: attachment,
+      removeInvoiceAttachment: removeInvoiceAttachment,
+    );
 
-    await _firestore.runTransaction((transaction) async {
-      final fresh = await transaction.get(docRef);
-      final freshData = _dataOrThrow(fresh);
-      _ensureStatus(
-        freshData,
-        CashExpenseStatus.pendingGeneralManagerReview,
-        'لا يمكن تعديل الطلب في حالته الحالية.',
+    if (requiredParties.length == 1) {
+      await _applyDirectManagerEdit(
+        docRef: docRef,
+        actor: actor,
+        branchId: branchId,
+        reason: cleanReason,
+        proposal: proposal,
       );
-      if (!_allEditApprovalsApproved(freshData)) {
-        throw Exception('لا يمكن التعديل قبل اكتمال موافقات طلب التعديل.');
-      }
-
-      transaction.update(docRef, {
-        CashExpenseFields.title: cleanTitle,
-        CashExpenseFields.description: description.trim(),
-        CashExpenseFields.requestedAmount: amount,
-        CashExpenseFields.approvedAmount: amount,
-        if ((notes ?? '').trim().isNotEmpty)
-          CashExpenseFields.managerNotes: notes!.trim(),
-        if (replacementInvoiceAttachment != null)
-          CashExpenseFields.invoiceAttachment: replacementInvoiceAttachment,
-        CashExpenseFields.previousStatus: FieldValue.delete(),
-        CashExpenseFields.editRequest: FieldValue.delete(),
-        CashExpenseFields.editApprovals: FieldValue.delete(),
-        CashExpenseFields.lastUpdated: FieldValue.serverTimestamp(),
-        CashExpenseFields.history: FieldValue.arrayUnion([
-          _historyEntry(
-            action: 'manager_updated_after_edit_approval',
-            message: 'عدل مدير الفرع سند الصرف بعد اكتمال الموافقات',
-            actor: actor,
-            note: notes,
-            changes: {
-              'amount': amount,
-              'has_replacement_invoice': replacementInvoiceAttachment != null,
-            },
+      final savedRequest = await docRef.get();
+      final savedData = savedRequest.data();
+      if (savedData != null) {
+        await _notifySafely(
+          () => _notificationService.notifyCashExpenseManagerUpdatedAfterEdit(
+            requestId: requestId,
+            requestData: savedData,
           ),
-        ]),
-      });
-    });
-    final savedRequest = await docRef.get();
-    final savedData = savedRequest.data();
-    if (savedData != null) {
-      await _notifySafely(
-        () => _notificationService.notifyCashExpenseManagerUpdatedAfterEdit(
-          requestId: requestId,
-          requestData: savedData,
-        ),
-      );
+        );
+      }
+      return;
     }
-  }
-
-  Future<void> requestEdit({
-    required String requestId,
-    required String reason,
-    String? branchId,
-  }) async {
-    final cleanReason = reason.trim();
-    if (cleanReason.isEmpty) throw Exception('سبب طلب التعديل مطلوب.');
-
-    final actor = await _getCurrentActor();
-    final docRef = _collection.doc(requestId);
 
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
       final data = _dataOrThrow(snapshot);
       _validateSelectedBranch(data, branchId);
-      final party = _editPartyForActor(actor, data);
-      final currentStatus = cashExpenseStatusFromString(
+      final freshParty = _editPartyForActor(actor, data);
+      final freshStatus = cashExpenseStatusFromString(
         data[CashExpenseFields.status]?.toString(),
       );
-      if (currentStatus.isFinal) {
-        throw Exception('لا يمكن طلب تعديل بعد الإقفال النهائي أو الرفض.');
+      if (freshStatus == CashExpenseStatus.rejectedByGeneralManager) {
+        throw Exception('لا يمكن تعديل السند المرفوض.');
       }
-      if (currentStatus == CashExpenseStatus.editPendingApprovals) {
+      if (freshStatus == CashExpenseStatus.editPendingApprovals) {
         throw Exception('يوجد طلب تعديل بانتظار الموافقات حالياً.');
+      }
+      final freshRequiredParties = _requiredEditPartiesFor(data);
+      if (!freshRequiredParties.contains(freshParty) ||
+          freshRequiredParties.length == 1) {
+        throw Exception('تغيرت حالة السند؛ أعد فتحه ثم حاول مرة أخرى.');
       }
 
       transaction.update(docRef, {
         CashExpenseFields.status: CashExpenseStatus.editPendingApprovals.value,
-        CashExpenseFields.previousStatus: currentStatus.value,
+        CashExpenseFields.previousStatus: freshStatus.value,
         CashExpenseFields.editRequest: {
           'reason': cleanReason,
           'requested_by': actor['uid'],
           'requested_by_name': actor['name'],
           'requested_role': actor['role'],
-          'requested_party': party,
+          'requested_party': freshParty,
           'requested_at': Timestamp.now(),
+          'required_parties': freshRequiredParties,
+          'proposal': proposal,
         },
         CashExpenseFields.editApprovals: {
-          party: _editApprovalEntry(actor: actor, approved: true),
+          freshParty: _editApprovalEntry(actor: actor, approved: true),
         },
         CashExpenseFields.lastUpdated: FieldValue.serverTimestamp(),
         CashExpenseFields.history: FieldValue.arrayUnion([
@@ -583,7 +559,12 @@ class CashExpenseService {
             message: 'تم طلب تعديل سند الصرف النقدي',
             actor: actor,
             note: cleanReason,
-            changes: {'previous_status': currentStatus.value, 'party': party},
+            changes: {
+              'previous_status': freshStatus.value,
+              'party': freshParty,
+              'required_parties': freshRequiredParties,
+              ..._proposalAuditChanges(proposal),
+            },
           ),
         ]),
       });
@@ -638,7 +619,8 @@ class CashExpenseService {
       final previousStatus = cashExpenseStatusFromString(
         data[CashExpenseFields.previousStatus]?.toString(),
       );
-      final everyoneApproved = _requiredEditParties.every((party) {
+      final requiredParties = _requiredEditPartiesFromEditRequest(data);
+      final everyoneApproved = requiredParties.every((party) {
         final entry = updatedApprovals[party];
         return entry is Map && entry['approved'] == true;
       });
@@ -657,6 +639,7 @@ class CashExpenseService {
               changes: {
                 'party': party,
                 'restored_status': previousStatus.value,
+                'required_parties': requiredParties,
               },
             ),
           ]),
@@ -664,21 +647,28 @@ class CashExpenseService {
         return;
       }
 
+      final proposal = _editProposalFromRequest(data);
       transaction.update(docRef, {
         CashExpenseFields.status: everyoneApproved
-            ? CashExpenseStatus.pendingGeneralManagerReview.value
+            ? previousStatus.value
             : CashExpenseStatus.editPendingApprovals.value,
         CashExpenseFields.editApprovals: updatedApprovals,
+        if (everyoneApproved) ..._proposalUpdateFields(proposal),
         CashExpenseFields.lastUpdated: FieldValue.serverTimestamp(),
         CashExpenseFields.history: FieldValue.arrayUnion([
           _historyEntry(
             action: everyoneApproved ? 'edit_opened' : 'edit_approved',
             message: everyoneApproved
-                ? 'اكتملت موافقات التعديل وأعيد السند للمراجعة'
+                ? 'اكتملت موافقات التعديل وتم تطبيق التعديلات على السند'
                 : 'تمت الموافقة على طلب تعديل سند الصرف النقدي',
             actor: actor,
             note: cleanNotes,
-            changes: {'party': party, 'everyone_approved': everyoneApproved},
+            changes: {
+              'party': party,
+              'everyone_approved': everyoneApproved,
+              'required_parties': requiredParties,
+              if (everyoneApproved) ..._proposalAuditChanges(proposal),
+            },
           ),
         ]),
       });
@@ -739,23 +729,155 @@ class CashExpenseService {
     return data;
   }
 
-  static const List<String> _requiredEditParties = [
-    'manager',
-    'general_manager',
-    'accountant',
-  ];
-
   Map<String, dynamic> _editApprovals(Map<String, dynamic> data) {
     final value = data[CashExpenseFields.editApprovals];
     if (value is! Map) return {};
     return Map<String, dynamic>.from(value);
   }
 
-  bool _allEditApprovalsApproved(Map<String, dynamic> data) {
-    final approvals = _editApprovals(data);
-    return _requiredEditParties.every((party) {
-      final entry = approvals[party];
-      return entry is Map && entry['approved'] == true;
+  List<String> _requiredEditPartiesFor(Map<String, dynamic> data) {
+    final parties = <String>['manager'];
+    if ((data[CashExpenseFields.reviewedBy]?.toString() ?? '').isNotEmpty) {
+      parties.add('general_manager');
+    }
+    if ((data[CashExpenseFields.approvedBy]?.toString() ?? '').isNotEmpty) {
+      parties.add('accountant');
+    }
+    return parties;
+  }
+
+  List<String> _requiredEditPartiesFromEditRequest(Map<String, dynamic> data) {
+    final request = data[CashExpenseFields.editRequest];
+    final parties = request is Map ? request['required_parties'] : null;
+    if (parties is List) {
+      final values = parties.map((item) => item.toString()).toSet().toList();
+      if (values.isNotEmpty && values.every(_validEditParty)) return values;
+    }
+    return _requiredEditPartiesFor(data);
+  }
+
+  bool _validEditParty(String party) =>
+      party == 'manager' || party == 'general_manager' || party == 'accountant';
+
+  Map<String, dynamic> _editProposal({
+    required String title,
+    required String description,
+    required double amount,
+    required String currency,
+    String? notes,
+    Map<String, dynamic>? invoiceAttachment,
+    required bool removeInvoiceAttachment,
+  }) => {
+    'title': title.trim(),
+    'description': description.trim(),
+    'requested_amount': amount,
+    'approved_amount': amount,
+    'currency': currency.trim().isEmpty ? 'YER' : currency.trim(),
+    'manager_notes': notes?.trim() ?? '',
+    'invoice_attachment_action': removeInvoiceAttachment
+        ? 'remove'
+        : invoiceAttachment == null
+        ? 'keep'
+        : 'replace',
+    if (invoiceAttachment != null) 'invoice_attachment': invoiceAttachment,
+  };
+
+  Map<String, dynamic> _editProposalFromRequest(Map<String, dynamic> data) {
+    final request = data[CashExpenseFields.editRequest];
+    final proposal = request is Map ? request['proposal'] : null;
+    if (proposal is! Map) throw Exception('بيانات التعديل غير صالحة.');
+    final value = Map<String, dynamic>.from(proposal);
+    final amount = value['requested_amount'];
+    if ((value['title']?.toString() ?? '').trim().isEmpty ||
+        amount is! num ||
+        amount <= 0) {
+      throw Exception('بيانات التعديل غير صالحة.');
+    }
+    return value;
+  }
+
+  Map<String, dynamic> _proposalUpdateFields(Map<String, dynamic> proposal) {
+    final action = proposal['invoice_attachment_action']?.toString() ?? 'keep';
+    return {
+      CashExpenseFields.title: proposal['title']?.toString() ?? '',
+      CashExpenseFields.description: proposal['description']?.toString() ?? '',
+      CashExpenseFields.requestedAmount: (proposal['requested_amount'] as num)
+          .toDouble(),
+      CashExpenseFields.approvedAmount: (proposal['approved_amount'] as num)
+          .toDouble(),
+      CashExpenseFields.currency: proposal['currency']?.toString() ?? 'YER',
+      CashExpenseFields.managerNotes:
+          proposal['manager_notes']?.toString() ?? '',
+      if (action == 'replace')
+        CashExpenseFields.invoiceAttachment: Map<String, dynamic>.from(
+          proposal['invoice_attachment'] as Map,
+        ),
+      if (action == 'remove')
+        CashExpenseFields.invoiceAttachment: FieldValue.delete(),
+    };
+  }
+
+  Map<String, dynamic> _proposalAuditChanges(Map<String, dynamic> proposal) => {
+    'title': proposal['title'],
+    'amount': proposal['requested_amount'],
+    'currency': proposal['currency'],
+    'invoice_attachment_action': proposal['invoice_attachment_action'],
+  };
+
+  Future<Map<String, dynamic>?> _editedInvoiceAttachment({
+    required String requestId,
+    Uint8List? invoiceFileBytes,
+    String? invoiceFileName,
+    String? invoiceContentType,
+  }) async {
+    if (invoiceFileBytes == null || invoiceFileBytes.isEmpty) return null;
+    final fileName = (invoiceFileName ?? '').trim();
+    if (fileName.isEmpty) throw Exception('اسم ملف الفاتورة غير صالح.');
+    final uploadedFile = await _invoiceUploadService.uploadInvoice(
+      requestId: requestId,
+      fileBytes: invoiceFileBytes,
+      fileName: fileName,
+      contentType: invoiceContentType ?? _contentTypeFromName(fileName),
+    );
+    return uploadedFile.toMap();
+  }
+
+  Future<void> _applyDirectManagerEdit({
+    required DocumentReference<Map<String, dynamic>> docRef,
+    required Map<String, String> actor,
+    required String? branchId,
+    required String reason,
+    required Map<String, dynamic> proposal,
+  }) async {
+    await _firestore.runTransaction((transaction) async {
+      final fresh = await transaction.get(docRef);
+      final data = _dataOrThrow(fresh);
+      _validateSelectedBranch(data, branchId);
+      _validateManagerBranch(
+        actor,
+        data[CashExpenseFields.branchId]?.toString() ?? '',
+      );
+      _ensureStatus(
+        data,
+        CashExpenseStatus.pendingGeneralManagerReview,
+        'لا يمكن التعديل المباشر بعد بدء المراجعة.',
+      );
+      if (_requiredEditPartiesFor(data).length != 1) {
+        throw Exception('تغيرت حالة السند؛ أعد فتحه ثم حاول مرة أخرى.');
+      }
+      transaction.update(docRef, {
+        ..._proposalUpdateFields(proposal),
+        CashExpenseFields.lastUpdated: FieldValue.serverTimestamp(),
+        CashExpenseFields.history: FieldValue.arrayUnion([
+          _historyEntry(
+            action: 'manager_direct_edit_before_review',
+            message: 'عدل مدير الفرع سند الصرف قبل مراجعة المدير العام',
+            actor: actor,
+            note: reason,
+            changes: _proposalAuditChanges(proposal),
+          ),
+        ]),
+      });
     });
   }
 

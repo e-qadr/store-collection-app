@@ -2549,8 +2549,7 @@ service cloud.firestore {
     function cashExpenseEditRequesterAllowed() {
       let current = resource.data.get('status', '');
       let requestData = request.resource.data.get('edit_request', {});
-      return current != 'approvedByAccountant' &&
-        current != 'rejectedByGeneralManager' &&
+      return current != 'rejectedByGeneralManager' &&
         current != 'editPendingApprovals' &&
         (cashExpenseManagerFor(resource.data) || role() == 'collector' ||
           role() == 'accountant') &&
@@ -2560,16 +2559,63 @@ service cloud.firestore {
         requestData.get('reason', '') is string && requestData.reason.size() > 0 &&
         requestData.get('requested_by', '') == request.auth.uid &&
         requestData.get('requested_role', '') == role() &&
+        cashExpenseEditRequiredPartiesMatch(requestData) &&
+        cashExpenseEditProposalValid(requestData) &&
+        cashExpenseInitialEditApprovalAllowed(requestData) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'previous_status', 'edit_request', 'edit_approvals',
           'last_updated', 'history'
         ]);
     }
 
+    function cashExpenseEditRequiredPartiesMatch(edit) {
+      let parties = edit.get('required_parties', []);
+      return parties is list && parties.hasAll(['manager']) &&
+        parties.hasOnly(['manager', 'general_manager', 'accountant']) &&
+        ((resource.data.get('reviewed_by', '') != '') ==
+          parties.hasAny(['general_manager'])) &&
+        ((resource.data.get('approved_by', '') != '') ==
+          parties.hasAny(['accountant']));
+    }
+
+    function cashExpenseEditProposalValid(edit) {
+      let proposal = edit.get('proposal', {});
+      let action = proposal.get('invoice_attachment_action', '');
+      return proposal is map && proposal.get('title', '') is string &&
+        proposal.title.size() > 0 && proposal.get('description', '') is string &&
+        proposal.get('requested_amount', 0) is number &&
+        proposal.requested_amount > 0 &&
+        proposal.get('approved_amount', 0) == proposal.requested_amount &&
+        proposal.get('currency', '') is string && proposal.currency.size() > 0 &&
+        proposal.get('manager_notes', '') is string &&
+        ['keep', 'replace', 'remove'].hasAny([action]) &&
+        (action != 'replace' || proposal.get('invoice_attachment', null) is map);
+    }
+
+    function cashExpenseInitialEditApprovalAllowed(edit) {
+      let parties = edit.get('required_parties', []);
+      let approvals = request.resource.data.get('edit_approvals', {});
+      return approvals is map &&
+        ((cashExpenseManagerFor(resource.data) && parties.hasAny(['manager']) &&
+            approvals.keys().hasAll(['manager']) &&
+            approvals.keys().hasOnly(['manager']) &&
+            approvals.get('manager', {}).get('actor_id', '') == request.auth.uid) ||
+          (role() == 'collector' && parties.hasAny(['general_manager']) &&
+            approvals.keys().hasAll(['general_manager']) &&
+            approvals.keys().hasOnly(['general_manager']) &&
+            approvals.get('general_manager', {}).get('actor_id', '') == request.auth.uid) ||
+          (role() == 'accountant' && parties.hasAny(['accountant']) &&
+            approvals.keys().hasAll(['accountant']) &&
+            approvals.keys().hasOnly(['accountant']) &&
+            approvals.get('accountant', {}).get('actor_id', '') == request.auth.uid));
+    }
+
     function cashExpenseManagerEditApprovalAllowed() {
       let approvals = resource.data.get('edit_approvals', {});
       let nextApprovals = request.resource.data.get('edit_approvals', {});
-      return cashExpenseManagerFor(resource.data) && approvals is map &&
+      let parties = resource.data.get('edit_request', {}).get('required_parties', []);
+      return cashExpenseManagerFor(resource.data) && parties is list &&
+        parties.hasAny(['manager']) && approvals is map &&
         nextApprovals is map && !approvals.keys().hasAny(['manager']) &&
         nextApprovals.get('manager', {}).get('actor_id', '') == request.auth.uid &&
         nextApprovals.diff(approvals).affectedKeys().hasOnly(['manager']);
@@ -2578,7 +2624,9 @@ service cloud.firestore {
     function cashExpenseCollectorEditApprovalAllowed() {
       let approvals = resource.data.get('edit_approvals', {});
       let nextApprovals = request.resource.data.get('edit_approvals', {});
-      return role() == 'collector' && approvals is map && nextApprovals is map &&
+      let parties = resource.data.get('edit_request', {}).get('required_parties', []);
+      return role() == 'collector' && parties is list &&
+        parties.hasAny(['general_manager']) && approvals is map && nextApprovals is map &&
         !approvals.keys().hasAny(['general_manager']) &&
         nextApprovals.get('general_manager', {}).get('actor_id', '') ==
           request.auth.uid &&
@@ -2590,7 +2638,9 @@ service cloud.firestore {
     function cashExpenseAccountantEditApprovalAllowed() {
       let approvals = resource.data.get('edit_approvals', {});
       let nextApprovals = request.resource.data.get('edit_approvals', {});
-      return role() == 'accountant' && approvals is map && nextApprovals is map &&
+      let parties = resource.data.get('edit_request', {}).get('required_parties', []);
+      return role() == 'accountant' && parties is list &&
+        parties.hasAny(['accountant']) && approvals is map && nextApprovals is map &&
         !approvals.keys().hasAny(['accountant']) &&
         nextApprovals.get('accountant', {}).get('actor_id', '') == request.auth.uid &&
         nextApprovals.diff(approvals).affectedKeys().hasOnly(['accountant']);
@@ -2599,35 +2649,91 @@ service cloud.firestore {
     function cashExpenseEditDecisionAllowed() {
       let next = request.resource.data.get('status', '');
       let approvals = request.resource.data.get('edit_approvals', {});
+      let edit = resource.data.get('edit_request', {});
+      let parties = edit.get('required_parties', []);
       let actorApproves = (cashExpenseManagerEditApprovalAllowed() ||
         cashExpenseCollectorEditApprovalAllowed() ||
         cashExpenseAccountantEditApprovalAllowed());
       return resource.data.get('status', '') == 'editPendingApprovals' &&
-        actorApproves && approvals is map &&
-        (next == resource.data.get('previous_status', '') ||
-          next == 'editPendingApprovals' ||
-          (next == 'pendingGeneralManagerReview' &&
-            approvals.get('manager', {}).get('approved', false) == true &&
-            approvals.get('general_manager', {}).get('approved', false) == true &&
-            approvals.get('accountant', {}).get('approved', false) == true)) &&
+        actorApproves && approvals is map && parties is list &&
+        (next == 'editPendingApprovals' ||
+          (next == resource.data.get('previous_status', '') &&
+            ((cashExpenseAllRequiredEditApprovalsApproved(approvals, parties) &&
+                cashExpenseEditProposalApplied(edit)) ||
+              (cashExpenseAnyEditApprovalRejected(approvals) &&
+                cashExpenseEditValuesUnchanged())))) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'edit_approvals', 'last_updated', 'history'
+          'status', 'title', 'description', 'requested_amount',
+          'approved_amount', 'currency', 'manager_notes', 'invoice_attachment',
+          'previous_status', 'edit_request', 'edit_approvals', 'last_updated',
+          'history'
         ]);
     }
 
-    function cashExpenseManagerApplyEditAllowed() {
-      let approvals = resource.data.get('edit_approvals', {});
+    function cashExpenseAllRequiredEditApprovalsApproved(approvals, parties) {
+      return (!parties.hasAny(['manager']) ||
+          approvals.get('manager', {}).get('approved', false) == true) &&
+        (!parties.hasAny(['general_manager']) ||
+          approvals.get('general_manager', {}).get('approved', false) == true) &&
+        (!parties.hasAny(['accountant']) ||
+          approvals.get('accountant', {}).get('approved', false) == true);
+    }
+
+    function cashExpenseAnyEditApprovalRejected(approvals) {
+      return approvals.get('manager', {}).get('approved', true) == false ||
+        approvals.get('general_manager', {}).get('approved', true) == false ||
+        approvals.get('accountant', {}).get('approved', true) == false;
+    }
+
+    function cashExpenseEditProposalApplied(edit) {
+      let proposal = edit.get('proposal', {});
+      let action = proposal.get('invoice_attachment_action', '');
+      return proposal is map &&
+        request.resource.data.get('title', '') == proposal.get('title', '') &&
+        request.resource.data.get('description', '') == proposal.get('description', '') &&
+        request.resource.data.get('requested_amount', -1) ==
+          proposal.get('requested_amount', -2) &&
+        request.resource.data.get('approved_amount', -1) ==
+          proposal.get('approved_amount', -2) &&
+        request.resource.data.get('currency', '') == proposal.get('currency', '') &&
+        request.resource.data.get('manager_notes', '') ==
+          proposal.get('manager_notes', '') &&
+        ((action == 'keep' && request.resource.data.get('invoice_attachment', null) ==
+            resource.data.get('invoice_attachment', null)) ||
+          (action == 'replace' && request.resource.data.get('invoice_attachment', null) ==
+            proposal.get('invoice_attachment', null)) ||
+          (action == 'remove' &&
+            request.resource.data.get('invoice_attachment', null) == null));
+    }
+
+    function cashExpenseEditValuesUnchanged() {
+      return request.resource.data.get('title', '') == resource.data.get('title', '') &&
+        request.resource.data.get('description', '') ==
+          resource.data.get('description', '') &&
+        request.resource.data.get('requested_amount', -1) ==
+          resource.data.get('requested_amount', -2) &&
+        request.resource.data.get('approved_amount', -1) ==
+          resource.data.get('approved_amount', -2) &&
+        request.resource.data.get('currency', '') == resource.data.get('currency', '') &&
+        request.resource.data.get('manager_notes', '') ==
+          resource.data.get('manager_notes', '') &&
+        request.resource.data.get('invoice_attachment', null) ==
+          resource.data.get('invoice_attachment', null);
+    }
+
+    function cashExpenseManagerDirectEditAllowed() {
       return cashExpenseManagerFor(resource.data) &&
         resource.data.get('status', '') == 'pendingGeneralManagerReview' &&
-        approvals is map &&
-        approvals.get('manager', {}).get('approved', false) == true &&
-        approvals.get('general_manager', {}).get('approved', false) == true &&
-        approvals.get('accountant', {}).get('approved', false) == true &&
+        resource.data.get('reviewed_by', '') == '' &&
         request.resource.data.get('status', '') == 'pendingGeneralManagerReview' &&
+        request.resource.data.get('requested_amount', 0) is number &&
+        request.resource.data.requested_amount > 0 &&
+        request.resource.data.get('approved_amount', 0) ==
+          request.resource.data.requested_amount &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'title', 'description', 'requested_amount', 'approved_amount',
-          'manager_notes', 'invoice_attachment', 'previous_status',
-          'edit_request', 'edit_approvals', 'last_updated', 'history'
+          'currency', 'manager_notes', 'invoice_attachment', 'last_updated',
+          'history'
         ]);
     }
 
@@ -2637,7 +2743,7 @@ service cloud.firestore {
           cashExpenseInvoiceDecisionAllowed() ||
           cashExpenseAccountingDecisionAllowed() ||
           cashExpenseEditRequesterAllowed() || cashExpenseEditDecisionAllowed() ||
-          cashExpenseManagerApplyEditAllowed());
+          cashExpenseManagerDirectEditAllowed());
     }
 
     function cashExpenseCounterCreateAllowed(branchId, data) {

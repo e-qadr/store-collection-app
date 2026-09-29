@@ -597,7 +597,7 @@ class NotificationService {
     } else if (allApproved) {
       recipients.add(_string(requestData, 'created_by'));
       title = 'اكتملت موافقات تعديل سند الصرف';
-      body = 'اكتملت موافقات تعديل سند الصرف رقم $number ويمكن تعديل بياناته.';
+      body = 'اكتملت موافقات تعديل سند الصرف رقم $number وتم تطبيق التعديلات.';
       type = 'cash_expense_edit_fully_approved';
     } else {
       return;
@@ -633,7 +633,7 @@ class NotificationService {
       referenceNumber: number,
       notificationType: 'cash_expense_manager_updated_after_edit',
       title: 'سند صرف معدل بانتظار المراجعة',
-      message: 'عدّل مدير الفرع سند الصرف رقم $number بعد اكتمال الموافقات.',
+      message: 'عدّل مدير الفرع سند الصرف رقم $number قبل مراجعة المدير العام.',
       extraData: {'cash_expense_request_id': requestId},
     );
   }
@@ -896,15 +896,18 @@ class NotificationService {
     Map<String, dynamic> data,
   ) async {
     final approvals = _map(data['edit_approvals']);
+    final requiredParties = _cashExpenseEditRequiredParties(data);
     final branchId = _string(data, 'branch_id');
     final recipients = <String>{};
-    if (approvals['manager'] is! Map) {
+    if (requiredParties.contains('manager') && approvals['manager'] is! Map) {
       recipients.addAll(await _branchManagers(branchId));
     }
-    if (approvals['general_manager'] is! Map) {
+    if (requiredParties.contains('general_manager') &&
+        approvals['general_manager'] is! Map) {
       recipients.addAll(await _usersByRole('collector'));
     }
-    if (approvals['accountant'] is! Map) {
+    if (requiredParties.contains('accountant') &&
+        approvals['accountant'] is! Map) {
       recipients.addAll(await _usersByRole('accountant'));
     }
     return recipients;
@@ -912,10 +915,28 @@ class NotificationService {
 
   bool _cashExpenseEditApprovalsComplete(Map<String, dynamic> data) {
     final approvals = _map(data['edit_approvals']);
-    return const ['manager', 'general_manager', 'accountant'].every(
+    return _cashExpenseEditRequiredParties(data).every(
       (party) =>
           approvals[party] is Map && approvals[party]['approved'] == true,
     );
+  }
+
+  List<String> _cashExpenseEditRequiredParties(Map<String, dynamic> data) {
+    final editRequest = _map(data['edit_request']);
+    final value = editRequest['required_parties'];
+    if (value is List) {
+      final parties = value.map((item) => item.toString()).toSet().toList();
+      if (parties.isNotEmpty &&
+          parties.every(
+            (party) =>
+                party == 'manager' ||
+                party == 'general_manager' ||
+                party == 'accountant',
+          )) {
+        return parties;
+      }
+    }
+    return const ['manager', 'general_manager', 'accountant'];
   }
 
   Future<Set<String>> _interBranchApprovalRecipients(

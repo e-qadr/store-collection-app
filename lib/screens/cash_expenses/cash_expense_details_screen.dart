@@ -91,7 +91,8 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
               children: [
                 _expenseDocument(request),
                 if (actions != null) ...[const SizedBox(height: 12), actions],
-                if (request.editRequest.isNotEmpty) ...[
+                if (request.status == CashExpenseStatus.editPendingApprovals &&
+                    request.editRequest.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   _editRequestPanel(request),
                 ],
@@ -122,6 +123,8 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
         children: [
           _header(request),
           const SizedBox(height: 14),
+          _nextStep(request),
+          const SizedBox(height: 14),
           _amountSummary(request),
           const SizedBox(height: 14),
           _invoiceAttachment(request),
@@ -134,7 +137,7 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
     return Container(
       decoration: BoxDecoration(
         border: Border.all(color: AppTheme.dividerColor),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -144,18 +147,18 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
             decoration: BoxDecoration(
               color: _roleColor.withValues(alpha: 0.08),
               borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(9),
+                top: Radius.circular(17),
               ),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: 46,
-                  height: 46,
+                  width: 50,
+                  height: 50,
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(14),
                     border: Border.all(
                       color: _roleColor.withValues(alpha: 0.2),
                     ),
@@ -184,7 +187,7 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
                         request.requestNumber,
                         style: const TextStyle(
                           color: AppTheme.textPrimary,
-                          fontSize: 22,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -242,6 +245,99 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
                       Icons.receipt_long_rounded,
                     ),
                   ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _nextStep(CashExpenseRead request) {
+    final (title, subtitle, icon, color) = switch (request.status) {
+      CashExpenseStatus.pendingGeneralManagerReview => (
+        'بانتظار مراجعة المدير العام',
+        'لا يلزمك إجراء الآن؛ ستصلك نتيجة المراجعة هنا.',
+        Icons.hourglass_top_rounded,
+        AppTheme.pendingColor,
+      ),
+      CashExpenseStatus.rejectedByGeneralManager => (
+        'تم رفض السند',
+        request.rejectionReason.isEmpty
+            ? 'راجع ملاحظات المدير العام قبل إنشاء سند جديد.'
+            : 'راجع سبب الرفض في قسم الملاحظات.',
+        Icons.cancel_rounded,
+        AppTheme.errorColor,
+      ),
+      CashExpenseStatus.pendingInvoiceAttachment => (
+        widget.role == UserRole.manager
+            ? 'إجراء مطلوب منك: اعتماد الفاتورة'
+            : 'بانتظار اعتماد فاتورة المصروف من الفرع',
+        widget.role == UserRole.manager
+            ? 'أرفق الفاتورة أو اختر المتابعة بدون ملف.'
+            : 'سيظهر الاعتماد المحاسبي بعد إتمام خطوة الفاتورة.',
+        Icons.upload_file_rounded,
+        AppTheme.managerColor,
+      ),
+      CashExpenseStatus.pendingAccountingApproval => (
+        widget.role == UserRole.accountant
+            ? 'إجراء مطلوب منك: الاعتماد المحاسبي'
+            : 'بانتظار الاعتماد المحاسبي',
+        widget.role == UserRole.accountant
+            ? 'أدخل المرجع المحاسبي ثم اعتمد السند نهائياً.'
+            : 'لا يلزمك إجراء الآن.',
+        Icons.calculate_rounded,
+        AppTheme.accountantColor,
+      ),
+      CashExpenseStatus.editPendingApprovals => (
+        'طلب تعديل بانتظار الموافقات',
+        'راجع طلب التعديل واتخذ الإجراء المتاح لك.',
+        Icons.edit_note_rounded,
+        AppTheme.warningColor,
+      ),
+      CashExpenseStatus.approvedByAccountant => (
+        'السند مكتمل ومعتمد',
+        'تم إقفال السند محاسبياً ويمكنك مراجعة سجله أو طباعته.',
+        Icons.verified_rounded,
+        AppTheme.successColor,
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    height: 1.4,
+                  ),
                 ),
               ],
             ),
@@ -565,17 +661,6 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
       );
     }
 
-    if (_canManagerApplyApprovedEdit(request)) {
-      buttons.add(
-        _actionButton(
-          'تعديل البيانات',
-          Icons.edit_rounded,
-          AppTheme.managerColor,
-          () => _showManagerEditAfterApproval(request),
-        ),
-      );
-    }
-
     if (_canDecideEdit(request)) {
       buttons.addAll([
         _actionButton(
@@ -594,8 +679,7 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
     }
 
     if (widget.role == UserRole.collector &&
-        request.status == CashExpenseStatus.pendingGeneralManagerReview &&
-        !_allEditApprovalsApproved(request)) {
+        request.status == CashExpenseStatus.pendingGeneralManagerReview) {
       buttons.addAll([
         _actionButton(
           'اعتماد / تعديل',
@@ -644,26 +728,25 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
 
     if (buttons.isEmpty) return null;
     return _panel(
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            Icon(Icons.tune_rounded, color: _roleColor, size: 18),
-            const SizedBox(width: 8),
-            const Text(
-              'إجراءات الطلب',
-              style: TextStyle(
-                color: AppTheme.textPrimary,
-                fontWeight: FontWeight.bold,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.tune_rounded, color: _roleColor, size: 18),
+              const SizedBox(width: 8),
+              const Text(
+                'الإجراءات المتاحة لك',
+                style: TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            for (final button in buttons) ...[
-              button,
-              if (button != buttons.last) const SizedBox(width: 8),
             ],
-          ],
-        ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: buttons),
+        ],
       ),
     );
   }
@@ -682,35 +765,40 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
   }
 
   bool _canRequestEdit(CashExpenseRead request) {
-    if (request.status.isFinal ||
-        request.status == CashExpenseStatus.editPendingApprovals ||
-        _allEditApprovalsApproved(request) ||
-        _canManagerApplyApprovedEdit(request)) {
+    if (request.status == CashExpenseStatus.editPendingApprovals ||
+        request.status == CashExpenseStatus.rejectedByGeneralManager) {
       return false;
     }
-    return _editPartyForRole(widget.role) != null;
-  }
-
-  bool _canManagerApplyApprovedEdit(CashExpenseRead request) {
-    return widget.role == UserRole.manager &&
-        request.status == CashExpenseStatus.pendingGeneralManagerReview &&
-        _allEditApprovalsApproved(request);
-  }
-
-  bool _allEditApprovalsApproved(CashExpenseRead request) {
-    const parties = ['manager', 'general_manager', 'accountant'];
-    return request.editRequest.isNotEmpty &&
-        parties.every((party) {
-          final entry = request.editApprovals[party];
-          return entry is Map && entry['approved'] == true;
-        });
+    final party = _editPartyForRole(widget.role);
+    return party != null && _requiredEditParties(request).contains(party);
   }
 
   bool _canDecideEdit(CashExpenseRead request) {
     if (request.status != CashExpenseStatus.editPendingApprovals) return false;
     final party = _editPartyForRole(widget.role);
-    if (party == null) return false;
-    return !request.editApprovals.containsKey(party);
+    return party != null &&
+        _requiredEditParties(request).contains(party) &&
+        !request.editApprovals.containsKey(party);
+  }
+
+  List<String> _requiredEditParties(CashExpenseRead request) {
+    if (request.status == CashExpenseStatus.editPendingApprovals) {
+      final saved = request.editRequest['required_parties'];
+      if (saved is List) {
+        final parties = saved.map((item) => item.toString()).toSet().toList();
+        if (parties.isNotEmpty) return parties;
+      }
+    }
+    final parties = <String>['manager'];
+    if (request.data[CashExpenseFields.reviewedBy]?.toString().isNotEmpty ==
+        true) {
+      parties.add('general_manager');
+    }
+    if (request.data[CashExpenseFields.approvedBy]?.toString().isNotEmpty ==
+        true) {
+      parties.add('accountant');
+    }
+    return parties;
   }
 
   String? _editPartyForRole(UserRole role) {
@@ -861,18 +949,27 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
     );
   }
 
-  Future<void> _showManagerEditAfterApproval(CashExpenseRead request) async {
+  Future<void> _showRequestEdit(CashExpenseRead request) async {
     final title = TextEditingController(text: request.title);
     final description = TextEditingController(text: request.description);
     final amount = TextEditingController(
       text: _formatNumber(request.requestedAmount),
     );
+    final currency = TextEditingController(text: request.currency);
     final notes = TextEditingController(text: request.managerNotes);
+    final reason = TextEditingController();
     PlatformFile? pickedFile;
+    var removeExistingInvoice = false;
 
     await _dialog(
-      title: 'تعديل بيانات سند الصرف',
+      title: 'تعديل سند الصرف',
       children: [
+        Text(
+          _requiredEditParties(request).length == 1
+              ? 'سيتم حفظ تعديلاتك مباشرة لأن المدير العام لم يراجع السند بعد.'
+              : 'ستُحفظ تعديلاتك كطلب بانتظار موافقة الأطراف التي اعتمدت السند.',
+          style: const TextStyle(color: AppTheme.textSecondary, height: 1.4),
+        ),
         TextField(
           controller: title,
           decoration: const InputDecoration(labelText: 'عنوان المصروف'),
@@ -886,30 +983,57 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
           controller: amount,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+            FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
           ],
           decoration: const InputDecoration(labelText: 'المبلغ المطلوب'),
         ),
+        TextField(
+          controller: currency,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(labelText: 'العملة'),
+        ),
         StatefulBuilder(
           builder: (context, setLocalState) {
-            return OutlinedButton.icon(
-              onPressed: () async {
-                final result = await FilePicker.pickFiles(
-                  type: FileType.custom,
-                  allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
-                  withData: true,
-                );
-                if (result == null || result.files.isEmpty) return;
-                setLocalState(() => pickedFile = result.files.single);
-              },
-              icon: const Icon(Icons.attach_file_rounded),
-              label: Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: Text(
-                  pickedFile?.name ?? 'إرفاق ملف بديل اختياري',
-                  overflow: TextOverflow.ellipsis,
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final result = await FilePicker.pickFiles(
+                      type: FileType.custom,
+                      allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+                      withData: true,
+                    );
+                    if (result == null || result.files.isEmpty) return;
+                    setLocalState(() {
+                      pickedFile = result.files.single;
+                      removeExistingInvoice = false;
+                    });
+                  },
+                  icon: const Icon(Icons.attach_file_rounded),
+                  label: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      pickedFile?.name ??
+                          (request.invoiceUrl.isEmpty
+                              ? 'إرفاق ملف أو صورة (اختياري)'
+                              : 'استبدال الملف المرفق'),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ),
-              ),
+                if (request.invoiceUrl.isNotEmpty)
+                  CheckboxListTile(
+                    value: removeExistingInvoice,
+                    contentPadding: EdgeInsets.zero,
+                    activeColor: AppTheme.errorColor,
+                    title: const Text('إزالة الملف المرفق'),
+                    onChanged: (value) => setLocalState(() {
+                      removeExistingInvoice = value ?? false;
+                      if (removeExistingInvoice) pickedFile = null;
+                    }),
+                  ),
+              ],
             );
           },
         ),
@@ -918,17 +1042,28 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
           maxLines: 3,
           decoration: const InputDecoration(labelText: 'ملاحظات مدير الفرع'),
         ),
+        TextField(
+          controller: reason,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'سبب التعديل',
+            hintText: 'اشرح ما الذي تغيّر ولماذا',
+          ),
+        ),
       ],
       onSubmit: () async {
-        await _service.updateManagerRequestAfterEditApproval(
+        await _service.requestEdit(
           requestId: request.id,
           title: title.text,
           description: description.text,
           amount: _parseNumber(amount.text),
+          currency: currency.text,
           branchId: widget.branchId,
           notes: notes.text,
           invoiceFileBytes: pickedFile?.bytes,
           invoiceFileName: pickedFile?.name,
+          removeInvoiceAttachment: removeExistingInvoice,
+          reason: reason.text,
         );
       },
     );
@@ -958,27 +1093,6 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
           accountingReference: reference.text,
           branchId: widget.branchId,
           notes: notes.text,
-        );
-      },
-    );
-  }
-
-  Future<void> _showRequestEdit(CashExpenseRead request) async {
-    final reason = TextEditingController();
-    await _dialog(
-      title: 'طلب تعديل سند الصرف',
-      children: [
-        TextField(
-          controller: reason,
-          maxLines: 3,
-          decoration: const InputDecoration(labelText: 'سبب طلب التعديل'),
-        ),
-      ],
-      onSubmit: () async {
-        await _service.requestEdit(
-          requestId: request.id,
-          branchId: widget.branchId,
-          reason: reason.text,
         );
       },
     );
@@ -1076,6 +1190,10 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
   Widget _editRequestPanel(CashExpenseRead request) {
     final editRequest = request.editRequest;
     final approvals = request.editApprovals;
+    final requiredParties = _requiredEditParties(request);
+    final proposal = editRequest['proposal'] is Map
+        ? Map<String, dynamic>.from(editRequest['proposal'] as Map)
+        : const <String, dynamic>{};
     final reason = editRequest['reason']?.toString() ?? '-';
     final requester = editRequest['requested_by_name']?.toString() ?? '-';
     final requestedAt = _timestampToDate(editRequest['requested_at']);
@@ -1107,18 +1225,68 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
             style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppTheme.goldSurface,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'التعديلات المقترحة',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'العنوان: ${proposal['title'] ?? '-'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  'المبلغ: ${proposal['requested_amount'] ?? '-'} ${proposal['currency'] ?? ''}',
+                ),
+                Text(_invoiceChangeLabel(proposal)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'الموافقات المطلوبة (${requiredParties.length})',
+            style: const TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              _approvalPill('مدير الفرع', approvals['manager']),
-              _approvalPill('المدير العام', approvals['general_manager']),
-              _approvalPill('المحاسب', approvals['accountant']),
+              if (requiredParties.contains('manager'))
+                _approvalPill('مدير الفرع', approvals['manager']),
+              if (requiredParties.contains('general_manager'))
+                _approvalPill('المدير العام', approvals['general_manager']),
+              if (requiredParties.contains('accountant'))
+                _approvalPill('المحاسب', approvals['accountant']),
             ],
           ),
         ],
       ),
     );
+  }
+
+  String _invoiceChangeLabel(Map<String, dynamic> proposal) {
+    switch (proposal['invoice_attachment_action']?.toString()) {
+      case 'replace':
+        return 'الملف المرفق: استبدال';
+      case 'remove':
+        return 'الملف المرفق: إزالة';
+      default:
+        return 'الملف المرفق: بدون تغيير';
+    }
   }
 
   Widget _approvalPill(String label, dynamic entry) {
@@ -1212,27 +1380,23 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
           };
 
     return _panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.route_rounded, color: _roleColor, size: 20),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'مسار حالة الصرف',
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              _statusChip(request.status),
-            ],
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(top: 10),
+        leading: Icon(Icons.route_rounded, color: _roleColor, size: 20),
+        title: const Text(
+          'مسار اعتماد السند',
+          style: TextStyle(
+            color: AppTheme.textPrimary,
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
           ),
-          const SizedBox(height: 12),
+        ),
+        subtitle: Text(
+          'الحالة الحالية: ${request.status.label}',
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+        ),
+        children: [
           for (var index = 0; index < steps.length; index++)
             _timelineRow(
               step: steps[index],
@@ -1422,16 +1586,19 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
     }
     if (notes.isEmpty) return const SizedBox.shrink();
     return _panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'ملاحظات الصرف',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          const SizedBox(height: 8),
-          for (final note in notes) note,
-        ],
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(top: 8),
+        leading: Icon(Icons.sticky_note_2_rounded, color: _roleColor),
+        title: const Text(
+          'الملاحظات',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        subtitle: Text(
+          '${notes.length} ملاحظة',
+          style: const TextStyle(fontSize: 12),
+        ),
+        children: notes,
       ),
     );
   }
@@ -1467,16 +1634,26 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
 
   Widget _history(CashExpenseRead request) {
     return _panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(top: 8),
+        leading: Icon(Icons.history_rounded, color: _roleColor),
+        title: const Text(
+          'سجل السند',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        subtitle: Text(
+          request.history.isEmpty
+              ? 'لا توجد عمليات بعد'
+              : '${request.history.length} عملية',
+          style: const TextStyle(fontSize: 12),
+        ),
         children: [
-          const Text(
-            'سجل الصرف',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          const SizedBox(height: 8),
           if (request.history.isEmpty)
-            const Text('لا يوجد سجل بعد')
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('لا يوجد سجل بعد'),
+            )
           else
             ...request.history.reversed.map((entry) {
               final timestamp = entry['timestamp'];

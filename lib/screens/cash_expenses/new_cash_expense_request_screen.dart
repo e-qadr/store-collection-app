@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:store_collection_app/services/cash_expense_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/widgets/collection_amount_input_formatter.dart';
 
 class NewCashExpenseRequestScreen extends StatefulWidget {
   final String branchId;
@@ -81,98 +82,145 @@ class _NewCashExpenseRequestScreenState
       child: Scaffold(
         backgroundColor: AppTheme.surfaceColor,
         appBar: AppBar(
-          title: const Text('طلب صرف نقدي'),
+          title: const Text('سند صرف جديد'),
           backgroundColor: AppTheme.managerColor,
         ),
+        bottomNavigationBar: SafeArea(
+          minimum: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+          child: ElevatedButton.icon(
+            onPressed: _isSaving ? null : _save,
+            icon: _isSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.send_rounded),
+            label: Text(_isSaving ? 'جارٍ إرسال السند...' : 'إرسال للمراجعة'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.managerColor,
+            ),
+          ),
+        ),
         body: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: AppTheme.cardShadow(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _branchSummary(),
-                const SizedBox(height: 18),
-                TextField(
-                  controller: _titleController,
-                  decoration: const InputDecoration(
-                    labelText: 'عنوان المصروف',
-                    prefixIcon: Icon(Icons.receipt_long_rounded),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: _descriptionController,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'تفاصيل المصروف',
-                    prefixIcon: Icon(Icons.description_rounded),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _introCard(),
+              const SizedBox(height: 16),
+              _branchSummary(),
+              const SizedBox(height: 20),
+              _formSection(
+                icon: Icons.receipt_long_rounded,
+                title: 'بيانات المصروف',
+                subtitle: 'أدخل المعلومات الأساسية للسند.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
-                      flex: 2,
-                      child: TextField(
-                        controller: _amountController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
-                        ],
-                        decoration: const InputDecoration(
-                          labelText: 'المبلغ المطلوب',
-                          prefixIcon: Icon(Icons.payments_rounded),
-                        ),
+                    _requiredLabel('عنوان المصروف'),
+                    const SizedBox(height: 7),
+                    TextField(
+                      controller: _titleController,
+                      decoration: const InputDecoration(
+                        hintText: 'مثال: صيانة، نقل، أدوات تشغيل',
+                        prefixIcon: Icon(Icons.receipt_long_rounded),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _currencyController,
-                        textCapitalization: TextCapitalization.characters,
-                        decoration: const InputDecoration(
-                          labelText: 'العملة',
-                          prefixIcon: Icon(Icons.toll_rounded),
-                        ),
+                    const SizedBox(height: 14),
+                    _fieldLabel('تفاصيل المصروف'),
+                    const SizedBox(height: 7),
+                    TextField(
+                      controller: _descriptionController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        hintText: 'اشرح المصروف باختصار (اختياري)',
+                        prefixIcon: Icon(Icons.description_rounded),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: _notesController,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظات مدير الفرع',
-                    prefixIcon: Icon(Icons.notes_rounded),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                _optionalInvoiceAttachment(),
-                const SizedBox(height: 22),
-                ElevatedButton.icon(
-                  onPressed: _isSaving ? null : _save,
-                  icon: _isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
+              ),
+              const SizedBox(height: 16),
+              _formSection(
+                icon: Icons.payments_rounded,
+                title: 'المبلغ',
+                subtitle: 'راجع القيمة والعملة قبل الإرسال.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _requiredLabel('المبلغ المطلوب'),
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            controller: _amountController,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                RegExp(r'[\d.]'),
+                              ),
+                              ThousandsSeparatorInputFormatter(),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: '0',
+                              prefixIcon: Icon(Icons.payments_rounded),
+                            ),
                           ),
-                        )
-                      : const Icon(Icons.send_rounded),
-                  label: const Text('إرسال الطلب للمدير العام'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.managerColor,
-                  ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _currencyController,
+                            textCapitalization: TextCapitalization.characters,
+                            decoration: const InputDecoration(
+                              hintText: 'العملة',
+                              prefixIcon: Icon(Icons.toll_rounded),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 16),
+              _formSection(
+                icon: Icons.note_alt_rounded,
+                title: 'معلومات إضافية',
+                subtitle: 'يمكن إضافتها الآن أو عند المتابعة حسب حالة السند.',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _fieldLabel('ملاحظات مدير الفرع'),
+                    const SizedBox(height: 7),
+                    TextField(
+                      controller: _notesController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        hintText: 'أي ملاحظات تساعد في مراجعة الطلب (اختياري)',
+                        prefixIcon: Icon(Icons.notes_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _optionalInvoiceAttachment(),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'بعد الإرسال سيصل السند إلى المدير العام للمراجعة.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.textSecondary, height: 1.45),
+              ),
+            ],
           ),
         ),
       ),
@@ -181,28 +229,162 @@ class _NewCashExpenseRequestScreenState
 
   Widget _branchSummary() {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppTheme.managerColor.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.managerColor.withValues(alpha: 0.14),
+        ),
       ),
       child: Row(
         children: [
           const Icon(Icons.storefront_rounded, color: AppTheme.managerColor),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              'الفرع الطالب: ${widget.branchName}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textPrimary,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'سيُسجل الطلب لهذا الفرع',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  widget.branchName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+
+  Widget _introCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: AppTheme.managerGradient,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.edit_note_rounded, color: Colors.white, size: 30),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'أنشئ سند الصرف في خطوات بسيطة',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 17,
+                  ),
+                ),
+                SizedBox(height: 5),
+                Text(
+                  'أدخل المصروف والمبلغ، ثم أرسله للمراجعة والاعتماد.',
+                  style: TextStyle(color: Colors.white70, height: 1.45),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _formSection({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: AppTheme.cardShadow(radius: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: AppTheme.managerColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: AppTheme.managerColor, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _requiredLabel(String label) => RichText(
+    text: TextSpan(
+      style: const TextStyle(
+        color: AppTheme.textPrimary,
+        fontWeight: FontWeight.bold,
+      ),
+      children: [
+        TextSpan(text: label),
+        const TextSpan(
+          text: '  *',
+          style: TextStyle(color: AppTheme.errorColor),
+        ),
+      ],
+    ),
+  );
+
+  Widget _fieldLabel(String label) => Text(
+    label,
+    style: const TextStyle(
+      color: AppTheme.textPrimary,
+      fontWeight: FontWeight.bold,
+    ),
+  );
 
   Widget _optionalInvoiceAttachment() {
     final file = _invoiceFile;
@@ -298,7 +480,7 @@ class _NewCashExpenseRequestScreenState
   }
 
   double _parseNumber(String value) {
-    return double.tryParse(value.trim().replaceAll(',', '.')) ?? 0;
+    return double.tryParse(value.trim().replaceAll(',', '')) ?? 0;
   }
 
   void _showSnack(String message) {
