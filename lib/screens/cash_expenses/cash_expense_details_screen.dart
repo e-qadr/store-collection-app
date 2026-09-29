@@ -370,40 +370,35 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
         AppTheme.successColor,
       ),
     };
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 4, 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 20),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, color: color, size: 21),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 9),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   subtitle,
                   style: const TextStyle(
                     color: AppTheme.textSecondary,
-                    height: 1.4,
+                    fontSize: 12,
+                    height: 1.35,
                   ),
                 ),
               ],
@@ -806,7 +801,8 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             _nextStep(request),
-            const SizedBox(height: 10),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
             if (widget.role == UserRole.manager &&
                 request.status == CashExpenseStatus.pendingInvoiceAttachment)
               _invoiceDecisionFooter(request)
