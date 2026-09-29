@@ -3,11 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/branch_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/screens/branch_requests/branch_request_details_screen.dart';
+import 'package:store_collection_app/screens/branch_requests/branch_request_form_screen.dart';
 import 'package:store_collection_app/services/branch_request_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/branch_scope.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
+
+enum _BoardStage { newRequests, inProgress, closed }
 
 class BranchRequestsDashboard extends StatefulWidget {
   final UserRole role;
@@ -31,93 +36,100 @@ class BranchRequestsDashboard extends StatefulWidget {
 class _BranchRequestsDashboardState extends State<BranchRequestsDashboard> {
   late final BranchRequestService _service =
       widget.service ?? BranchRequestService();
-  final _dateFormat = DateFormat('yyyy/MM/dd HH:mm');
+  final _dateFormat = DateFormat('yyyy/MM/dd');
+  _BoardStage _stage = _BoardStage.newRequests;
+  String? _selectedBranchId;
+  String? _selectedBranchName;
 
   bool get _isBranchManager =>
       widget.role == UserRole.manager &&
       (widget.branchId?.trim().isNotEmpty ?? false);
   bool get _isGeneralManager => widget.role == UserRole.collector;
+  bool get _isAccountant => widget.role == UserRole.accountant;
+  bool get _canCreate => _isBranchManager || _isGeneralManager || _isAccountant;
+  bool get _showsBranchOverview =>
+      (_isGeneralManager || _isAccountant) && _selectedBranchId == null;
 
   @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: AppTheme.surfaceColor,
-        floatingActionButton: _isBranchManager
-            ? FloatingActionButton.extended(
-                key: const Key('branch-request-create-button'),
-                onPressed: _showCreateSheet,
-                backgroundColor: AppTheme.managerColor,
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('طلب جديد'),
-              )
-            : null,
-        body: CustomScrollView(
-          slivers: [
-            _appBar(),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 96),
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: _service.watchRequests(
-                    role: widget.role,
-                    branchId: widget.branchId,
-                  ),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const SizedBox(
-                        height: 240,
-                        child: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-                    if (snapshot.hasError) return _errorState();
-                    final requests = _sorted(snapshot.data?.docs ?? const []);
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _summary(requests),
-                        const SizedBox(height: 24),
-                        const SectionHeader(
-                          title: 'قائمة الطلبات',
-                          icon: Icons.assignment_rounded,
-                          color: AppTheme.primaryOlive,
-                        ),
-                        const SizedBox(height: 12),
-                        if (!_isGeneralManager && !_isBranchManager)
-                          _emptyState(
-                            icon: Icons.lock_outline_rounded,
-                            title: 'هذه الصفحة مخصصة للمدير العام ومدير الفرع',
-                            subtitle: 'لا تتوفر صلاحية لعرض طلبات الفروع.',
-                          )
-                        else if (requests.isEmpty)
-                          _emptyState(
-                            icon: Icons.assignment_outlined,
-                            title: 'لا توجد طلبات فروع حتى الآن',
-                            subtitle: _isBranchManager
-                                ? 'استخدم زر طلب جديد لإرسال احتياجك للإدارة.'
-                                : 'ستظهر هنا طلبات جميع الفروع.',
-                          )
-                        else
-                          ...requests.map(_requestCard),
-                      ],
-                    );
-                  },
+  Widget build(BuildContext context) => Directionality(
+    textDirection: TextDirection.rtl,
+    child: Scaffold(
+      backgroundColor: AppTheme.surfaceColor,
+      floatingActionButton: _canCreate
+          ? FloatingActionButton.extended(
+              key: const Key('branch-request-create-button'),
+              onPressed: _openForm,
+              backgroundColor: _color,
+              icon: Icon(
+                _isBranchManager ? Icons.add_rounded : Icons.add_task_rounded,
+              ),
+              label: Text(_isBranchManager ? 'طلب جديد' : 'إسناد مهمة'),
+            )
+          : null,
+      body: CustomScrollView(
+        slivers: [
+          _appBar(),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 22, 20, 100),
+              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: _service.watchRequests(
+                  role: widget.role,
+                  branchId: _isGeneralManager
+                      ? _selectedBranchId
+                      : widget.branchId,
                 ),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const SizedBox(
+                      height: 260,
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  if (snapshot.hasError) {
+                    return _emptyState(
+                      icon: Icons.cloud_off_rounded,
+                      title: 'تعذر تحميل الطلبات',
+                      subtitle: 'تحقق من الاتصال والصلاحيات ثم حاول مرة أخرى.',
+                    );
+                  }
+                  var requests = _sorted(snapshot.data?.docs ?? const []);
+                  if (_isAccountant && _selectedBranchId != null) {
+                    requests = requests
+                        .where(
+                          (request) => request.branchId == _selectedBranchId,
+                        )
+                        .toList();
+                  }
+                  if (!_canCreate) {
+                    return _emptyState(
+                      icon: Icons.lock_outline_rounded,
+                      title: 'لا تتوفر صلاحية لطلبات الفروع',
+                      subtitle:
+                          'هذه الصفحة مخصصة لمدير الفرع والمدير العام والمحاسب.',
+                    );
+                  }
+                  if (_showsBranchOverview) return _branchOverview(requests);
+                  return _requestBoard(requests);
+                },
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+
+  Color get _color => _isGeneralManager
+      ? AppTheme.collectorColor
+      : _isAccountant
+      ? AppTheme.accountantColor
+      : AppTheme.managerColor;
 
   SliverAppBar _appBar() => SliverAppBar(
-    expandedHeight: 165,
+    expandedHeight: 160,
     pinned: true,
-    backgroundColor: _isGeneralManager
-        ? AppTheme.collectorColor
-        : AppTheme.managerColor,
+    backgroundColor: _color,
     actions: [
       const NotificationBell(),
       IconButton(
@@ -139,13 +151,494 @@ class _BranchRequestsDashboardState extends State<BranchRequestsDashboard> {
       background: RoleAppBarBackground(
         gradientColors: _isGeneralManager
             ? AppTheme.collectorGradient
+            : _isAccountant
+            ? AppTheme.accountantGradient
             : AppTheme.managerGradient,
-        title: _isGeneralManager ? 'جميع الفروع' : widget.branchName,
-        subtitle: _isGeneralManager ? 'قائمة مهام المدير العام' : 'طلبات فرعي',
+        title:
+            _selectedBranchName ??
+            (_isGeneralManager
+                ? 'مهام جميع الفروع'
+                : _isAccountant
+                ? 'مهامي وطلبات الفروع'
+                : widget.branchName),
+        subtitle: _subtitle,
         icon: Icons.assignment_rounded,
       ),
     ),
   );
+
+  String get _subtitle {
+    if (_selectedBranchName != null) return 'طلبات $_selectedBranchName';
+    if (_isGeneralManager) return 'تابع الطلبات ووجّه المهام';
+    if (_isAccountant) return 'تابع مهام الفروع والمهام الإدارية';
+    return 'طلبات فرعك ومهامه الواردة';
+  }
+
+  Widget _branchOverview(List<BranchRequestRead> requests) =>
+      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('branches').snapshots(),
+        builder: (context, snapshot) {
+          final branches =
+              (snapshot.data?.docs ?? const [])
+                  .where((branch) => isActiveOperationalBranch(branch.data()))
+                  .toList()
+                ..sort(
+                  (a, b) => (a.data()['name'] ?? '').toString().compareTo(
+                    (b.data()['name'] ?? '').toString(),
+                  ),
+                );
+          final administrativeTasks = requests
+              .where((item) => item.isAdministrativeTask)
+              .take(3)
+              .toList();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _overviewIntro(),
+              const SizedBox(height: 18),
+              _administrativePreview(administrativeTasks),
+              const SizedBox(height: 18),
+              const SectionHeader(
+                title: 'الفروع وآخر الطلبات',
+                icon: Icons.account_tree_rounded,
+                color: AppTheme.primaryOlive,
+              ),
+              const SizedBox(height: 10),
+              if (branches.isEmpty)
+                _emptyState(
+                  icon: Icons.storefront_outlined,
+                  title: 'لا توجد فروع تشغيلية',
+                  subtitle: 'ستظهر هنا الفروع التي يمكن إرسال مهام إليها.',
+                )
+              else
+                ...branches.map((branch) {
+                  final branchRequests = requests
+                      .where((item) => item.branchId == branch.id)
+                      .take(3)
+                      .toList();
+                  return _branchPreview(
+                    branch.id,
+                    branch.data()['name']?.toString() ?? 'فرع غير مسمى',
+                    branchRequests,
+                  );
+                }),
+            ],
+          );
+        },
+      );
+
+  Widget _overviewIntro() => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: AppTheme.cardShadow(radius: 18),
+    child: Row(
+      children: [
+        Icon(Icons.view_list_rounded, color: _color, size: 28),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Text(
+            _isGeneralManager
+                ? 'راجع مهام الفروع أو وجّه مهمة إلى المحاسب عند الحاجة.'
+                : 'تابع مهام الفروع أو المهام الموجهة إليك من المدير العام.',
+            style: const TextStyle(height: 1.45),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _administrativePreview(List<BranchRequestRead> requests) =>
+      _branchPreview(
+        BranchRequestFields.administrationScopeId,
+        'المهام الإدارية',
+        requests,
+        administrative: true,
+      );
+
+  Widget _branchPreview(
+    String id,
+    String name,
+    List<BranchRequestRead> requests, {
+    bool administrative = false,
+  }) => Container(
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.all(15),
+    decoration: AppTheme.cardShadow(radius: 18),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: _color.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                administrative
+                    ? Icons.manage_accounts_rounded
+                    : Icons.storefront_rounded,
+                color: _color,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            Text(
+              'آخر 3',
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 11),
+        if (requests.isEmpty)
+          const Text(
+            'لا توجد طلبات ظاهرة لهذا الفرع.',
+            style: TextStyle(color: AppTheme.textSecondary),
+          )
+        else
+          ...requests.map(
+            (request) => InkWell(
+              onTap: () => _openDetails(request),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      _statusIcon(request.status),
+                      size: 17,
+                      color: request.status.color,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        request.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      request.status.label,
+                      style: TextStyle(
+                        color: request.status.color,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        const Divider(height: 22),
+        TextButton.icon(
+          onPressed: () => setState(() {
+            _selectedBranchId = id;
+            _selectedBranchName = name;
+            _stage = _BoardStage.newRequests;
+          }),
+          icon: const Icon(Icons.arrow_back_rounded),
+          label: Text(
+            administrative ? 'عرض المهام الإدارية' : 'عرض طلبات الفرع',
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _requestBoard(List<BranchRequestRead> requests) {
+    final shown = requests.where(_matchesStage).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_selectedBranchId != null) ...[
+          TextButton.icon(
+            onPressed: () => setState(() {
+              _selectedBranchId = null;
+              _selectedBranchName = null;
+            }),
+            icon: const Icon(Icons.arrow_forward_rounded),
+            label: const Text('العودة إلى الفروع'),
+          ),
+          const SizedBox(height: 4),
+        ],
+        _summary(requests),
+        const SizedBox(height: 18),
+        _stageSwitcher(requests),
+        const SizedBox(height: 18),
+        SectionHeader(
+          title: _stageTitle,
+          icon: _stage == _BoardStage.closed
+              ? Icons.inventory_2_rounded
+              : Icons.checklist_rounded,
+          color: _color,
+        ),
+        const SizedBox(height: 10),
+        if (shown.isEmpty)
+          _emptyState(
+            icon: _stage == _BoardStage.closed
+                ? Icons.inventory_2_outlined
+                : Icons.task_alt_rounded,
+            title: _emptyTitle,
+            subtitle: _stage == _BoardStage.closed
+                ? 'الطلبات المكتملة أو المرفوضة تبقى محفوظة هنا للرجوع إليها.'
+                : 'ستظهر هنا الطلبات التي تقع في هذه المرحلة.',
+          )
+        else
+          ...shown.map(_checklistItem),
+      ],
+    );
+  }
+
+  Widget _summary(List<BranchRequestRead> requests) {
+    final newCount = requests
+        .where((request) => request.status == BranchRequestStatus.newRequest)
+        .length;
+    final progressCount = requests
+        .where((request) => request.status == BranchRequestStatus.inProgress)
+        .length;
+    final closedCount = requests
+        .where((request) => !request.status.isPending)
+        .length;
+    return Row(
+      children: [
+        _stat(
+          _BoardStage.newRequests,
+          'معلقة',
+          newCount,
+          Icons.pending_actions_rounded,
+          AppTheme.pendingColor,
+        ),
+        const SizedBox(width: 9),
+        _stat(
+          _BoardStage.inProgress,
+          'يعمل عليها',
+          progressCount,
+          Icons.handyman_rounded,
+          AppTheme.warningColor,
+        ),
+        const SizedBox(width: 9),
+        _stat(
+          _BoardStage.closed,
+          'مكتملة',
+          closedCount,
+          Icons.task_alt_rounded,
+          AppTheme.successColor,
+        ),
+      ],
+    );
+  }
+
+  Widget _stat(
+    _BoardStage stage,
+    String label,
+    int value,
+    IconData icon,
+    Color color,
+  ) => Expanded(
+    child: InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => setState(() => _stage = stage),
+      child: StatCard(
+        label: label,
+        value: '$value',
+        icon: icon,
+        color: color,
+        bgColor: color.withValues(alpha: .1),
+      ),
+    ),
+  );
+
+  Widget _stageSwitcher(List<BranchRequestRead> requests) => Container(
+    padding: const EdgeInsets.all(5),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppTheme.dividerColor),
+    ),
+    child: Row(
+      children: [
+        _stageTab(
+          _BoardStage.newRequests,
+          'معلقة',
+          requests
+              .where((item) => item.status == BranchRequestStatus.newRequest)
+              .length,
+        ),
+        _stageTab(
+          _BoardStage.inProgress,
+          'يعمل عليها',
+          requests
+              .where((item) => item.status == BranchRequestStatus.inProgress)
+              .length,
+        ),
+        _stageTab(
+          _BoardStage.closed,
+          'مكتملة',
+          requests.where((item) => !item.status.isPending).length,
+        ),
+      ],
+    ),
+  );
+
+  Widget _stageTab(_BoardStage stage, String label, int count) {
+    final selected = _stage == stage;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => setState(() => _stage = stage),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: BoxDecoration(
+            color: selected ? _color : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            '$label ($count)',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: selected ? Colors.white : AppTheme.textSecondary,
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _checklistItem(BranchRequestRead request) => Container(
+    key: Key('branch-request-${request.id}'),
+    margin: const EdgeInsets.only(bottom: 10),
+    decoration: AppTheme.cardShadow(radius: 17),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(17),
+      onTap: () => _openDetails(request),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: request.status.color.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                _statusIcon(request.status),
+                color: request.status.color,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          request.title,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                      _priority(request.priority),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    request.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        request.isAdministrativeTask
+                            ? Icons.manage_accounts_rounded
+                            : Icons.storefront_rounded,
+                        size: 15,
+                        color: _color,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          request.isAdministrativeTask
+                              ? 'مهمة إدارية'
+                              : request.branchName,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      Text(
+                        _dateFormat.format(request.createdAt ?? DateTime.now()),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _priority(BranchRequestPriority priority) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: priority.color.withValues(alpha: .11),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Text(
+      priority.label,
+      style: TextStyle(
+        color: priority.color,
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  );
+
+  bool _matchesStage(BranchRequestRead request) => switch (_stage) {
+    _BoardStage.newRequests => request.status == BranchRequestStatus.newRequest,
+    _BoardStage.inProgress => request.status == BranchRequestStatus.inProgress,
+    _BoardStage.closed => !request.status.isPending,
+  };
+
+  String get _stageTitle => switch (_stage) {
+    _BoardStage.newRequests => 'الطلبات المعلقة',
+    _BoardStage.inProgress => 'طلبات يعمل عليها الآن',
+    _BoardStage.closed => 'الأرشيف: المكتملة والمرفوضة',
+  };
+
+  String get _emptyTitle => switch (_stage) {
+    _BoardStage.newRequests => 'لا توجد طلبات معلقة',
+    _BoardStage.inProgress => 'لا توجد طلبات قيد التنفيذ',
+    _BoardStage.closed => 'لا توجد طلبات مغلقة',
+  };
 
   List<BranchRequestRead> _sorted(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
@@ -173,411 +666,66 @@ class _BranchRequestsDashboardState extends State<BranchRequestsDashboard> {
     BranchRequestPriority.normal => 2,
   };
 
-  Widget _summary(List<BranchRequestRead> requests) {
-    final pending = requests
-        .where((request) => request.status.isPending)
-        .length;
-    final inProgress = requests
-        .where((request) => request.status == BranchRequestStatus.inProgress)
-        .length;
-    final completed = requests
-        .where((request) => request.status == BranchRequestStatus.completed)
-        .length;
-    return Row(
-      children: [
-        Expanded(
-          child: StatCard(
-            label: 'معلقة',
-            value: '$pending',
-            icon: Icons.pending_actions_rounded,
-            color: AppTheme.warningColor,
-            bgColor: const Color(0xFFFFF3E0),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: StatCard(
-            label: 'قيد التنفيذ',
-            value: '$inProgress',
-            icon: Icons.handyman_rounded,
-            color: AppTheme.collectorColor,
-            bgColor: const Color(0xFFE0F2F1),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: StatCard(
-            label: 'مكتملة',
-            value: '$completed',
-            icon: Icons.check_circle_rounded,
-            color: AppTheme.successColor,
-            bgColor: const Color(0xFFE8F5E9),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _requestCard(BranchRequestRead request) => Card(
-    key: Key('branch-request-${request.id}'),
-    margin: const EdgeInsets.only(bottom: 12),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () => _showDetails(request),
-      child: Padding(
-        padding: const EdgeInsets.all(15),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    request.title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-                _chip(request.status.label, request.status.color),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              request.description,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 11),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                _chip(request.category.label, AppTheme.primaryOlive),
-                _chip(request.priority.label, request.priority.color),
-                if (_isGeneralManager)
-                  _chip(request.branchName, AppTheme.collectorColor),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'أنشئ في ${_formatDate(request.createdAt)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-
-  Widget _chip(String label, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: .12),
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
-    ),
-  );
-
-  Widget _errorState() => _emptyState(
-    icon: Icons.cloud_off_rounded,
-    title: 'تعذر تحميل طلبات الفروع',
-    subtitle: 'تحقق من الاتصال والصلاحيات ثم حاول مرة أخرى.',
-  );
+  IconData _statusIcon(BranchRequestStatus status) => switch (status) {
+    BranchRequestStatus.newRequest => Icons.radio_button_unchecked_rounded,
+    BranchRequestStatus.inProgress => Icons.play_circle_outline_rounded,
+    BranchRequestStatus.completed => Icons.check_circle_rounded,
+    BranchRequestStatus.rejected => Icons.cancel_rounded,
+  };
 
   Widget _emptyState({
     required IconData icon,
     required String title,
     required String subtitle,
-  }) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(28),
-      child: Column(
-        children: [
-          Icon(icon, size: 42, color: AppTheme.textSecondary),
-          const SizedBox(height: 12),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(subtitle, textAlign: TextAlign.center),
-        ],
-      ),
+  }) => Container(
+    padding: const EdgeInsets.all(30),
+    decoration: AppTheme.cardShadow(radius: 18),
+    child: Column(
+      children: [
+        Icon(icon, size: 42, color: AppTheme.textSecondary),
+        const SizedBox(height: 12),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppTheme.textSecondary),
+        ),
+      ],
     ),
   );
 
-  Future<void> _showCreateSheet() async {
-    final title = TextEditingController();
-    final description = TextEditingController();
-    var category = BranchRequestCategory.general;
-    var priority = BranchRequestPriority.normal;
-    var saving = false;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            MediaQuery.viewInsetsOf(context).bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'طلب فرع جديد',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 14),
-                Text('الفرع: ${widget.branchName}'),
-                const SizedBox(height: 12),
-                TextField(
-                  key: const Key('branch-request-title'),
-                  controller: title,
-                  maxLength: 120,
-                  decoration: const InputDecoration(labelText: 'العنوان'),
-                ),
-                TextField(
-                  key: const Key('branch-request-description'),
-                  controller: description,
-                  maxLines: 4,
-                  maxLength: 2000,
-                  decoration: const InputDecoration(labelText: 'الوصف'),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<BranchRequestCategory>(
-                  initialValue: category,
-                  decoration: const InputDecoration(labelText: 'فئة الطلب'),
-                  items: BranchRequestCategory.values
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: saving
-                      ? null
-                      : (value) => setSheetState(() => category = value!),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<BranchRequestPriority>(
-                  initialValue: priority,
-                  decoration: const InputDecoration(labelText: 'الأولوية'),
-                  items: BranchRequestPriority.values
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: saving
-                      ? null
-                      : (value) => setSheetState(() => priority = value!),
-                ),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  key: const Key('branch-request-submit'),
-                  onPressed: saving
-                      ? null
-                      : () async {
-                          setSheetState(() => saving = true);
-                          try {
-                            await _service.createRequest(
-                              branchId: widget.branchId!,
-                              branchName: widget.branchName,
-                              title: title.text,
-                              description: description.text,
-                              category: category,
-                              priority: priority,
-                            );
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                            }
-                            if (mounted) {
-                              _message('تم إرسال طلب الفرع للمدير العام.');
-                            }
-                          } catch (error) {
-                            if (context.mounted) {
-                              _message('تعذر إرسال الطلب: $error');
-                            }
-                            setSheetState(() => saving = false);
-                          }
-                        },
-                  icon: saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.send_rounded),
-                  label: const Text('إرسال الطلب'),
-                ),
-              ],
-            ),
-          ),
+  Future<void> _openForm() async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BranchRequestFormScreen(
+          role: widget.role,
+          branchId: widget.branchId,
+          branchName: widget.branchName,
+          service: _service,
         ),
       ),
     );
-    title.dispose();
-    description.dispose();
-  }
-
-  Future<void> _showDetails(BranchRequestRead request) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  request.title,
-                  style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _chip(request.status.label, request.status.color),
-                const SizedBox(height: 18),
-                _detailRow('الفرع', request.branchName),
-                _detailRow('الفئة', request.category.label),
-                _detailRow('الأولوية', request.priority.label),
-                _detailRow('أنشئ بواسطة', request.createdByName),
-                _detailRow('تاريخ الإنشاء', _formatDate(request.createdAt)),
-                const SizedBox(height: 8),
-                const Text(
-                  'الوصف',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                Text(request.description),
-                if (request.completionNote.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  const Text(
-                    'ملاحظة الإنجاز',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(request.completionNote),
-                ],
-                const SizedBox(height: 18),
-                const Text(
-                  'سجل الطلب',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                ...request.history.map(
-                  (entry) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      '• ${entry['message'] ?? entry['action'] ?? ''}',
-                    ),
-                  ),
-                ),
-                if (_isGeneralManager &&
-                    request.status == BranchRequestStatus.newRequest) ...[
-                  const SizedBox(height: 18),
-                  FilledButton.icon(
-                    onPressed: () => _startRequest(context, request),
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: const Text('بدء التنفيذ'),
-                  ),
-                ],
-                if (_isGeneralManager &&
-                    request.status == BranchRequestStatus.inProgress) ...[
-                  const SizedBox(height: 18),
-                  FilledButton.icon(
-                    onPressed: () => _completeRequest(context, request),
-                    icon: const Icon(Icons.task_alt_rounded),
-                    label: const Text('إكمال الطلب'),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _detailRow(String label, String value) => Padding(
-    padding: const EdgeInsets.only(bottom: 7),
-    child: Text('$label: ${value.isEmpty ? '-' : value}'),
-  );
-
-  Future<void> _startRequest(
-    BuildContext sheetContext,
-    BranchRequestRead request,
-  ) async {
-    try {
-      await _service.startRequest(request.id);
-      if (sheetContext.mounted) Navigator.pop(sheetContext);
-      if (mounted) _message('تم نقل الطلب إلى قيد التنفيذ.');
-    } catch (error) {
-      if (mounted) _message('تعذر تحديث الطلب: $error');
+    if (saved == true && mounted) {
+      _message('تم حفظ الطلب وإشعار الطرف المسؤول.');
     }
   }
 
-  Future<void> _completeRequest(
-    BuildContext sheetContext,
-    BranchRequestRead request,
-  ) async {
-    final note = TextEditingController();
-    final result = await showDialog<String>(
-      context: sheetContext,
-      builder: (context) => AlertDialog(
-        title: const Text('إكمال طلب الفرع'),
-        content: TextField(
-          controller: note,
-          maxLength: 1000,
-          maxLines: 3,
-          decoration: const InputDecoration(
-            labelText: 'ملاحظة الإنجاز (اختيارية)',
-          ),
+  Future<void> _openDetails(BranchRequestRead request) async {
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BranchRequestDetailsScreen(
+          role: widget.role,
+          branchId: widget.branchId,
+          request: request,
+          service: _service,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, note.text),
-            child: const Text('إكمال'),
-          ),
-        ],
       ),
     );
-    note.dispose();
-    if (result == null) return;
-    try {
-      await _service.completeRequest(
-        requestId: request.id,
-        completionNote: result,
-      );
-      if (sheetContext.mounted) Navigator.pop(sheetContext);
-      if (mounted) _message('تم إكمال الطلب وإشعار الفرع.');
-    } catch (error) {
-      if (mounted) _message('تعذر إكمال الطلب: $error');
-    }
   }
 
-  String _formatDate(DateTime? date) =>
-      date == null ? 'قيد الحفظ' : _dateFormat.format(date);
-
-  void _message(String value) => ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(value)));
+  void _message(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 }

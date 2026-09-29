@@ -8,6 +8,15 @@ void main() {
       expect(BranchRequestCategory.maintenance.label, 'صيانة');
       expect(BranchRequestPriority.urgent.label, 'عاجل');
       expect(BranchRequestStatus.inProgress.label, 'قيد التنفيذ');
+      expect(BranchRequestStatus.rejected.label, 'مرفوض');
+      expect(
+        BranchRequestDirection.administrationToBranch.label,
+        'مهمة من الإدارة للفرع',
+      );
+      expect(
+        BranchRequestDirection.administrationToAdministration.label,
+        'مهمة إدارية داخلية',
+      );
       expect(
         branchRequestStatusFromString('completed'),
         BranchRequestStatus.completed,
@@ -15,7 +24,7 @@ void main() {
     },
   );
 
-  test('branch request workflow only permits the General Manager sequence', () {
+  test('branch request workflow only permits the active task sequence', () {
     expect(
       BranchRequestWorkflow.canTransition(
         BranchRequestStatus.newRequest,

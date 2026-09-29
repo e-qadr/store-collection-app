@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:store_collection_app/models/branch_request_model.dart';
 import 'package:store_collection_app/utils/archive_workflow.dart';
 
 class NotificationService {
@@ -331,6 +332,8 @@ class NotificationService {
   }) async {
     final branchId = _string(requestData, 'branch_id');
     final title = _string(requestData, 'title');
+    final isAssignedTask =
+        _string(requestData, 'direction') == 'administration_to_branch';
     await _send(
       recipients: {
         _string(requestData, 'created_by'),
@@ -342,8 +345,75 @@ class NotificationService {
       branchId: branchId,
       referenceNumber: requestId,
       notificationType: 'branch_request_completed',
-      title: 'تم إكمال طلب الفرع',
-      message: 'تم إكمال طلبك: ${title.isEmpty ? 'بدون عنوان' : title}.',
+      title: isAssignedTask ? 'تم إنجاز مهمة الفرع' : 'تم إكمال طلب الفرع',
+      message: isAssignedTask
+          ? 'أكمل الفرع المهمة: ${title.isEmpty ? 'بدون عنوان' : title}.'
+          : 'تم إكمال طلبك: ${title.isEmpty ? 'بدون عنوان' : title}.',
+      extraData: {'branch_request_id': requestId},
+    );
+  }
+
+  Future<void> notifyBranchTaskAssigned({
+    required String requestId,
+    required Map<String, dynamic> requestData,
+  }) async {
+    final branchId = _string(requestData, 'branch_id');
+    final title = _string(requestData, 'title');
+    await _send(
+      recipients: await _branchManagers(branchId),
+      module: branchRequestsModule,
+      entityCollection: branchRequestsModule,
+      entityId: requestId,
+      branchId: branchId,
+      referenceNumber: requestId,
+      notificationType: 'branch_task_assigned',
+      title: 'مهمة جديدة للفرع',
+      message: 'وردت مهمة جديدة: ${title.isEmpty ? 'بدون عنوان' : title}.',
+      extraData: {'branch_request_id': requestId},
+    );
+  }
+
+  Future<void> notifyAdministrativeTaskAssigned({
+    required String requestId,
+    required Map<String, dynamic> requestData,
+  }) async {
+    final title = _string(requestData, 'title');
+    final recipientRole = _string(requestData, 'executor_role');
+    final sourceLabel = _string(requestData, 'created_by_role') == 'accountant'
+        ? 'المحاسب'
+        : 'المدير العام';
+    await _send(
+      recipients: await _usersByRole(recipientRole),
+      module: branchRequestsModule,
+      entityCollection: branchRequestsModule,
+      entityId: requestId,
+      branchId: BranchRequestFields.administrationScopeId,
+      referenceNumber: requestId,
+      notificationType: 'administrative_task_assigned',
+      title: 'مهمة جديدة من الإدارة',
+      message:
+          'وردت لك مهمة من $sourceLabel: ${title.isEmpty ? 'بدون عنوان' : title}.',
+      extraData: {'branch_request_id': requestId},
+    );
+  }
+
+  Future<void> notifyBranchRequestRejected({
+    required String requestId,
+    required Map<String, dynamic> requestData,
+  }) async {
+    final branchId = _string(requestData, 'branch_id');
+    final title = _string(requestData, 'title');
+    final creator = _string(requestData, 'created_by');
+    await _send(
+      recipients: {creator},
+      module: branchRequestsModule,
+      entityCollection: branchRequestsModule,
+      entityId: requestId,
+      branchId: branchId,
+      referenceNumber: requestId,
+      notificationType: 'branch_request_rejected',
+      title: 'تم رفض الطلب',
+      message: 'تم رفض الطلب: ${title.isEmpty ? 'بدون عنوان' : title}.',
       extraData: {'branch_request_id': requestId},
     );
   }

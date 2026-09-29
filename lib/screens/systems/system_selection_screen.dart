@@ -147,12 +147,13 @@ class SystemSelectionScreen extends StatelessWidget {
                       onTap: () => _openConsumableRequestsSystem(context),
                     ),
                     if (role == UserRole.manager ||
-                        role == UserRole.collector) ...[
+                        role == UserRole.collector ||
+                        role == UserRole.accountant) ...[
                       const SizedBox(height: 12),
                       ActionCard(
                         title: 'طلبات الفروع',
                         subtitle:
-                            'طلبات الاحتياج والنقص والصيانة والمهام الموجهة للمدير العام',
+                            'طلبات الفروع ومهام الإدارة والمتابعة حسب الحالة',
                         icon: Icons.assignment_rounded,
                         color: AppTheme.primaryOlive,
                         onTap: () => _openBranchRequestsSystem(context),
@@ -353,7 +354,11 @@ class SystemSelectionScreen extends StatelessWidget {
   }
 
   void _openBranchRequestsSystem(BuildContext context) {
-    if (role != UserRole.manager && role != UserRole.collector) return;
+    if (role != UserRole.manager &&
+        role != UserRole.collector &&
+        role != UserRole.accountant) {
+      return;
+    }
     final id = branchId?.trim() ?? '';
     if (role == UserRole.manager && id.isEmpty) return;
     Navigator.push(
@@ -362,7 +367,9 @@ class SystemSelectionScreen extends StatelessWidget {
         builder: (_) => BranchRequestsDashboard(
           role: role,
           branchId: id.isEmpty ? null : id,
-          branchName: role == UserRole.collector ? 'جميع الفروع' : branchName,
+          branchName: role == UserRole.collector || role == UserRole.accountant
+              ? 'جميع الفروع'
+              : branchName,
         ),
       ),
     );

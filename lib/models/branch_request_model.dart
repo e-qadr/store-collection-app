@@ -34,28 +34,55 @@ extension BranchRequestPriorityX on BranchRequestPriority {
   };
 }
 
-enum BranchRequestStatus { newRequest, inProgress, completed }
+enum BranchRequestStatus { newRequest, inProgress, completed, rejected }
 
 extension BranchRequestStatusX on BranchRequestStatus {
   String get value => switch (this) {
     BranchRequestStatus.newRequest => 'new',
     BranchRequestStatus.inProgress => 'in_progress',
     BranchRequestStatus.completed => 'completed',
+    BranchRequestStatus.rejected => 'rejected',
   };
 
   String get label => switch (this) {
     BranchRequestStatus.newRequest => 'جديد',
     BranchRequestStatus.inProgress => 'قيد التنفيذ',
     BranchRequestStatus.completed => 'مكتمل',
+    BranchRequestStatus.rejected => 'مرفوض',
   };
 
   Color get color => switch (this) {
     BranchRequestStatus.newRequest => AppTheme.pendingColor,
     BranchRequestStatus.inProgress => AppTheme.warningColor,
     BranchRequestStatus.completed => AppTheme.successColor,
+    BranchRequestStatus.rejected => AppTheme.errorColor,
   };
 
-  bool get isPending => this != BranchRequestStatus.completed;
+  bool get isPending =>
+      this != BranchRequestStatus.completed &&
+      this != BranchRequestStatus.rejected;
+}
+
+enum BranchRequestDirection {
+  branchToAdministration,
+  administrationToBranch,
+  administrationToAdministration,
+}
+
+extension BranchRequestDirectionX on BranchRequestDirection {
+  String get value => switch (this) {
+    BranchRequestDirection.branchToAdministration => 'branch_to_administration',
+    BranchRequestDirection.administrationToBranch => 'administration_to_branch',
+    BranchRequestDirection.administrationToAdministration =>
+      'administration_to_administration',
+  };
+
+  String get label => switch (this) {
+    BranchRequestDirection.branchToAdministration => 'طلب من الفرع للإدارة',
+    BranchRequestDirection.administrationToBranch => 'مهمة من الإدارة للفرع',
+    BranchRequestDirection.administrationToAdministration =>
+      'مهمة إدارية داخلية',
+  };
 }
 
 BranchRequestCategory branchRequestCategoryFromString(String? value) =>
@@ -76,10 +103,19 @@ BranchRequestStatus branchRequestStatusFromString(String? value) =>
       orElse: () => BranchRequestStatus.newRequest,
     );
 
+BranchRequestDirection branchRequestDirectionFromString(String? value) =>
+    BranchRequestDirection.values.firstWhere(
+      (direction) => direction.value == value,
+      // Existing requests were all created by branches for the General Manager.
+      orElse: () => BranchRequestDirection.branchToAdministration,
+    );
+
 class BranchRequestFields {
   BranchRequestFields._();
 
   static const collection = 'branch_requests';
+  static const administrationScopeId = 'administration';
+  static const administrationScopeName = 'الإدارة';
   static const id = 'id';
   static const branchId = 'branch_id';
   static const branchName = 'branch_name';
@@ -88,8 +124,11 @@ class BranchRequestFields {
   static const category = 'category';
   static const priority = 'priority';
   static const status = 'status';
+  static const direction = 'direction';
+  static const executorRole = 'executor_role';
   static const createdBy = 'created_by';
   static const createdByName = 'created_by_name';
+  static const createdByRole = 'created_by_role';
   static const createdAt = 'created_at';
   static const startedBy = 'started_by';
   static const startedByName = 'started_by_name';
@@ -98,6 +137,11 @@ class BranchRequestFields {
   static const completedByName = 'completed_by_name';
   static const completedAt = 'completed_at';
   static const completionNote = 'completion_note';
+  static const rejectedBy = 'rejected_by';
+  static const rejectedByName = 'rejected_by_name';
+  static const rejectedByRole = 'rejected_by_role';
+  static const rejectedAt = 'rejected_at';
+  static const rejectionReason = 'rejection_reason';
   static const lastUpdated = 'last_updated';
   static const history = 'history';
 }
@@ -113,16 +157,30 @@ class BranchRequestRead {
   String get title => _text(BranchRequestFields.title);
   String get description => _text(BranchRequestFields.description);
   String get createdByName => _text(BranchRequestFields.createdByName);
+  String get createdByRole => _text(BranchRequestFields.createdByRole);
   String get completionNote => _text(BranchRequestFields.completionNote);
+  String get rejectionReason => _text(BranchRequestFields.rejectionReason);
   BranchRequestCategory get category =>
       branchRequestCategoryFromString(_text(BranchRequestFields.category));
   BranchRequestPriority get priority =>
       branchRequestPriorityFromString(_text(BranchRequestFields.priority));
   BranchRequestStatus get status =>
       branchRequestStatusFromString(_text(BranchRequestFields.status));
+  BranchRequestDirection get direction =>
+      branchRequestDirectionFromString(_text(BranchRequestFields.direction));
+  String get executorRole => _text(BranchRequestFields.executorRole);
   DateTime? get createdAt => _date(data[BranchRequestFields.createdAt]);
   DateTime? get startedAt => _date(data[BranchRequestFields.startedAt]);
   DateTime? get completedAt => _date(data[BranchRequestFields.completedAt]);
+  DateTime? get rejectedAt => _date(data[BranchRequestFields.rejectedAt]);
+
+  bool get isBranchTask =>
+      direction == BranchRequestDirection.administrationToBranch;
+
+  bool get isAdministrativeTask =>
+      direction == BranchRequestDirection.administrationToAdministration;
+
+  bool get isOpen => status.isPending;
 
   List<Map<String, dynamic>> get history {
     final raw = data[BranchRequestFields.history];

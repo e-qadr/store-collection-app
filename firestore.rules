@@ -2379,9 +2379,8 @@ service cloud.firestore {
     }
 
     // Branch requests are intentionally separate from inventory, purchases,
-    // expenses and transfers. A branch manager can create and read only its
-    // own requests; the collector is the General Manager for this workflow
-    // and alone performs the immutable new → in-progress → completed path.
+    // expenses and transfers. They can travel from a branch to the General
+    // Manager, or from the General Manager/accountant to one assigned branch.
     function branchRequestOwnBranch(data) {
       return role() == 'manager' &&
         data.get('branch_id', '') == profile().get('branchId', '');
@@ -2391,21 +2390,55 @@ service cloud.firestore {
       return history is list && history.size() > 0;
     }
 
+    function branchRequestDirection(data) {
+      return data.get('direction', 'branch_to_administration');
+    }
+
+    function branchRequestExecutorRole(data) {
+      return data.get('executor_role',
+        branchRequestDirection(data) == 'administration_to_branch'
+          ? 'manager'
+          : 'collector');
+    }
+
+    function branchRequestExecutor() {
+      return (branchRequestExecutorRole(resource.data) == 'collector' &&
+          role() == 'collector') ||
+        (branchRequestExecutorRole(resource.data) == 'accountant' &&
+          role() == 'accountant') ||
+        (branchRequestExecutorRole(resource.data) == 'manager' &&
+          branchRequestOwnBranch(resource.data));
+    }
+
+    function branchRequestCreator(data) {
+      return request.auth.uid == data.get('created_by', '') &&
+        role() == data.get('created_by_role', 'manager');
+    }
+
+    function branchRequestTargetIsOperational(data) {
+      return exists(/databases/$(database)/documents/branches/$(data.branch_id)) &&
+        get(/databases/$(database)/documents/branches/$(data.branch_id)).data.get('branch_type', '') != 'main' &&
+        get(/databases/$(database)/documents/branches/$(data.branch_id)).data.get('active', true) == true &&
+        get(/databases/$(database)/documents/branches/$(data.branch_id)).data.get('isActive', true) == true &&
+        get(/databases/$(database)/documents/branches/$(data.branch_id)).data.get('is_active', true) == true;
+    }
+
     function validBranchRequestCreate(requestId, data) {
-      return role() == 'manager' &&
+      return (role() == 'manager' || role() == 'collector' || role() == 'accountant') &&
         data.keys().hasOnly([
           'id', 'branch_id', 'branch_name', 'title', 'description',
-          'category', 'priority', 'status', 'created_by', 'created_by_name',
+          'category', 'priority', 'status', 'direction', 'executor_role',
+          'created_by', 'created_by_name', 'created_by_role',
           'created_at', 'last_updated', 'history'
         ]) &&
         data.keys().hasAll([
           'id', 'branch_id', 'branch_name', 'title', 'description',
-          'category', 'priority', 'status', 'created_by', 'created_by_name',
+          'category', 'priority', 'status', 'direction', 'executor_role',
+          'created_by', 'created_by_name', 'created_by_role',
           'created_at', 'last_updated', 'history'
         ]) &&
         data.id == requestId &&
         data.branch_id is string && data.branch_id.size() > 0 &&
-        data.branch_id == profile().get('branchId', '') &&
         data.branch_name is string && data.branch_name.size() > 0 &&
         data.title is string && data.title.size() > 0 && data.title.size() <= 120 &&
         data.description is string && data.description.size() > 0 &&
@@ -2418,6 +2451,26 @@ service cloud.firestore {
         data.status == 'new' &&
         data.created_by == request.auth.uid &&
         data.created_by_name is string && data.created_by_name.size() > 0 &&
+        data.created_by_role == role() &&
+        ((role() == 'manager' &&
+          data.branch_id == profile().get('branchId', '') &&
+          data.direction == 'branch_to_administration' &&
+          data.executor_role == 'collector' &&
+          branchRequestTargetIsOperational(data)) ||
+          ((role() == 'collector' || role() == 'accountant') &&
+            data.direction == 'administration_to_branch' &&
+            data.executor_role == 'manager' &&
+            branchRequestTargetIsOperational(data)) ||
+          (role() == 'collector' &&
+            data.direction == 'administration_to_administration' &&
+            data.executor_role == 'accountant' &&
+            data.branch_id == 'administration' &&
+            data.branch_name == 'الإدارة') ||
+          (role() == 'accountant' &&
+            data.direction == 'administration_to_administration' &&
+            data.executor_role == 'collector' &&
+            data.branch_id == 'administration' &&
+            data.branch_name == 'الإدارة')) &&
         data.created_at == request.time && data.last_updated == request.time &&
         validBranchRequestHistory(data.history) && data.history.size() == 1;
     }
@@ -2430,23 +2483,24 @@ service cloud.firestore {
     }
 
     function branchRequestStartAllowed() {
-      return role() == 'collector' &&
+      return branchRequestExecutor() &&
         resource.data.status == 'new' &&
         request.resource.data.status == 'in_progress' &&
         request.resource.data.started_by == request.auth.uid &&
         request.resource.data.started_by_name is string &&
           request.resource.data.started_by_name.size() > 0 &&
+        request.resource.data.started_by_role == role() &&
         request.resource.data.started_at == request.time &&
         request.resource.data.last_updated == request.time &&
         branchRequestHistoryAdvanced() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'started_by', 'started_by_name', 'started_at',
+          'status', 'started_by', 'started_by_name', 'started_by_role', 'started_at',
           'last_updated', 'history'
         ]);
     }
 
     function branchRequestCompletionAllowed() {
-      return role() == 'collector' &&
+      return branchRequestExecutor() &&
         resource.data.status == 'in_progress' &&
         request.resource.data.status == 'completed' &&
         request.resource.data.completed_by == request.auth.uid &&
@@ -2463,13 +2517,63 @@ service cloud.firestore {
         ]);
     }
 
+    function branchRequestRejectionAllowed() {
+      return branchRequestExecutor() &&
+        (resource.data.status == 'new' || resource.data.status == 'in_progress') &&
+        request.resource.data.status == 'rejected' &&
+        request.resource.data.rejected_by == request.auth.uid &&
+        request.resource.data.rejected_by_name is string &&
+          request.resource.data.rejected_by_name.size() > 0 &&
+        request.resource.data.rejected_by_role == role() &&
+        request.resource.data.rejected_at == request.time &&
+        request.resource.data.rejection_reason is string &&
+          request.resource.data.rejection_reason.size() > 0 &&
+          request.resource.data.rejection_reason.size() <= 1000 &&
+        request.resource.data.last_updated == request.time &&
+        branchRequestHistoryAdvanced() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'rejected_by', 'rejected_by_name', 'rejected_by_role',
+          'rejected_at', 'rejection_reason', 'last_updated', 'history'
+        ]);
+    }
+
+    function branchRequestCreatorEditAllowed() {
+      return request.auth.uid == resource.data.created_by &&
+        role() == resource.data.get('created_by_role', 'manager') &&
+        resource.data.status == 'new' && request.resource.data.status == 'new' &&
+        request.resource.data.title is string &&
+          request.resource.data.title.size() > 0 &&
+          request.resource.data.title.size() <= 120 &&
+        request.resource.data.description is string &&
+          request.resource.data.description.size() > 0 &&
+          request.resource.data.description.size() <= 2000 &&
+        (request.resource.data.category == 'shortage' ||
+          request.resource.data.category == 'need' ||
+          request.resource.data.category == 'maintenance' ||
+          request.resource.data.category == 'general' ||
+          request.resource.data.category == 'other') &&
+        (request.resource.data.priority == 'normal' ||
+          request.resource.data.priority == 'important' ||
+          request.resource.data.priority == 'urgent') &&
+        request.resource.data.last_updated == request.time &&
+        request.resource.data.history is list &&
+        request.resource.data.history.size() == resource.data.history.size() + 1 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'description', 'category', 'priority', 'last_updated', 'history'
+        ]);
+    }
+
     match /branch_requests/{requestId} {
       allow get, list: if operationalUser() &&
-        (role() == 'collector' || branchRequestOwnBranch(resource.data));
+        (role() == 'collector' || branchRequestOwnBranch(resource.data) ||
+          (role() == 'accountant' &&
+            (resource.data.get('created_by', '') == request.auth.uid ||
+              branchRequestExecutorRole(resource.data) == 'accountant')));
       allow create: if operationalUser() &&
         validBranchRequestCreate(requestId, request.resource.data);
       allow update: if operationalUser() &&
-        (branchRequestStartAllowed() || branchRequestCompletionAllowed());
+        (branchRequestCreatorEditAllowed() || branchRequestRejectionAllowed() ||
+          branchRequestStartAllowed() || branchRequestCompletionAllowed());
       allow delete: if false;
     }
 
