@@ -226,47 +226,70 @@ class _CashExpensesDashboardState extends State<CashExpensesDashboard> {
     return Row(
       children: [
         Expanded(
-          child: StatCard(
-            label: 'تحتاج إجراء',
-            value: '$needsAttention',
-            icon: Icons.priority_high_rounded,
-            color: needsAttention == 0
-                ? AppTheme.successColor
-                : AppTheme.warningColor,
-            bgColor: needsAttention == 0
-                ? const Color(0xFFE8F5E9)
-                : const Color(0xFFFFF3E0),
+          child: _statFilterCard(
+            filter: _ExpenseListFilter.attention,
+            child: StatCard(
+              label: 'تحتاج إجراء',
+              value: '$needsAttention',
+              icon: Icons.priority_high_rounded,
+              color: needsAttention == 0
+                  ? AppTheme.successColor
+                  : AppTheme.warningColor,
+              bgColor: needsAttention == 0
+                  ? const Color(0xFFE8F5E9)
+                  : const Color(0xFFFFF3E0),
+            ),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: StatCard(
-            label: 'قيد المتابعة',
-            value: widget.role == UserRole.accountant
-                ? '$pendingAccounting'
-                : '$pendingGeneralManager',
-            icon: widget.role == UserRole.accountant
-                ? Icons.calculate_rounded
-                : Icons.admin_panel_settings_rounded,
-            color: widget.role == UserRole.accountant
-                ? AppTheme.accountantColor
-                : AppTheme.collectorColor,
-            bgColor: widget.role == UserRole.accountant
-                ? const Color(0xFFEDE7F6)
-                : const Color(0xFFE0F2F1),
+          child: _statFilterCard(
+            filter: _ExpenseListFilter.attention,
+            child: StatCard(
+              label: 'قيد المتابعة',
+              value: widget.role == UserRole.accountant
+                  ? '$pendingAccounting'
+                  : '$pendingGeneralManager',
+              icon: widget.role == UserRole.accountant
+                  ? Icons.calculate_rounded
+                  : Icons.admin_panel_settings_rounded,
+              color: widget.role == UserRole.accountant
+                  ? AppTheme.accountantColor
+                  : AppTheme.collectorColor,
+              bgColor: widget.role == UserRole.accountant
+                  ? const Color(0xFFEDE7F6)
+                  : const Color(0xFFE0F2F1),
+            ),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: StatCard(
-            label: 'معتمد',
-            value: '$approved',
-            icon: Icons.verified_rounded,
-            color: AppTheme.successColor,
-            bgColor: const Color(0xFFE8F5E9),
+          child: _statFilterCard(
+            filter: _ExpenseListFilter.completed,
+            child: StatCard(
+              label: 'معتمد',
+              value: '$approved',
+              icon: Icons.verified_rounded,
+              color: AppTheme.successColor,
+              bgColor: const Color(0xFFE8F5E9),
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _statFilterCard({
+    required _ExpenseListFilter filter,
+    required Widget child,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => setState(() => _selectedFilter = filter),
+        child: child,
+      ),
     );
   }
 

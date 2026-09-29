@@ -26,8 +26,9 @@ class _NewCashExpenseRequestScreenState
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _amountController = TextEditingController();
-  final _currencyController = TextEditingController(text: 'YER');
   final _notesController = TextEditingController();
+  String _currency = 'YER';
+  DateTime _expenseDate = DateTime.now();
 
   bool _isSaving = false;
   PlatformFile? _invoiceFile;
@@ -37,7 +38,6 @@ class _NewCashExpenseRequestScreenState
     _titleController.dispose();
     _descriptionController.dispose();
     _amountController.dispose();
-    _currencyController.dispose();
     _notesController.dispose();
     super.dispose();
   }
@@ -57,7 +57,8 @@ class _NewCashExpenseRequestScreenState
         title: _titleController.text,
         description: _descriptionController.text,
         amount: amount,
-        currency: _currencyController.text,
+        currency: _currency,
+        expenseDate: _expenseDate,
         notes: _notesController.text,
         invoiceFileBytes: _invoiceFile?.bytes,
         invoiceFileName: _invoiceFile?.name,
@@ -131,6 +132,17 @@ class _NewCashExpenseRequestScreenState
                       ),
                     ),
                     const SizedBox(height: 14),
+                    _fieldLabel('تاريخ السند'),
+                    const SizedBox(height: 7),
+                    OutlinedButton.icon(
+                      onPressed: _isSaving ? null : _pickExpenseDate,
+                      icon: const Icon(Icons.calendar_today_rounded),
+                      label: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(_formatDate(_expenseDate)),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
                     _fieldLabel('تفاصيل المصروف'),
                     const SizedBox(height: 7),
                     TextField(
@@ -177,13 +189,32 @@ class _NewCashExpenseRequestScreenState
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: TextField(
-                            controller: _currencyController,
-                            textCapitalization: TextCapitalization.characters,
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _currency,
+                            isExpanded: true,
                             decoration: const InputDecoration(
-                              hintText: 'العملة',
+                              labelText: 'العملة',
                               prefixIcon: Icon(Icons.toll_rounded),
                             ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'YER',
+                                child: Text('يمني (YER)'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'USD',
+                                child: Text('دولار (USD)'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'SAR',
+                                child: Text('ريال سعودي (SAR)'),
+                              ),
+                            ],
+                            onChanged: _isSaving
+                                ? null
+                                : (value) => setState(
+                                    () => _currency = value ?? 'YER',
+                                  ),
                           ),
                         ),
                       ],
@@ -423,7 +454,7 @@ class _NewCashExpenseRequestScreenState
                     const SizedBox(height: 2),
                     Text(
                       file == null
-                          ? 'اختياري - إذا لم يوجد سيظهر السند بدون ملف مرفق'
+                          ? 'اختياري الآن؛ بعد اعتماد المدير العام ستؤكد إرفاقه أو عدم وجوده.'
                           : file.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -478,6 +509,19 @@ class _NewCashExpenseRequestScreenState
     }
     setState(() => _invoiceFile = file);
   }
+
+  Future<void> _pickExpenseDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _expenseDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (selected != null) setState(() => _expenseDate = selected);
+  }
+
+  String _formatDate(DateTime value) =>
+      '${value.year}/${value.month.toString().padLeft(2, '0')}/${value.day.toString().padLeft(2, '0')}';
 
   double _parseNumber(String value) {
     return double.tryParse(value.trim().replaceAll(',', '')) ?? 0;

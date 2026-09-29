@@ -83,6 +83,7 @@ class CashExpenseFields {
   static const accountantNotes = 'accountant_notes';
   static const createdBy = 'created_by';
   static const createdAt = 'created_at';
+  static const expenseDate = 'expense_date';
   static const reviewedBy = 'reviewed_by';
   static const reviewedAt = 'reviewed_at';
   static const invoiceApprovedBy = 'invoice_approved_by';
@@ -146,6 +147,8 @@ class CashExpenseRead {
       cashExpenseStatusFromString(data[CashExpenseFields.status]?.toString());
 
   DateTime? get createdAt => _date(data[CashExpenseFields.createdAt]);
+
+  DateTime? get expenseDate => _date(data[CashExpenseFields.expenseDate]);
 
   DateTime? get reviewedAt => _date(data[CashExpenseFields.reviewedAt]);
 

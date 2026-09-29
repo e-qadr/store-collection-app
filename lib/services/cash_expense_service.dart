@@ -43,6 +43,7 @@ class CashExpenseService {
     required String description,
     required double amount,
     required String currency,
+    DateTime? expenseDate,
     String? notes,
     Uint8List? invoiceFileBytes,
     String? invoiceFileName,
@@ -116,6 +117,9 @@ class CashExpenseService {
           CashExpenseFields.invoiceAttachment: initialInvoiceAttachment,
         CashExpenseFields.createdBy: actor['uid'],
         CashExpenseFields.createdAt: FieldValue.serverTimestamp(),
+        CashExpenseFields.expenseDate: Timestamp.fromDate(
+          expenseDate ?? DateTime.now(),
+        ),
         CashExpenseFields.lastUpdated: FieldValue.serverTimestamp(),
         CashExpenseFields.history: [
           _historyEntry(
@@ -444,8 +448,10 @@ class CashExpenseService {
     required String reason,
     required String title,
     required String description,
-    required double amount,
+    required double requestedAmount,
+    required double approvedAmount,
     required String currency,
+    DateTime? expenseDate,
     String? branchId,
     String? notes,
     Uint8List? invoiceFileBytes,
@@ -457,7 +463,9 @@ class CashExpenseService {
     if (cleanReason.isEmpty) throw Exception('سبب طلب التعديل مطلوب.');
     final cleanTitle = title.trim();
     if (cleanTitle.isEmpty) throw Exception('عنوان المصروف مطلوب.');
-    if (amount <= 0) throw Exception('مبلغ المصروف يجب أن يكون أكبر من صفر.');
+    if (requestedAmount <= 0 || approvedAmount <= 0) {
+      throw Exception('مبالغ المصروف يجب أن تكون أكبر من صفر.');
+    }
 
     final actor = await _getCurrentActor();
     final docRef = _collection.doc(requestId);
@@ -475,7 +483,10 @@ class CashExpenseService {
       throw Exception('يوجد طلب تعديل بانتظار الموافقات حالياً.');
     }
     final requiredParties = _requiredEditPartiesFor(initialData);
-    if (!requiredParties.contains(party)) {
+    final accountantCorrection =
+        party == 'accountant' &&
+        currentStatus == CashExpenseStatus.pendingAccountingApproval;
+    if (!requiredParties.contains(party) && !accountantCorrection) {
       throw Exception('لا يمكنك طلب تعديل قبل أن تشارك في اعتماد هذا السند.');
     }
 
@@ -488,8 +499,10 @@ class CashExpenseService {
     final proposal = _editProposal(
       title: cleanTitle,
       description: description,
-      amount: amount,
+      requestedAmount: requestedAmount,
+      approvedAmount: approvedAmount,
       currency: currency,
+      expenseDate: expenseDate,
       notes: notes,
       invoiceAttachment: attachment,
       removeInvoiceAttachment: removeInvoiceAttachment,
@@ -531,7 +544,11 @@ class CashExpenseService {
         throw Exception('يوجد طلب تعديل بانتظار الموافقات حالياً.');
       }
       final freshRequiredParties = _requiredEditPartiesFor(data);
-      if (!freshRequiredParties.contains(freshParty) ||
+      final freshAccountantCorrection =
+          freshParty == 'accountant' &&
+          freshStatus == CashExpenseStatus.pendingAccountingApproval;
+      if ((!freshRequiredParties.contains(freshParty) &&
+              !freshAccountantCorrection) ||
           freshRequiredParties.length == 1) {
         throw Exception('تغيرت حالة السند؛ أعد فتحه ثم حاول مرة أخرى.');
       }
@@ -549,9 +566,10 @@ class CashExpenseService {
           'required_parties': freshRequiredParties,
           'proposal': proposal,
         },
-        CashExpenseFields.editApprovals: {
-          freshParty: _editApprovalEntry(actor: actor, approved: true),
-        },
+        CashExpenseFields.editApprovals:
+            freshRequiredParties.contains(freshParty)
+            ? {freshParty: _editApprovalEntry(actor: actor, approved: true)}
+            : <String, dynamic>{},
         CashExpenseFields.lastUpdated: FieldValue.serverTimestamp(),
         CashExpenseFields.history: FieldValue.arrayUnion([
           _historyEntry(
@@ -762,17 +780,20 @@ class CashExpenseService {
   Map<String, dynamic> _editProposal({
     required String title,
     required String description,
-    required double amount,
+    required double requestedAmount,
+    required double approvedAmount,
     required String currency,
+    DateTime? expenseDate,
     String? notes,
     Map<String, dynamic>? invoiceAttachment,
     required bool removeInvoiceAttachment,
   }) => {
     'title': title.trim(),
     'description': description.trim(),
-    'requested_amount': amount,
-    'approved_amount': amount,
+    'requested_amount': requestedAmount,
+    'approved_amount': approvedAmount,
     'currency': currency.trim().isEmpty ? 'YER' : currency.trim(),
+    'expense_date': Timestamp.fromDate(expenseDate ?? DateTime.now()),
     'manager_notes': notes?.trim() ?? '',
     'invoice_attachment_action': removeInvoiceAttachment
         ? 'remove'
@@ -787,10 +808,13 @@ class CashExpenseService {
     final proposal = request is Map ? request['proposal'] : null;
     if (proposal is! Map) throw Exception('بيانات التعديل غير صالحة.');
     final value = Map<String, dynamic>.from(proposal);
-    final amount = value['requested_amount'];
+    final requestedAmount = value['requested_amount'];
+    final approvedAmount = value['approved_amount'];
     if ((value['title']?.toString() ?? '').trim().isEmpty ||
-        amount is! num ||
-        amount <= 0) {
+        requestedAmount is! num ||
+        requestedAmount <= 0 ||
+        approvedAmount is! num ||
+        approvedAmount <= 0) {
       throw Exception('بيانات التعديل غير صالحة.');
     }
     return value;
@@ -806,6 +830,7 @@ class CashExpenseService {
       CashExpenseFields.approvedAmount: (proposal['approved_amount'] as num)
           .toDouble(),
       CashExpenseFields.currency: proposal['currency']?.toString() ?? 'YER',
+      CashExpenseFields.expenseDate: proposal['expense_date'],
       CashExpenseFields.managerNotes:
           proposal['manager_notes']?.toString() ?? '',
       if (action == 'replace')
@@ -819,8 +844,10 @@ class CashExpenseService {
 
   Map<String, dynamic> _proposalAuditChanges(Map<String, dynamic> proposal) => {
     'title': proposal['title'],
-    'amount': proposal['requested_amount'],
+    'requested_amount': proposal['requested_amount'],
+    'approved_amount': proposal['approved_amount'],
     'currency': proposal['currency'],
+    'expense_date': proposal['expense_date'],
     'invoice_attachment_action': proposal['invoice_attachment_action'],
   };
 

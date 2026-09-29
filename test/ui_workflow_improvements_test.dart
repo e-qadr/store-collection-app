@@ -106,8 +106,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('EXP-1'), findsOneWidget);
-    expect(find.text('تعذر تحميل سجلات الفرع.'), findsNothing);
+    expect(find.textContaining('EXP-1'), findsOneWidget);
+    expect(find.text('تعذر تحميل سندات هذا الفرع.'), findsNothing);
   });
 
   testWidgets(
@@ -117,8 +117,8 @@ void main() {
         _groupedOverview((kind, branchId) => Stream.value([])),
       );
       await tester.pumpAndSettle();
-      expect(find.text('لا توجد سجلات لهذا الفرع بعد.'), findsOneWidget);
-      expect(find.text('تعذر تحميل سجلات الفرع.'), findsNothing);
+      expect(find.text('لا توجد سندات صرف لهذا الفرع بعد.'), findsOneWidget);
+      expect(find.text('تعذر تحميل سندات هذا الفرع.'), findsNothing);
     },
   );
 
@@ -133,8 +133,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('تعذر تحميل سجلات الفرع.'), findsOneWidget);
-    expect(find.text('لا توجد سجلات لهذا الفرع بعد.'), findsNothing);
+    expect(find.text('تعذر تحميل سندات هذا الفرع.'), findsOneWidget);
+    expect(find.text('لا توجد سندات صرف لهذا الفرع بعد.'), findsNothing);
   });
 
   test('new consumption item stores identity and snapshots', () {

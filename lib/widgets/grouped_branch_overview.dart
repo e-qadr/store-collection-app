@@ -10,6 +10,7 @@ import 'package:store_collection_app/utils/branch_scope.dart';
 enum GroupedBranchOverviewKind { expenses, consumption }
 
 const groupedBranchPreviewLimit = 5;
+const expenseGroupedBranchPreviewLimit = 3;
 
 bool usesGroupedBranchOverview(UserRole role, String? branchId) {
   return (role == UserRole.collector || role == UserRole.accountant) &&
@@ -92,7 +93,11 @@ class GroupedBranchOverview extends StatelessWidget {
         .collection(collection)
         .where(branchField, isEqualTo: branchId)
         .orderBy(createdField, descending: true)
-        .limit(groupedBranchPreviewLimit)
+        .limit(
+          isExpense
+              ? expenseGroupedBranchPreviewLimit
+              : groupedBranchPreviewLimit,
+        )
         .snapshots()
         .map(
           (snapshot) => snapshot.docs
@@ -173,6 +178,12 @@ class _BranchSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isExpense = kind == GroupedBranchOverviewKind.expenses;
+    if (isExpense) return _expenseSection();
+    return _standardSection();
+  }
+
+  Widget _standardSection() {
+    final isExpense = kind == GroupedBranchOverviewKind.expenses;
     return Card(
       key: Key('grouped-${kind.name}-branch-$branchId'),
       child: Padding(
@@ -248,6 +259,201 @@ class _BranchSection extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _expenseSection() {
+    return Container(
+      key: Key('grouped-${kind.name}-branch-$branchId'),
+      decoration: AppTheme.cardShadow(radius: 18),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: AppTheme.collectorColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.storefront_rounded,
+                    color: AppTheme.collectorColor,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        branchName,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'أحدث سندات الصرف',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceColor,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'آخر 3',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Container(height: 1, color: AppTheme.dividerColor),
+            const SizedBox(height: 6),
+            StreamBuilder<List<GroupedBranchOverviewRecord>>(
+              stream: recordsStream,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: Text('تعذر تحميل سندات هذا الفرع.'),
+                  );
+                }
+                final records = snapshot.data ?? const [];
+                if (records.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 18),
+                    child: Center(
+                      child: Text(
+                        'لا توجد سندات صرف لهذا الفرع بعد.',
+                        style: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                    ),
+                  );
+                }
+                return Column(
+                  children: records
+                      .map(
+                        (record) => _expensePreviewRow(
+                          CashExpenseRead(id: record.id, data: record.data),
+                        ),
+                      )
+                      .toList(growable: false),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 44,
+              child: OutlinedButton.icon(
+                key: Key('grouped-${kind.name}-view-all-$branchId'),
+                onPressed: onViewAll,
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: const Text('عرض جميع سندات الفرع'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.collectorColor,
+                  side: BorderSide(
+                    color: AppTheme.collectorColor.withValues(alpha: 0.32),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _expensePreviewRow(CashExpenseRead request) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: request.status.color.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              color: request.status.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  request.title.isEmpty ? 'سند صرف نقدي' : request.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${request.requestNumber} • ${_date(request.createdAt)}',
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              request.status.label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                color: request.status.color,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

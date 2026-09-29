@@ -2585,8 +2585,10 @@ service cloud.firestore {
         proposal.title.size() > 0 && proposal.get('description', '') is string &&
         proposal.get('requested_amount', 0) is number &&
         proposal.requested_amount > 0 &&
-        proposal.get('approved_amount', 0) == proposal.requested_amount &&
+        proposal.get('approved_amount', 0) is number &&
+        proposal.approved_amount > 0 &&
         proposal.get('currency', '') is string && proposal.currency.size() > 0 &&
+        proposal.get('expense_date', null) is timestamp &&
         proposal.get('manager_notes', '') is string &&
         ['keep', 'replace', 'remove'].hasAny([action]) &&
         (action != 'replace' || proposal.get('invoice_attachment', null) is map);
@@ -2607,7 +2609,10 @@ service cloud.firestore {
           (role() == 'accountant' && parties.hasAny(['accountant']) &&
             approvals.keys().hasAll(['accountant']) &&
             approvals.keys().hasOnly(['accountant']) &&
-            approvals.get('accountant', {}).get('actor_id', '') == request.auth.uid));
+            approvals.get('accountant', {}).get('actor_id', '') == request.auth.uid) ||
+          (role() == 'accountant' &&
+            resource.data.get('status', '') == 'pendingAccountingApproval' &&
+            !parties.hasAny(['accountant']) && approvals.keys().size() == 0));
     }
 
     function cashExpenseManagerEditApprovalAllowed() {
@@ -2665,6 +2670,7 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'title', 'description', 'requested_amount',
           'approved_amount', 'currency', 'manager_notes', 'invoice_attachment',
+          'expense_date',
           'previous_status', 'edit_request', 'edit_approvals', 'last_updated',
           'history'
         ]);
@@ -2696,6 +2702,7 @@ service cloud.firestore {
         request.resource.data.get('approved_amount', -1) ==
           proposal.get('approved_amount', -2) &&
         request.resource.data.get('currency', '') == proposal.get('currency', '') &&
+        request.resource.data.get('expense_date', null) == proposal.get('expense_date', null) &&
         request.resource.data.get('manager_notes', '') ==
           proposal.get('manager_notes', '') &&
         ((action == 'keep' && request.resource.data.get('invoice_attachment', null) ==
@@ -2715,6 +2722,7 @@ service cloud.firestore {
         request.resource.data.get('approved_amount', -1) ==
           resource.data.get('approved_amount', -2) &&
         request.resource.data.get('currency', '') == resource.data.get('currency', '') &&
+        request.resource.data.get('expense_date', null) == resource.data.get('expense_date', null) &&
         request.resource.data.get('manager_notes', '') ==
           resource.data.get('manager_notes', '') &&
         request.resource.data.get('invoice_attachment', null) ==
@@ -2732,7 +2740,7 @@ service cloud.firestore {
           request.resource.data.requested_amount &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'title', 'description', 'requested_amount', 'approved_amount',
-          'currency', 'manager_notes', 'invoice_attachment', 'last_updated',
+          'currency', 'manager_notes', 'invoice_attachment', 'expense_date', 'last_updated',
           'history'
         ]);
     }
