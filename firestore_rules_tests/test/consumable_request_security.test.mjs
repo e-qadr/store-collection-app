@@ -112,6 +112,28 @@ test('collector rejection requires a reason and preserves the request', async ()
   await assertFails(deleteDoc(reference));
 });
 
+test('legacy manager-review names can complete only the collector review transition', async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'consumable_requests', 'legacy-request'), {
+      ...request({status: 'pendingManagerApproval'}),
+      id: 'legacy-request',
+      request_number: 'CR-LEGACY',
+    });
+  });
+  await assertSucceeds(updateDoc(doc(db('collector-user'), 'consumable_requests', 'legacy-request'), {
+    items: [{name: 'Material', unit: 'Piece', requested_quantity: 2, collector_quantity: 2}],
+    collector_quantity: 2,
+    status: 'pendingAccountingApproval',
+    reviewed_by: 'collector-user',
+    reviewed_at: serverTimestamp(),
+    last_updated: serverTimestamp(),
+    history: history('collector_reviewed'),
+  }));
+  await assertFails(updateDoc(doc(db('manager-r'), 'consumable_requests', 'legacy-request'), {
+    status: 'pendingAccountingApproval', last_updated: serverTimestamp(),
+  }));
+});
+
 test('accountant rejection is available only after collector review', async () => {
   const accountantRef = doc(db('accountant-user'), 'consumable_requests', 'request-1');
   await assertFails(updateDoc(accountantRef, {

@@ -2327,6 +2327,15 @@ service cloud.firestore {
         ]) && request.resource.data.get('last_updated', null) == request.time;
     }
 
+    // Requests saved before the lifecycle hardening used one of these names
+    // for the same first review stage. Keep a one-way compatibility bridge so
+    // they can be completed, without reopening arbitrary edits to old records.
+    function consumableAwaitingCollectorReview(data) {
+      return data.status == 'pendingCollectorReview' ||
+        data.status == 'pendingManagerApproval' ||
+        data.status == 'pendingGeneralManagerReview';
+    }
+
     function consumableCollectorReviewAllowed() {
       return role() == 'collector' &&
         resource.data.status == 'pendingCollectorReview' &&
@@ -2338,6 +2347,20 @@ service cloud.firestore {
           'items', 'collector_quantity', 'status', 'reviewed_by', 'reviewed_at',
           'last_updated', 'history'
         ]) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'items', 'collector_quantity', 'status', 'collector_notes',
+          'reviewed_by', 'reviewed_at', 'last_updated', 'history'
+        ]);
+    }
+
+    function consumableLegacyCollectorReviewAllowed() {
+      return role() == 'collector' &&
+        (resource.data.status == 'pendingManagerApproval' ||
+          resource.data.status == 'pendingGeneralManagerReview') &&
+        request.resource.data.status == 'pendingAccountingApproval' &&
+        request.resource.data.reviewed_by == request.auth.uid &&
+        request.resource.data.reviewed_at == request.time &&
+        request.resource.data.last_updated == request.time &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'items', 'collector_quantity', 'status', 'collector_notes',
           'reviewed_by', 'reviewed_at', 'last_updated', 'history'
@@ -2365,7 +2388,7 @@ service cloud.firestore {
 
     function consumableRejectionAllowed() {
       let collectorDecision = role() == 'collector' &&
-        resource.data.status == 'pendingCollectorReview' &&
+        consumableAwaitingCollectorReview(resource.data) &&
         request.resource.data.status == 'rejectedByCollector' &&
         request.resource.data.rejected_by_role == 'collector';
       let accountantDecision = role() == 'accountant' &&
@@ -2396,6 +2419,7 @@ service cloud.firestore {
       );
       allow update: if operationalUser() &&
         (consumableCollectorReviewAllowed() ||
+          consumableLegacyCollectorReviewAllowed() ||
           consumableAccountingApprovalAllowed() ||
           consumableRejectionAllowed());
       allow delete: if false;

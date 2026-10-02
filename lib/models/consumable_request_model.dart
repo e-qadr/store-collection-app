@@ -50,6 +50,11 @@ extension ConsumableRequestStatusX on ConsumableRequestStatus {
 }
 
 ConsumableRequestStatus consumableRequestStatusFromString(String? value) {
+  // Kept for requests created before the lifecycle names were standardized.
+  if (value == 'pendingManagerApproval' ||
+      value == 'pendingGeneralManagerReview') {
+    return ConsumableRequestStatus.pendingCollectorReview;
+  }
   return ConsumableRequestStatus.values.firstWhere(
     (status) => status.value == value,
     orElse: () => ConsumableRequestStatus.pendingCollectorReview,

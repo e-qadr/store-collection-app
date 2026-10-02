@@ -24,6 +24,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   bool _showConfirmation = false;
   bool _submitting = false;
   bool _sendingVerification = false;
+  bool _sendingPasswordReset = false;
 
   @override
   void dispose() {
@@ -99,6 +100,29 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     }
   }
 
+  Future<void> _sendPasswordResetEmail() async {
+    final email = FirebaseAuth.instance.currentUser?.email?.trim() ?? '';
+    if (email.isEmpty || _sendingPasswordReset) return;
+    setState(() => _sendingPasswordReset = true);
+    try {
+      await _authService.sendForgotPasswordEmail(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('أرسلنا رابط تغيير كلمة المرور إلى $email.'),
+            backgroundColor: AppTheme.successColor,
+          ),
+        );
+      }
+    } on AuthApiException catch (error) {
+      if (mounted) _showError(error.message);
+    } catch (_) {
+      if (mounted) _showError('تعذر إرسال رابط تغيير كلمة المرور حالياً.');
+    } finally {
+      if (mounted) setState(() => _sendingPasswordReset = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final firebaseUser = FirebaseAuth.instance.currentUser;
@@ -156,6 +180,61 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 16),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const Text(
+                              'طريقة تغيير كلمة المرور',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'اختر الطريقة الأنسب لك: رابط آمن عبر البريد أو التغيير اليدوي داخل الحساب.',
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            OutlinedButton.icon(
+                              onPressed: _sendingPasswordReset
+                                  ? null
+                                  : _sendPasswordResetEmail,
+                              icon: _sendingPasswordReset
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.mark_email_read_outlined),
+                              label: Text(
+                                _sendingPasswordReset
+                                    ? 'جاري إرسال الرابط...'
+                                    : 'إرسال رابط التغيير عبر البريد',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'أو غيّرها يدوياً أدناه باستخدام كلمة المرور الحالية.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     Card(
                       child: Padding(
