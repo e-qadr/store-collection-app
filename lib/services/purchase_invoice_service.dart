@@ -66,14 +66,18 @@ class PurchaseInvoiceService {
     String? branchId,
   }) {
     Query<Map<String, dynamic>> query = _invoices;
+    final cleanBranch = branchId?.trim() ?? '';
     if (role == UserRole.manager) {
-      final branch = branchId?.trim() ?? '';
-      if (branch.isEmpty) return Stream.value(const []);
-      query = query.where('receiving_branch_id', isEqualTo: branch);
+      if (cleanBranch.isEmpty) return Stream.value(const []);
+      query = query.where('receiving_branch_id', isEqualTo: cleanBranch);
     } else if (role != UserRole.collector &&
         role != UserRole.accountant &&
         role != UserRole.admin) {
       return Stream.value(const []);
+    } else if (cleanBranch.isNotEmpty) {
+      // The selector intentionally scopes the management dashboards to one
+      // receiving branch; history must retain the same scope as the dashboard.
+      query = query.where('receiving_branch_id', isEqualTo: cleanBranch);
     }
     return query
         .orderBy('last_updated', descending: true)

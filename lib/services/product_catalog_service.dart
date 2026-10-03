@@ -306,18 +306,24 @@ class ProductCatalogService {
         );
   }
 
-  Stream<ProductAccountingProfile?> watchAccountingProfile({
-    required String productId,
+  /// Returns the new branch-scoped accounting profiles for one brand. Legacy
+  /// brand-wide records (without a branch id) are intentionally excluded: a
+  /// material is only considered linked after its accountant links that
+  /// particular branch.
+  Stream<List<ProductAccountingProfile>> watchBranchAccountingProfiles({
+    required String brandId,
   }) {
-    _requireValue(productId, 'Product ID');
+    final cleanBrandId = _required(brandId, 'Brand ID');
     return _firestore
         .collection(ProductCatalogCollections.accountingProfiles)
-        .doc(productId.trim())
+        .where(ProductCatalogFields.brandId, isEqualTo: cleanBrandId)
         .snapshots()
-        .map((snapshot) {
-          final data = snapshot.data();
-          return data == null ? null : ProductAccountingProfile.fromMap(data);
-        });
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => ProductAccountingProfile.fromMap(doc.data()))
+              .where((profile) => profile.branchId.isNotEmpty)
+              .toList(growable: false),
+        );
   }
 
   Future<String> createGroup({
@@ -849,71 +855,6 @@ class ProductCatalogService {
       );
     });
     if (affectedBrandId != null) _invalidateBrandCache(affectedBrandId!);
-  }
-
-  Future<void> upsertAccountingProfile({
-    required CatalogActor actor,
-    required String productId,
-    String? accountingReference,
-    required String syncState,
-    String? notes,
-  }) async {
-    _requireCatalogManager(actor);
-    final cleanProductId = _required(productId, 'Product ID');
-    final cleanSyncState = _required(syncState, 'Synchronization state');
-    const allowedStates = {'not_synced', 'pending', 'synced', 'sync_error'};
-    if (!allowedStates.contains(cleanSyncState)) {
-      throw ArgumentError('Unsupported synchronization state.');
-    }
-    final productRef = _products.doc(cleanProductId);
-    final profileRef = _firestore
-        .collection(ProductCatalogCollections.accountingProfiles)
-        .doc(cleanProductId);
-    final auditRef = _auditEvents.doc();
-    await _firestore.runTransaction((transaction) async {
-      final product = await transaction.get(productRef);
-      final profile = await transaction.get(profileRef);
-      final productData = product.data();
-      if (productData == null) throw StateError('Product was not found.');
-      final brandId =
-          productData[ProductCatalogFields.brandId]?.toString() ?? '';
-      final profileData = <String, dynamic>{
-        'id': cleanProductId,
-        'product_id': cleanProductId,
-        'brand_id': brandId,
-        'accounting_reference':
-            _optional(accountingReference) ?? FieldValue.delete(),
-        'sync_state': cleanSyncState,
-        'last_audit_event_id': auditRef.id,
-        'notes': _optional(notes) ?? FieldValue.delete(),
-        if (!profile.exists) 'created_by': actor.uid,
-        if (!profile.exists) 'created_at': FieldValue.serverTimestamp(),
-        'updated_by': actor.uid,
-        'updated_at': FieldValue.serverTimestamp(),
-      };
-      transaction.set(profileRef, profileData, SetOptions(merge: true));
-      transaction.set(
-        auditRef,
-        _auditData(
-          id: auditRef.id,
-          entityType: 'product_accounting_profile',
-          entityId: cleanProductId,
-          brandId: brandId,
-          action: profile.exists ? 'updated' : 'created',
-          actor: actor,
-          before: profile.data() ?? const {},
-          after: {
-            'id': cleanProductId,
-            'product_id': cleanProductId,
-            'brand_id': brandId,
-            'accounting_reference': _optional(accountingReference),
-            'sync_state': cleanSyncState,
-            'notes': _optional(notes),
-            'last_audit_event_id': auditRef.id,
-          },
-        ),
-      );
-    });
   }
 
   Map<String, dynamic> _newProductData({

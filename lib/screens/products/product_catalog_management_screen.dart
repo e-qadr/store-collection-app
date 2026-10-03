@@ -379,7 +379,6 @@ class _ProductCatalogManagementContentState
                   searchText: _searchController.text,
                   groups: groups,
                   onEdit: (product) => _editProduct(product, groups),
-                  onAccounting: _editAccountingProfile,
                   onPricing: _showPriceDialog,
                   onHistory: _showHistory,
                   onArchive: _archiveProduct,
@@ -499,105 +498,6 @@ class _ProductCatalogManagementContentState
         sourceMetadata: product.sourceMetadata,
       ),
       successMessage: 'تم تحديث المنتج وحفظ سجل التغيير.',
-    );
-  }
-
-  Future<void> _editAccountingProfile(ProductCatalogModel product) async {
-    if (_mutating) return;
-    ProductAccountingProfile? current;
-    try {
-      current = await _service
-          .watchAccountingProfile(productId: product.id)
-          .first;
-    } catch (error) {
-      _message(_errorText(error), isError: true);
-      return;
-    }
-    if (!mounted) return;
-    final referenceController = TextEditingController(
-      text: current?.accountingReference ?? '',
-    );
-    final notesController = TextEditingController(text: current?.notes ?? '');
-    var syncState = current?.syncState ?? 'not_synced';
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('ربط ${product.name} بالنظام المحاسبي'),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: referenceController,
-                  decoration: const InputDecoration(
-                    labelText: 'مرجع المنتج في النظام المحاسبي (اختياري)',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue: syncState,
-                  decoration: const InputDecoration(labelText: 'حالة المزامنة'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'not_synced',
-                      child: Text('غير متزامن'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'pending',
-                      child: Text('بانتظار المزامنة'),
-                    ),
-                    DropdownMenuItem(value: 'synced', child: Text('متزامن')),
-                    DropdownMenuItem(
-                      value: 'sync_error',
-                      child: Text('خطأ في المزامنة'),
-                    ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setDialogState(() => syncState = value);
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: notesController,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'ملاحظات المحاسب (اختياري)',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-    final reference = referenceController.text.trim();
-    final notes = notesController.text.trim();
-    referenceController.dispose();
-    notesController.dispose();
-    if (accepted != true) return;
-    await _performMutation(
-      operation: () async => _service.upsertAccountingProfile(
-        actor: await _currentActor(),
-        productId: product.id,
-        accountingReference: reference.isEmpty ? null : reference,
-        syncState: syncState,
-        notes: notes.isEmpty ? null : notes,
-      ),
-      successMessage: 'تم تحديث مرجع المنتج وحالة المزامنة.',
     );
   }
 
@@ -1354,7 +1254,6 @@ class _ProductList extends StatelessWidget {
   final String searchText;
   final List<ProductGroupModel> groups;
   final ValueChanged<ProductCatalogModel> onEdit;
-  final ValueChanged<ProductCatalogModel> onAccounting;
   final ValueChanged<ProductCatalogModel> onPricing;
   final ValueChanged<ProductCatalogModel> onHistory;
   final ValueChanged<ProductCatalogModel> onArchive;
@@ -1365,7 +1264,6 @@ class _ProductList extends StatelessWidget {
     required this.searchText,
     required this.groups,
     required this.onEdit,
-    required this.onAccounting,
     required this.onPricing,
     required this.onHistory,
     required this.onArchive,
@@ -1444,8 +1342,6 @@ class _ProductList extends StatelessWidget {
                     switch (value) {
                       case 'edit':
                         onEdit(product);
-                      case 'accounting':
-                        onAccounting(product);
                       case 'pricing':
                         onPricing(product);
                       case 'history':
@@ -1459,10 +1355,6 @@ class _ProductList extends StatelessWidget {
                   itemBuilder: (context) => [
                     if (product.active)
                       const PopupMenuItem(value: 'edit', child: Text('تعديل')),
-                    const PopupMenuItem(
-                      value: 'accounting',
-                      child: Text('المرجع المحاسبي'),
-                    ),
                     if (product.active)
                       const PopupMenuItem(
                         value: 'pricing',

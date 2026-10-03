@@ -239,21 +239,55 @@ class _PurchaseCatalogPickerDialogState
                 ),
               ),
               const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.oliveSurface,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.tips_and_updates_outlined, size: 19),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'اختر المادة ثم وحدتها. لا تنشئ مادة جديدة إلا إذا لم تجد المطابقة الصحيحة.',
+                        style: TextStyle(fontSize: 12, height: 1.35),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
               // This must stay visible even when the brand already has catalog
               // products: Purchase creates a canonical product, never an
               // unmatched substitute.
               if (widget.onCreateProduct != null) ...[
                 Align(
                   alignment: AlignmentDirectional.centerStart,
-                  child: OutlinedButton.icon(
+                  child: FilledButton.tonalIcon(
                     key: const Key('purchase-add-new-catalog-material'),
                     onPressed: _loading ? null : _createProduct,
                     icon: const Icon(Icons.add_box_rounded),
-                    label: const Text('إضافة مادة جديدة'),
+                    label: const Text('لم تجد المادة؟ أنشئها في الكتالوج'),
                   ),
                 ),
                 const SizedBox(height: 6),
               ],
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  _products.isEmpty
+                      ? 'نتائج البحث'
+                      : '${_products.length} مادة ظاهرة — اختر المادة ثم الوحدة',
+                  style: const TextStyle(
+                    color: AppTheme.textHint,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
               if (_loading && _products.isEmpty)
                 const Expanded(
                   child: Center(child: CircularProgressIndicator()),

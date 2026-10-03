@@ -74,121 +74,107 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
-              _sectionTitle('بيانات الفاتورة'),
-              _branchSelector(),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _supplierName,
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'اسم المورد',
-                  prefixIcon: Icon(Icons.store_rounded),
-                ),
-                validator: (value) =>
-                    (value ?? '').trim().isEmpty ? 'أدخل اسم المورد.' : null,
+              _introCard(),
+              const SizedBox(height: 16),
+              _sectionTitle(
+                'بيانات الفاتورة',
+                icon: Icons.receipt_long_rounded,
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _supplierNumber,
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'رقم فاتورة المورد / الورقية (اختياري)',
-                  prefixIcon: Icon(Icons.numbers_rounded),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _submitting ? null : _pickDate,
-                      icon: const Icon(Icons.event_rounded),
-                      label: Text(_dateValue(_supplierDate)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 118,
-                    child: DropdownButtonFormField<String>(
-                      key: const Key('purchase-currency'),
-                      initialValue: _currency,
-                      decoration: const InputDecoration(labelText: 'العملة'),
-                      items: const ['YER', 'SAR', 'USD']
-                          .map(
-                            (value) => DropdownMenuItem(
-                              value: value,
-                              child: Text(value),
+              const SizedBox(height: 8),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    children: [
+                      _branchSelector(),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _supplierName,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'اسم المورد *',
+                          prefixIcon: Icon(Icons.store_rounded),
+                        ),
+                        validator: (value) => (value ?? '').trim().isEmpty
+                            ? 'أدخل اسم المورد.'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _supplierNumber,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'رقم فاتورة المورد / الورقية',
+                          helperText: 'اختياري، ويساعد على منع تكرار الفاتورة.',
+                          prefixIcon: Icon(Icons.numbers_rounded),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(flex: 3, child: _dateSelector()),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            flex: 2,
+                            child: DropdownButtonFormField<String>(
+                              key: const Key('purchase-currency'),
+                              initialValue: _currency,
+                              decoration: const InputDecoration(
+                                labelText: 'العملة',
+                                prefixIcon: Icon(Icons.payments_outlined),
+                              ),
+                              items: const ['YER', 'SAR', 'USD']
+                                  .map(
+                                    (value) => DropdownMenuItem(
+                                      value: value,
+                                      child: Text(value),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                              onChanged: _submitting
+                                  ? null
+                                  : (value) => _changeCurrency(value ?? 'YER'),
                             ),
-                          )
-                          .toList(growable: false),
-                      onChanged: _submitting
-                          ? null
-                          : (value) => _changeCurrency(value ?? 'YER'),
-                    ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _notes,
+                        minLines: 2,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: 'ملاحظات الفاتورة',
+                          helperText: 'اختيارية — تظهر للمراجعين عند الحاجة.',
+                          prefixIcon: Icon(Icons.notes_rounded),
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _notes,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(
-                  labelText: 'ملاحظات الفاتورة (اختيارية)',
-                  alignLabelWithHint: true,
                 ),
               ),
               const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: _sectionTitle('المواد (${_items.length}/50)'),
-                  ),
-                  PopupMenuButton<String>(
-                    key: const Key('add-purchase-item'),
-                    enabled:
-                        !_submitting &&
-                        _brandId.isNotEmpty &&
-                        _items.length < 50,
-                    tooltip: 'إضافة مادة',
-                    onSelected: (value) {
-                      if (value == 'catalog') _addCatalogItem();
-                      if (value == 'unmatched') _addUnmatchedItem();
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'catalog',
-                        child: Text('اختيار مادة من الكتالوج'),
-                      ),
-                      PopupMenuItem(
-                        value: 'unmatched',
-                        child: Text('إدخال مادة غير مطابقة'),
-                      ),
-                    ],
-                    child: const Chip(
-                      avatar: Icon(Icons.add_rounded),
-                      label: Text('إضافة مادة'),
-                    ),
-                  ),
-                ],
+              _sectionTitle(
+                'مواد الفاتورة',
+                icon: Icons.inventory_2_outlined,
+                trailing: '${_items.length}/50',
               ),
+              const SizedBox(height: 10),
+              _materialActions(),
               if (_branchId == null)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Text(
-                    'اختر الفرع المستلم أولًا لتظهر مواد علامته التجارية.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: AppTheme.textSecondary),
-                  ),
+                _emptyMaterialsState(
+                  icon: Icons.storefront_outlined,
+                  title: 'اختر الفرع أولاً',
+                  text:
+                      'بعد اختيار الفرع ستظهر مواد العلامة التجارية الخاصة به.',
                 )
               else if (_items.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Text(
-                    'أضف مادة واحدة على الأقل. الأسعار مرئية للمدير العام والمحاسب فقط.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: AppTheme.textSecondary),
-                  ),
+                _emptyMaterialsState(
+                  icon: Icons.add_shopping_cart_rounded,
+                  title: 'لم تُضف مواد بعد',
+                  text:
+                      'ابدأ بالبحث في الكتالوج، ثم أضف مادة جديدة فقط عند عدم وجودها.',
                 )
               else ...[
                 ..._items.indexed.map((entry) => _itemCard(entry.$1, entry.$2)),
@@ -237,11 +223,169 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
     );
   }
 
-  Widget _sectionTitle(String value) => Text(
-    value,
-    style: Theme.of(
-      context,
-    ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+  Widget _introCard() => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: AppTheme.primaryOlive.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppTheme.primaryOlive.withValues(alpha: 0.16)),
+    ),
+    child: const Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.lightbulb_outline_rounded, color: AppTheme.primaryOlive),
+        SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'اختر الفرع والمورد أولاً، ثم أضف المواد. تاريخ الفاتورة محفوظ بتاريخ اليوم ويمكن تعديله.',
+            style: TextStyle(height: 1.4),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _sectionTitle(String value, {IconData? icon, String? trailing}) => Row(
+    children: [
+      if (icon != null) ...[
+        Icon(icon, color: AppTheme.primaryOlive),
+        const SizedBox(width: 8),
+      ],
+      Expanded(
+        child: Text(
+          value,
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+        ),
+      ),
+      if (trailing != null)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryOlive.withValues(alpha: 0.09),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            trailing,
+            style: const TextStyle(
+              color: AppTheme.primaryOlive,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+    ],
+  );
+
+  Widget _dateSelector() => OutlinedButton(
+    onPressed: _submitting ? null : _pickDate,
+    style: OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      alignment: AlignmentDirectional.centerStart,
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.event_rounded, color: AppTheme.primaryOlive),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'تاريخ فاتورة المورد',
+                style: TextStyle(fontSize: 11, color: AppTheme.textHint),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                _dateValue(_supplierDate),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ],
+          ),
+        ),
+        const Icon(Icons.expand_more_rounded),
+      ],
+    ),
+  );
+
+  Widget _materialActions() {
+    final reachedLimit = _items.length >= 50;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const Key('add-purchase-item'),
+                    onPressed: _submitting || reachedLimit
+                        ? null
+                        : _openCatalogOrExplain,
+                    icon: const Icon(Icons.search_rounded),
+                    label: const Text('البحث في الكتالوج'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _submitting || reachedLimit
+                        ? null
+                        : _openUnmatchedOrExplain,
+                    icon: const Icon(Icons.add_box_outlined),
+                    label: const Text('مادة غير موجودة'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            Text(
+              reachedLimit
+                  ? 'وصلت الفاتورة إلى الحد الأعلى: 50 مادة.'
+                  : _branchId == null
+                  ? 'اختر الفرع المستلم أولاً لتحديد كتالوج المواد المناسب.'
+                  : 'ابحث في الكتالوج أولاً. «مادة جديدة» تُضاف للفاتورة وتدخل قائمة مراجعة المواد.',
+              style: const TextStyle(
+                color: AppTheme.textHint,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyMaterialsState({
+    required IconData icon,
+    required String title,
+    required String text,
+  }) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(top: 10),
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: AppTheme.cardColor,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: AppTheme.dividerColor),
+    ),
+    child: Column(
+      children: [
+        Icon(icon, color: AppTheme.primaryOlive, size: 30),
+        const SizedBox(height: 8),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 4),
+        Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppTheme.textHint, height: 1.35),
+        ),
+      ],
+    ),
   );
 
   Widget _itemCard(int index, _PurchaseDraftItem item) {
@@ -493,6 +637,24 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       // price-authorized user; the backend remains the source of truth.
       return null;
     }
+  }
+
+  Future<void> _openCatalogOrExplain() async {
+    if (_branchId == null || _brandId.trim().isEmpty) {
+      _message(
+        'اختر الفرع المستلم أولاً، ثم يمكنك البحث في مواد علامته التجارية.',
+      );
+      return;
+    }
+    await _addCatalogItem();
+  }
+
+  Future<void> _openUnmatchedOrExplain() async {
+    if (_branchId == null || _brandId.trim().isEmpty) {
+      _message('اختر الفرع المستلم أولاً قبل إضافة مادة جديدة إلى الفاتورة.');
+      return;
+    }
+    await _addUnmatchedItem();
   }
 
   Future<void> _addCatalogItem() async {

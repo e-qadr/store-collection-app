@@ -37,6 +37,10 @@ class PurchaseInvoiceCommandResult {
   final String taskStatus;
   final int taskRevision;
   final String productId;
+  final String amendmentId;
+  final String amendmentStatus;
+  final int amendmentRequiredApproverCount;
+  final int amendmentApprovalCount;
 
   const PurchaseInvoiceCommandResult({
     required this.invoiceId,
@@ -48,6 +52,10 @@ class PurchaseInvoiceCommandResult {
     this.taskStatus = '',
     this.taskRevision = 0,
     this.productId = '',
+    this.amendmentId = '',
+    this.amendmentStatus = '',
+    this.amendmentRequiredApproverCount = 0,
+    this.amendmentApprovalCount = 0,
   });
 
   factory PurchaseInvoiceCommandResult.fromJson(Map<String, dynamic> json) =>
@@ -61,6 +69,12 @@ class PurchaseInvoiceCommandResult {
         taskStatus: json['task_status']?.toString() ?? '',
         taskRevision: (json['task_revision'] as num?)?.toInt() ?? 0,
         productId: json['product_id']?.toString() ?? '',
+        amendmentId: json['amendment_id']?.toString() ?? '',
+        amendmentStatus: json['amendment_status']?.toString() ?? '',
+        amendmentRequiredApproverCount:
+            (json['amendment_required_approver_count'] as num?)?.toInt() ?? 0,
+        amendmentApprovalCount:
+            (json['amendment_approval_count'] as num?)?.toInt() ?? 0,
       );
 }
 
@@ -351,6 +365,9 @@ class PurchaseInvoiceApiService {
     required String invoiceId,
     required String amendmentId,
     required int expectedRevision,
+
+    /// `apply` is an internal finalization used when the editor is the only
+    /// recorded participant. Other users can only approve or reject.
     required String decision,
     required String idempotencyKey,
     String? reason,
@@ -413,6 +430,27 @@ class PurchaseInvoiceApiService {
       if ((note ?? '').trim().isNotEmpty) 'note': note!.trim(),
     },
   );
+
+  /// Accounting references belong to a product in one receiving branch, not
+  /// to the shared brand catalog product. The server restricts this command
+  /// to accountants and records a branch-level audit event.
+  Future<void> syncProductForBranchAccounting({
+    required String productId,
+    required String branchId,
+    required String accountingReference,
+    required String idempotencyKey,
+    String? notes,
+  }) async {
+    await _command(
+      '/v1/product-accounting-branches/${Uri.encodeComponent(productId)}/sync',
+      idempotencyKey,
+      {
+        'branch_id': branchId.trim(),
+        'accounting_reference': accountingReference.trim(),
+        if ((notes ?? '').trim().isNotEmpty) 'notes': notes!.trim(),
+      },
+    );
+  }
 
   Future<PurchaseInvoiceCommandResult> _command(
     String path,
@@ -490,7 +528,11 @@ class PurchaseInvoiceApiService {
       throw exception;
     }
     final result = PurchaseInvoiceCommandResult.fromJson(decoded);
-    if (result.invoiceId.isEmpty || result.revision < 1) {
+    // Branch-level catalog accounting is a product command, not an invoice
+    // command. It deliberately has no invoice number or invoice revision.
+    final validProductResult = result.productId.isNotEmpty;
+    if (!validProductResult &&
+        (result.invoiceId.isEmpty || result.revision < 1)) {
       throw const PurchaseInvoiceApiException(
         'invalid-response',
         'تعذر التحقق من استجابة الخادم.',
@@ -547,13 +589,13 @@ class PurchaseInvoiceApiService {
       'بيانات المادة أو المجموعة أو الوحدة المختارة لم تعد صالحة. أعد اختيارها.',
     'idempotency-conflict' =>
       'تم استخدام مفتاح الإرسال لطلب مختلف. أعد فتح الفاتورة وحاول مجددًا.',
-    'active-amendment-exists' => 'يوجد طلب تعديل معلق لهذه الفاتورة.',
+    'active-amendment-exists' => 'يوجد تعديل قيد الاعتماد لهذه الفاتورة.',
     'posted-invoice-amendment-blocked' =>
       'الفاتورة المرحلة لا تُعدّل مباشرة؛ أنشئ مستند تصحيح أو عكس محاسبي.',
-    'duplicate-amendment-approval' =>
-      'تم تسجيل موافقتك على طلب التعديل مسبقاً.',
-    'amendment-rejection-reason-required' => 'سبب رفض طلب التعديل مطلوب.',
-    'amendment-no-changes' => 'أدخل تغييراً واحداً على الأقل في طلب التعديل.',
+    'duplicate-amendment-approval' => 'تم تسجيل اعتمادك لهذا التعديل مسبقاً.',
+    'amendment-not-ready' => 'لم تكتمل اعتمادات التعديل بعد.',
+    'amendment-rejection-reason-required' => 'سبب رفض التعديل مطلوب.',
+    'amendment-no-changes' => 'أدخل تغييراً واحداً على الأقل في التعديل.',
     _ => 'تعذر إتمام العملية بأمان. حاول مجددًا أو تواصل مع الإدارة.',
   };
 

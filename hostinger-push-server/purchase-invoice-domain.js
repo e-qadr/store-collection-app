@@ -429,7 +429,7 @@ function validateAmendmentDecisionPayload(body) {
   const input = object(body);
   onlyKeys(input, new Set(["expected_revision", "decision", "reason"]), "body");
   const decision = requiredString(input.decision, "decision", 16);
-  if (decision !== "approve" && decision !== "reject") {
+  if (decision !== "approve" && decision !== "reject" && decision !== "apply") {
     throw new PurchaseCommandError("invalid-argument", 400, "decision is invalid.");
   }
   const reason = optionalString(input.reason, "reason", MAX_NOTES_BYTES);
@@ -547,6 +547,22 @@ function validateReviewPayload(body) {
     throw new PurchaseCommandError("invalid-argument", 400, "A note is required.");
   }
   return compact(result);
+}
+
+function validateBranchAccountingSyncPayload(body) {
+  const input = object(body);
+  onlyKeys(input, new Set([
+    "branch_id", "accounting_reference", "notes",
+  ]), "body");
+  return compact({
+    branch_id: documentId(input.branch_id, "branch_id"),
+    accounting_reference: requiredString(
+        input.accounting_reference,
+        "accounting_reference",
+        MAX_ACCOUNTING_REFERENCE_BYTES,
+    ),
+    notes: optionalString(input.notes, "notes", MAX_NOTES_BYTES),
+  });
 }
 
 function ensureUniqueItemIds(items) {
@@ -678,5 +694,6 @@ module.exports = {
   validatePostingPayload,
   validatePricingPayload,
   validateReceiptPayload,
+  validateBranchAccountingSyncPayload,
   validateReviewPayload,
 };

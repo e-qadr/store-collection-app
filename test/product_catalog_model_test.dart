@@ -96,15 +96,24 @@ void main() {
         'last_audit_event_id': 'audit-group-1',
       });
       final profile = ProductAccountingProfile.fromMap({
-        'id': 'product-1',
+        'id': 'product-1__branch-1',
         'product_id': 'product-1',
         'brand_id': 'brand-1',
+        'branch_id': 'branch-1',
         'sync_state': 'pending',
         'last_audit_event_id': 'audit-profile-1',
       });
 
       expect(group.lastAuditEventId, 'audit-group-1');
-      expect(profile.id, 'product-1');
+      expect(profile.id, 'product-1__branch-1');
+      expect(profile.branchId, 'branch-1');
+      expect(
+        ProductAccountingProfile.documentIdFor(
+          productId: 'product-1',
+          branchId: 'branch-1',
+        ),
+        'product-1__branch-1',
+      );
       expect(profile.lastAuditEventId, 'audit-profile-1');
     });
 

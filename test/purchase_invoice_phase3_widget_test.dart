@@ -213,6 +213,38 @@ void main() {
     },
   );
 
+  testWidgets('purchase history retains the selected receiving branch scope', (
+    tester,
+  ) async {
+    final selected = PurchaseInvoiceRead(
+      id: 'history-selected-branch',
+      data: {...fixtureInvoice().data, 'receiving_branch_id': 'branch-r'},
+    );
+    final other = PurchaseInvoiceRead(
+      id: 'history-other-branch',
+      data: {...fixtureInvoice().data, 'receiving_branch_id': 'branch-other'},
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PurchaseInvoiceHistoryScreen(
+          role: UserRole.collector,
+          branchId: 'branch-r',
+          branchName: 'الفرع المختار',
+          invoiceStream: Stream.value([selected, other]),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('purchase-history-history-selected-branch')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('purchase-history-history-other-branch')),
+      findsNothing,
+    );
+  });
+
   testWidgets('history live stream immediately exposes every Purchase status', (
     tester,
   ) async {

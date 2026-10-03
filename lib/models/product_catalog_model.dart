@@ -367,6 +367,11 @@ class ProductAccountingProfile {
   final String id;
   final String productId;
   final String brandId;
+
+  /// Empty only for the legacy, brand-wide profile format. New profiles are
+  /// deliberately scoped to one branch because accounting references differ
+  /// between branch ledgers.
+  final String branchId;
   final String? accountingReference;
   final String syncState;
   final String? notes;
@@ -377,6 +382,7 @@ class ProductAccountingProfile {
     this.id = '',
     required this.productId,
     required this.brandId,
+    this.branchId = '',
     this.accountingReference,
     this.syncState = 'not_synced',
     this.notes,
@@ -389,6 +395,7 @@ class ProductAccountingProfile {
       id: data['id']?.toString() ?? data['product_id']?.toString() ?? '',
       productId: data['product_id']?.toString() ?? '',
       brandId: data['brand_id']?.toString() ?? '',
+      branchId: data['branch_id']?.toString() ?? '',
       accountingReference: _nonEmptyString(data['accounting_reference']),
       syncState: data['sync_state']?.toString() ?? 'not_synced',
       notes: _nonEmptyString(data['notes']),
@@ -396,6 +403,11 @@ class ProductAccountingProfile {
       lastAuditEventId: data['last_audit_event_id']?.toString() ?? '',
     );
   }
+
+  static String documentIdFor({
+    required String productId,
+    required String branchId,
+  }) => '${productId.trim()}__${branchId.trim()}';
 }
 
 DateTime? _dateTimeOf(dynamic value) {

@@ -106,6 +106,13 @@ class _PurchaseAmendmentItemDraft {
   }
 }
 
+class _PurchaseEventPresentation {
+  final IconData icon;
+  final Color color;
+
+  const _PurchaseEventPresentation({required this.icon, required this.color});
+}
+
 class _PurchaseInvoiceDetailsScreenState
     extends State<PurchaseInvoiceDetailsScreen> {
   late final PurchaseInvoiceService _service = PurchaseInvoiceService();
@@ -134,6 +141,15 @@ class _PurchaseInvoiceDetailsScreenState
     UserRole.accountant,
     UserRole.admin,
   }.contains(widget.role);
+
+  String get _currentUid {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } on FirebaseException {
+      // Widget previews and tests may render this screen without Firebase.
+      return '';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -237,7 +253,7 @@ class _PurchaseInvoiceDetailsScreenState
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 142),
           children: [
-            _headerCard(invoice, verifiedPrices),
+            _headerCard(invoice),
             const SizedBox(height: 12),
             _sectionTitle(
               icon: Icons.inventory_2_outlined,
@@ -246,6 +262,8 @@ class _PurchaseInvoiceDetailsScreenState
             ),
             const SizedBox(height: 8),
             ...invoice.items.map((item) => _itemCard(item, verifiedPrices)),
+            const SizedBox(height: 8),
+            _invoiceSummaryCard(invoice, verifiedPrices),
             _amendmentSection(invoice, verifiedPrices ?? verifiedDraft),
             const SizedBox(height: 16),
             _timeline(invoice),
@@ -255,10 +273,7 @@ class _PurchaseInvoiceDetailsScreenState
     );
   }
 
-  Widget _headerCard(
-    PurchaseInvoiceRead invoice,
-    PurchaseInvoicePriceSnapshot? prices,
-  ) {
+  Widget _headerCard(PurchaseInvoiceRead invoice) {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Padding(
@@ -361,31 +376,74 @@ class _PurchaseInvoiceDetailsScreenState
                 ),
               ],
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _invoiceSummaryCard(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoicePriceSnapshot? prices,
+  ) {
+    final hasConfirmedPrices =
+        _mayReadPrices && prices?.pricingState == 'confirmed';
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.insights_rounded, color: AppTheme.primaryOlive),
+                SizedBox(width: 8),
+                Text(
+                  'ملخص الفاتورة',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
             const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 10),
-            Text(
-              'ملخص الفاتورة',
-              style: Theme.of(
-                context,
-              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                Expanded(
+                  child: _summaryFact(
+                    icon: Icons.inventory_2_outlined,
+                    label: 'عدد المواد',
+                    value: '${invoice.itemCount} مواد',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _summaryFact(
+                    icon: Icons.person_pin_circle_outlined,
+                    label: 'الإجراء التالي',
+                    value: invoice.currentResponsibleParty,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 4),
-            Text(
-              '${invoice.itemCount} مواد مطلوبة • ${invoice.currentResponsibleParty}',
-              style: const TextStyle(color: AppTheme.textHint),
-            ),
-            if (invoice.generalManagerNotes.isNotEmpty)
-              _noteLine('ملاحظات المدير العام', invoice.generalManagerNotes),
-            if (invoice.receiverNotes.isNotEmpty)
-              _noteLine('ملاحظات الاستلام', invoice.receiverNotes),
-            if (_mayReadPrices && prices?.pricingState == 'confirmed') ...[
-              const SizedBox(height: 12),
+            if (hasConfirmedPrices) ...[
+              const SizedBox(height: 8),
               _protectedSummary(invoice, prices!),
             ],
+            if (invoice.generalManagerNotes.isNotEmpty)
+              _summaryNote(
+                icon: Icons.admin_panel_settings_outlined,
+                label: 'ملاحظات المدير العام',
+                text: invoice.generalManagerNotes,
+              ),
+            if (invoice.receiverNotes.isNotEmpty)
+              _summaryNote(
+                icon: Icons.local_shipping_outlined,
+                label: 'ملاحظات الاستلام',
+                text: invoice.receiverNotes,
+              ),
             if (invoice.postedWithUnresolvedOverride)
               const Padding(
-                padding: EdgeInsets.only(top: 8),
+                padding: EdgeInsets.only(top: 10),
                 child: Chip(
                   avatar: Icon(Icons.warning_amber_rounded),
                   label: Text('رُحلت باستثناء مدقق ومواد غير محلولة'),
@@ -578,30 +636,130 @@ class _PurchaseInvoiceDetailsScreenState
     ),
   );
 
-  Widget _noteLine(String label, String text) => Padding(
-    padding: const EdgeInsets.only(top: 10),
-    child: Text('$label: $text'),
+  Widget _summaryFact({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) => Container(
+    constraints: const BoxConstraints(minHeight: 82),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: AppTheme.primaryOlive.withValues(alpha: 0.055),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: AppTheme.primaryOlive.withValues(alpha: 0.13)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 17, color: AppTheme.primaryOlive),
+        const SizedBox(height: 5),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: AppTheme.textHint),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+        ),
+      ],
+    ),
+  );
+
+  Widget _summaryNote({
+    required IconData icon,
+    required String label,
+    required String text,
+  }) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(top: 8),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: AppTheme.surfaceColor,
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: AppTheme.dividerColor),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: AppTheme.primaryOlive),
+        const SizedBox(width: 8),
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              style: DefaultTextStyle.of(context).style,
+              children: [
+                TextSpan(
+                  text: '$label\n',
+                  style: const TextStyle(
+                    color: AppTheme.textHint,
+                    fontSize: 11,
+                  ),
+                ),
+                TextSpan(text: text),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
   );
 
   Widget _protectedSummary(
     PurchaseInvoiceRead invoice,
     PurchaseInvoicePriceSnapshot prices,
   ) => Container(
+    width: double.infinity,
     padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
       color: AppTheme.successColor.withValues(alpha: 0.08),
       borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.18)),
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    child: Row(
       children: [
-        Text(
-          'الإجمالي المعتمد: ${_number(prices.invoiceTotal)} ${invoice.currency}',
-          style: const TextStyle(fontWeight: FontWeight.bold),
+        const Icon(Icons.verified_rounded, color: AppTheme.successColor),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'الإجمالي المعتمد',
+                style: TextStyle(fontSize: 11, color: AppTheme.textHint),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${_number(prices.invoiceTotal)} ${invoice.currency}',
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ],
+          ),
         ),
         if (prices.accountingReference.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text('المرجع المحاسبي: ${prices.accountingReference}'),
+          Container(width: 1, height: 34, color: AppTheme.dividerColor),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'المرجع المحاسبي',
+                  style: TextStyle(fontSize: 11, color: AppTheme.textHint),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  prices.accountingReference,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
+          ),
         ],
       ],
     ),
@@ -613,10 +771,12 @@ class _PurchaseInvoiceDetailsScreenState
   ) {
     final action = _action(invoice, prices);
     final hasAction = action is! SizedBox;
-    final mayRequestAmendment =
+    final mayEditInvoice =
         !invoice.hasPendingAmendment && _mayRequestAmendment(invoice);
-    if (!hasAction && !mayRequestAmendment) return const SizedBox.shrink();
-    final prompt = _actionPrompt(invoice, hasAction);
+    if (!hasAction && !mayEditInvoice) return const SizedBox.shrink();
+    final prompt = !hasAction && mayEditInvoice
+        ? 'يمكنك تعديل الفاتورة. سيُحفظ التعديل مباشرة أو ينتظر اعتماد من سبق له العمل عليها.'
+        : _actionPrompt(invoice, hasAction);
     return SafeArea(
       top: false,
       child: Container(
@@ -651,7 +811,7 @@ class _PurchaseInvoiceDetailsScreenState
               ],
             ),
             const SizedBox(height: 9),
-            if (hasAction && mayRequestAmendment)
+            if (hasAction && mayEditInvoice)
               Row(
                 children: [
                   Expanded(child: action),
@@ -663,7 +823,7 @@ class _PurchaseInvoiceDetailsScreenState
                           ? null
                           : () => _requestAmendment(invoice, prices),
                       icon: const Icon(Icons.edit_note_rounded),
-                      label: const Text('طلب تعديل'),
+                      label: const Text('تعديل الفاتورة'),
                     ),
                   ),
                 ],
@@ -679,7 +839,7 @@ class _PurchaseInvoiceDetailsScreenState
                       ? null
                       : () => _requestAmendment(invoice, prices),
                   icon: const Icon(Icons.edit_note_rounded),
-                  label: const Text('طلب تعديل الفاتورة'),
+                  label: const Text('تعديل الفاتورة'),
                 ),
               ),
           ],
@@ -1107,27 +1267,29 @@ class _PurchaseInvoiceDetailsScreenState
     }.contains(invoice.status)) {
       return false;
     }
-    if (widget.role == UserRole.manager) {
-      return widget.branchId == invoice.receivingBranchId;
-    }
-    // The approval record is deliberately fixed to the originating General
-    // Manager, the receiving manager, and an accountant. Admins retain full
-    // visibility but do not bypass that required three-party workflow.
-    return const {
-      UserRole.collector,
-      UserRole.accountant,
-    }.contains(widget.role);
+    final uid = _currentUid;
+    if (uid.isNotEmpty) return invoice.amendmentParticipantUids.contains(uid);
+    // Fixtures and offline previews do not have an authenticated user. Keep
+    // the role-only fallback there; the server remains the authority.
+    return widget.role != UserRole.admin &&
+        (widget.role != UserRole.manager ||
+            widget.branchId == invoice.receivingBranchId);
   }
 
   Widget _amendmentCard(
     PurchaseInvoiceRead invoice,
     PurchaseInvoiceAmendment amendment,
   ) {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final currentUid = _currentUid;
     final mayDecide =
         amendment.status == 'pending' &&
         amendment.requiredApprovers.any((actor) => actor.uid == currentUid) &&
         !amendment.approvedBy(currentUid);
+    final mayApplyImmediately =
+        amendment.status == 'pending' &&
+        currentUid.isNotEmpty &&
+        amendment.approvedBy(currentUid) &&
+        amendment.pendingApprovers.isEmpty;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -1139,13 +1301,13 @@ class _PurchaseInvoiceDetailsScreenState
                 Icon(Icons.edit_note_rounded),
                 SizedBox(width: 8),
                 Text(
-                  'طلب تعديل الفاتورة',
+                  'تعديل فاتورة المشتريات',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            Text('الطلب بواسطة: ${amendment.requestedByName}'),
+            Text('التعديل بواسطة: ${amendment.requestedByName}'),
             Text('السبب: ${amendment.reason}'),
             if (amendment.includesProtectedPriceChanges)
               Text(
@@ -1198,6 +1360,20 @@ class _PurchaseInvoiceDetailsScreenState
                     child: const Text('رفض'),
                   ),
                 ],
+              ),
+            ],
+            if (mayApplyImmediately) ...[
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed: _submitting
+                    ? null
+                    : () => _decideAmendment(
+                        invoice,
+                        amendment,
+                        decision: 'apply',
+                      ),
+                icon: const Icon(Icons.save_alt_rounded),
+                label: const Text('تطبيق التعديل الآن'),
               ),
             ],
           ],
@@ -1324,7 +1500,7 @@ class _PurchaseInvoiceDetailsScreenState
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('طلب تعديل الفاتورة'),
+          title: const Text('تعديل فاتورة المشتريات'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
@@ -1336,6 +1512,8 @@ class _PurchaseInvoiceDetailsScreenState
                     maxLines: 2,
                     decoration: const InputDecoration(
                       labelText: 'سبب التعديل *',
+                      helperText:
+                          'سيُطبق مباشرة إن كنت الطرف الوحيد الذي عمل على الفاتورة.',
                     ),
                   ),
                   TextField(
@@ -1462,7 +1640,7 @@ class _PurchaseInvoiceDetailsScreenState
             ),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('إرسال للموافقة'),
+              child: const Text('حفظ التعديل'),
             ),
           ],
         ),
@@ -1506,8 +1684,8 @@ class _PurchaseInvoiceDetailsScreenState
           (!hasHeaderChange && priceItems.isEmpty && itemChanges.isEmpty)) {
         _message('أدخل سبباً وتغييراً واحداً على الأقل.');
       } else {
-        await _run(
-          () => _api.createAmendment(
+        await _run(() async {
+          final created = await _api.createAmendment(
             invoiceId: invoice.id,
             expectedRevision: invoice.revision,
             reason: reason.text,
@@ -1529,8 +1707,21 @@ class _PurchaseInvoiceDetailsScreenState
             priceItems: priceItems.isEmpty ? null : priceItems,
             itemChanges: itemChanges.isEmpty ? null : itemChanges,
             idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
-          ),
-        );
+          );
+          if (created.amendmentRequiredApproverCount == 1 &&
+              created.amendmentApprovalCount == 1 &&
+              created.amendmentId.isNotEmpty) {
+            await _api.decideAmendment(
+              invoiceId: invoice.id,
+              amendmentId: created.amendmentId,
+              expectedRevision: invoice.revision,
+              decision: 'apply',
+              idempotencyKey:
+                  PurchaseInvoiceApiService.generateIdempotencyKey(),
+            );
+          }
+          return created;
+        });
       }
     }
     disposeDraftControllers();
@@ -1595,11 +1786,13 @@ class _PurchaseInvoiceDetailsScreenState
     final fixture = widget.fixtureInvoice != null;
     if (fixture) {
       return _eventList(
-        invoice.history
+        invoice.history.reversed
             .map(
               (event) => {
+                'action': event.action,
                 'message': event.message,
                 'actor_name': event.actorName,
+                'actor_role': event.actorRole,
                 'created_at': event.timestamp,
               },
             )
@@ -1615,35 +1808,202 @@ class _PurchaseInvoiceDetailsScreenState
   Widget _eventList(List<Map<String, dynamic>> events) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(
-        'سجل الإجراءات',
-        style: Theme.of(
-          context,
-        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-      ),
+      _sectionTitle(icon: Icons.history_rounded, title: 'سجل الإجراءات'),
       const SizedBox(height: 8),
-      ...events.map((event) {
-        final rawTime = event['created_at'] ?? event['timestamp'];
-        final time = rawTime is Timestamp
-            ? rawTime.toDate()
-            : rawTime is DateTime
-            ? rawTime
-            : rawTime is String
-            ? DateTime.tryParse(rawTime)
-            : null;
-        return ListTile(
-          leading: const Icon(Icons.history_rounded),
-          title: Text(event['message']?.toString() ?? ''),
-          subtitle: Text(
-            [
-              event['actor_name']?.toString() ?? '',
-              if (time != null) DateFormat('yyyy/MM/dd HH:mm').format(time),
-            ].where((value) => value.isNotEmpty).join(' — '),
+      if (events.isEmpty)
+        const Card(
+          child: Padding(
+            padding: EdgeInsets.all(14),
+            child: Text('لا توجد إجراءات مسجلة على هذه الفاتورة حتى الآن.'),
           ),
-        );
-      }),
+        )
+      else
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                for (var index = 0; index < events.length; index++)
+                  _eventTile(events[index], isLast: index == events.length - 1),
+              ],
+            ),
+          ),
+        ),
     ],
   );
+
+  Widget _eventTile(Map<String, dynamic> event, {required bool isLast}) {
+    final rawTime = event['created_at'] ?? event['timestamp'];
+    final time = rawTime is Timestamp
+        ? rawTime.toDate()
+        : rawTime is DateTime
+        ? rawTime
+        : rawTime is String
+        ? DateTime.tryParse(rawTime)
+        : null;
+    final action = event['action']?.toString() ?? '';
+    final presentation = _eventPresentation(action);
+    final actor = event['actor_name']?.toString().trim() ?? '';
+    final role = _roleLabel(event['actor_role']?.toString() ?? '');
+    final metadata = [
+      if (actor.isNotEmpty) actor,
+      if (role.isNotEmpty) role,
+      if (time != null) DateFormat('yyyy/MM/dd HH:mm').format(time),
+    ];
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 48,
+            child: Column(
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 13),
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: presentation.color.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    presentation.icon,
+                    size: 17,
+                    color: presentation.color,
+                  ),
+                ),
+                if (!isLast)
+                  Expanded(
+                    child: Container(width: 1.5, color: AppTheme.dividerColor),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(4, 12, 14, isLast ? 14 : 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _eventMessage(event),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  if (metadata.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      metadata.join(' • '),
+                      style: const TextStyle(
+                        color: AppTheme.textHint,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  _PurchaseEventPresentation _eventPresentation(String action) {
+    return switch (action) {
+      'purchase_invoice_created' => const _PurchaseEventPresentation(
+        icon: Icons.add_task_rounded,
+        color: AppTheme.primaryOlive,
+      ),
+      'purchase_receipt_confirmed' => const _PurchaseEventPresentation(
+        icon: Icons.inventory_rounded,
+        color: AppTheme.primaryOlive,
+      ),
+      'purchase_initial_prices_confirmed' ||
+      'purchase_prices_confirmed' => const _PurchaseEventPresentation(
+        icon: Icons.verified_rounded,
+        color: AppTheme.successColor,
+      ),
+      'purchase_posted' || 'purchase_posted_with_review_override' =>
+        const _PurchaseEventPresentation(
+          icon: Icons.account_balance_rounded,
+          color: AppTheme.successColor,
+        ),
+      'purchase_amendment_requested' => const _PurchaseEventPresentation(
+        icon: Icons.edit_note_rounded,
+        color: AppTheme.warningColor,
+      ),
+      'purchase_amendment_rejected' => const _PurchaseEventPresentation(
+        icon: Icons.cancel_outlined,
+        color: AppTheme.errorColor,
+      ),
+      'purchase_amendment_approved' ||
+      'purchase_amendment_applied' => const _PurchaseEventPresentation(
+        icon: Icons.fact_check_rounded,
+        color: AppTheme.successColor,
+      ),
+      'purchase_material_clarification_requested' =>
+        const _PurchaseEventPresentation(
+          icon: Icons.help_outline_rounded,
+          color: AppTheme.warningColor,
+        ),
+      'purchase_material_review_resumed' => const _PurchaseEventPresentation(
+        icon: Icons.restart_alt_rounded,
+        color: AppTheme.primaryOlive,
+      ),
+      'purchase_material_synchronized' ||
+      'purchase_material_reconciled' => const _PurchaseEventPresentation(
+        icon: Icons.link_rounded,
+        color: AppTheme.successColor,
+      ),
+      _ => const _PurchaseEventPresentation(
+        icon: Icons.history_rounded,
+        color: AppTheme.textHint,
+      ),
+    };
+  }
+
+  String _eventMessage(Map<String, dynamic> event) {
+    final action = event['action']?.toString() ?? '';
+    final known = switch (action) {
+      'purchase_invoice_created' =>
+        'تم إنشاء فاتورة المشتريات وإرسالها إلى الفرع المستلم.',
+      'purchase_receipt_confirmed' => 'أكد مدير الفرع الكميات المستلمة.',
+      'purchase_initial_prices_confirmed' =>
+        'تم تأكيد الأسعار الأولية بحسب الكميات المستلمة.',
+      'purchase_prices_confirmed' =>
+        'اعتمد المدير العام أسعار فاتورة المشتريات.',
+      'purchase_posted' => 'تم ترحيل فاتورة المشتريات إلى النظام المحاسبي.',
+      'purchase_posted_with_review_override' =>
+        'تم ترحيل الفاتورة باستثناء مدقق مع بقاء مواد للمراجعة.',
+      'purchase_amendment_requested' => 'تم إرسال طلب تعديل الفاتورة للموافقة.',
+      'purchase_amendment_approved' =>
+        'وافق أحد المشاركين المطلوبين على طلب التعديل.',
+      'purchase_amendment_rejected' => 'رُفض طلب التعديل ولم تتغير الفاتورة.',
+      'purchase_amendment_applied' => 'اكتملت الموافقات وطُبق تعديل الفاتورة.',
+      'purchase_material_clarification_requested' =>
+        'طلب المحاسب توضيح بيانات إحدى المواد.',
+      'purchase_material_review_resumed' => 'أعيدت مادة إلى قائمة المراجعة.',
+      'purchase_material_synchronized' => 'تم تأكيد مزامنة مادة محاسبيًا.',
+      'purchase_material_reconciled' => 'تمت معالجة مادة في قائمة المراجعة.',
+      _ => null,
+    };
+    if (known != null) return known;
+    final message = event['message']?.toString().trim() ?? '';
+    return _containsArabic(message)
+        ? message
+        : 'تم تسجيل إجراء على فاتورة المشتريات.';
+  }
+
+  bool _containsArabic(String value) =>
+      RegExp(r'[\u0600-\u06FF]').hasMatch(value);
+
+  String _roleLabel(String role) => switch (role.trim()) {
+    'collector' => 'المدير العام',
+    'manager' => 'مدير الفرع',
+    'accountant' => 'المحاسب',
+    'admin' => 'مدير النظام',
+    _ => _containsArabic(role) ? role : '',
+  };
 
   Future<void> _run(Future<Object?> Function() operation) async {
     setState(() => _submitting = true);
@@ -1651,10 +2011,35 @@ class _PurchaseInvoiceDetailsScreenState
       await operation();
       if (mounted) _message('تم حفظ الإجراء بنجاح.');
     } catch (error) {
-      if (mounted) _message(error.toString());
+      if (mounted) _message(_operationErrorText(error));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  String _operationErrorText(Object error) {
+    if (error is FirebaseException) {
+      return switch (error.code) {
+        'permission-denied' => 'لا تملك صلاحية تنفيذ هذا الإجراء.',
+        'unavailable' ||
+        'deadline-exceeded' => 'تعذر الاتصال بالخدمة. حاول مرة أخرى.',
+        _ => 'تعذر إتمام الإجراء الآن. حاول مرة أخرى.',
+      };
+    }
+    final detail = error.toString().toLowerCase();
+    if (detail.contains('permission') || detail.contains('forbidden')) {
+      return 'لا تملك صلاحية تنفيذ هذا الإجراء.';
+    }
+    if (detail.contains('revision') || detail.contains('changed')) {
+      return 'تغيرت الفاتورة أثناء العمل عليها. حدّث الصفحة ثم حاول مرة أخرى.';
+    }
+    if (detail.contains('duplicate')) {
+      return 'توجد فاتورة مورد مطابقة مسجلة مسبقًا.';
+    }
+    if (detail.contains('network') || detail.contains('unavailable')) {
+      return 'تعذر الاتصال بالخدمة. حاول مرة أخرى.';
+    }
+    return 'تعذر إتمام الإجراء الآن. حاول مرة أخرى.';
   }
 
   String _number(dynamic value) {

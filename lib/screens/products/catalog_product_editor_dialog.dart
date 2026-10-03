@@ -25,6 +25,8 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
   BuildContext context, {
   ProductCatalogModel? product,
   required List<ProductGroupModel> groups,
+  String initialName = '',
+  String initialPrimaryUnit = '',
 }) async {
   final activeGroups = groups.where((group) => group.active).toList();
   if (product != null &&
@@ -32,7 +34,9 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
     final current = groups.where((group) => group.id == product.groupId);
     if (current.isNotEmpty) activeGroups.add(current.first);
   }
-  final nameController = TextEditingController(text: product?.name ?? '');
+  final nameController = TextEditingController(
+    text: product?.name ?? initialName,
+  );
   final codeController = TextEditingController(text: product?.legacyCode ?? '');
   final originalUnits = product == null
       ? const <CatalogUnit>[]
@@ -44,7 +48,9 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
   final unitDrafts = originalUnits
       .map(_CatalogUnitDraft.fromExisting)
       .toList(growable: true);
-  if (unitDrafts.isEmpty) unitDrafts.add(_CatalogUnitDraft.newPrimary());
+  if (unitDrafts.isEmpty) {
+    unitDrafts.add(_CatalogUnitDraft.newPrimary(initialPrimaryUnit));
+  }
   String? groupId = activeGroups.any((group) => group.id == product?.groupId)
       ? product!.groupId
       : activeGroups.isEmpty
@@ -56,7 +62,9 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (context, setDialogState) => AlertDialog(
-        title: Text(product == null ? 'إضافة مادة' : 'تعديل المادة'),
+        title: Text(
+          product == null ? 'إنشاء مادة جديدة في الكتالوج' : 'تعديل المادة',
+        ),
         content: SizedBox(
           width: 520,
           child: SingleChildScrollView(
@@ -82,6 +90,7 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
                   controller: nameController,
                   decoration: const InputDecoration(
                     labelText: 'اسم المادة أو المنتج *',
+                    helperText: 'استخدم الاسم الذي سيظهر لجميع الفروع.',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -151,7 +160,7 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
                 const Align(
                   alignment: Alignment.centerRight,
                   child: Text(
-                    'الوحدات مستقلة؛ لا يجري أي تحويل تلقائي بينها، ولا تُحفظ الأسعار في هذا النموذج.',
+                    'لن تدخل المادة إلى الكتالوج إلا بعد الحفظ. الوحدات مستقلة؛ لا يجري أي تحويل تلقائي بينها، ولا تُحفظ الأسعار هنا.',
                     style: TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 12,
@@ -242,8 +251,8 @@ class _CatalogUnitDraft {
 
   factory _CatalogUnitDraft.fromExisting(CatalogUnit unit) =>
       _CatalogUnitDraft(id: unit.id, existing: unit, rawValue: unit.rawValue);
-  factory _CatalogUnitDraft.newPrimary() =>
-      _CatalogUnitDraft(id: 'primary', existing: null, rawValue: '');
+  factory _CatalogUnitDraft.newPrimary([String rawValue = '']) =>
+      _CatalogUnitDraft(id: 'primary', existing: null, rawValue: rawValue);
   factory _CatalogUnitDraft.newAdditional(String id) =>
       _CatalogUnitDraft(id: id, existing: null, rawValue: '');
 

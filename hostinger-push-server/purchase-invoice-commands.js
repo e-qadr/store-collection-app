@@ -23,6 +23,7 @@ const {
   validatePostingPayload,
   validatePricingPayload,
   validateReceiptPayload,
+  validateBranchAccountingSyncPayload,
   validateReviewPayload,
 } = require("./purchase-invoice-domain");
 
@@ -1585,13 +1586,22 @@ function uniqueKeyData({id, brandId, keyType, normalizedValue, productId, actor,
   };
 }
 
-function accountingProfileData({productId, brandId, reference, syncState, actor, timestamp, auditId}) {
+function accountingProfileDocumentId(productId, branchId) {
+  return `${productId}__${branchId}`;
+}
+
+function accountingProfileData({
+  productId, brandId, branchId, reference, syncState, actor, timestamp, auditId, notes,
+}) {
+  const id = accountingProfileDocumentId(productId, branchId);
   return compact({
-    id: productId,
+    id,
     product_id: productId,
     brand_id: brandId,
+    branch_id: branchId,
     accounting_reference: reference,
     sync_state: syncState || "not_synced",
+    notes,
     created_by: actor.uid,
     created_at: timestamp,
     updated_by: actor.uid,
@@ -1609,7 +1619,10 @@ async function reviewProductTask({
     firestore,
     command: `review_product_${payload.action}`,
     actorUid,
-    expectedRole: ["collector", "accountant"],
+    // Catalog review is shared with the General Manager, but an accounting
+    // reference is owned by the accountant of the receiving branch.
+    expectedRole: payload.action === "mark_synchronized" ?
+      ["accountant"] : ["collector", "accountant"],
     idempotencyKey,
     requestHash,
     timestamp,
@@ -1775,9 +1788,10 @@ async function reviewProductTask({
       }
 
       const profileProductId = selectedProduct?.id;
-      if (profileProductId && (payload.accounting_reference || payload.sync_state ||
-          payload.action === "mark_synchronized")) {
-        accountingProfileRef = firestore.collection(COLLECTIONS.accountingProfiles).doc(profileProductId);
+      if (profileProductId && payload.action === "mark_synchronized") {
+        accountingProfileRef = firestore.collection(COLLECTIONS.accountingProfiles).doc(
+            accountingProfileDocumentId(profileProductId, invoice.receiving_branch_id),
+        );
         accountingProfileSnapshot = await transaction.get(accountingProfileRef);
         accountingAuditRef = firestore.collection(COLLECTIONS.productAudits).doc(randomUUID());
       }
@@ -1908,17 +1922,18 @@ async function reviewProductTask({
       if (accountingProfileRef) {
         const current = accountingProfileSnapshot.data();
         const reference = payload.accounting_reference || current?.accounting_reference;
-        const syncState = payload.action === "mark_synchronized" ? "synced" :
-          (payload.sync_state || current?.sync_state || "not_synced");
+        const syncState = "synced";
         const profile = compact({
           ...accountingProfileData({
             productId: selectedProduct.id,
             brandId: invoice.receiving_brand_id,
+            branchId: invoice.receiving_branch_id,
             reference,
             syncState,
             actor,
             timestamp,
             auditId: accountingAuditRef.id,
+            notes: current?.notes,
           }),
           created_by: current?.created_by || actor.uid,
           created_at: current?.created_at || timestamp,
@@ -2030,6 +2045,82 @@ async function reviewProductTask({
   });
 }
 
+async function syncProductBranchAccounting({
+  firestore, actorUid, productId, payload, idempotencyKey, timestamp, randomUUID,
+}) {
+  const profileId = accountingProfileDocumentId(productId, payload.branch_id);
+  return runIdempotent({
+    firestore,
+    command: "sync_product_branch_accounting",
+    actorUid,
+    expectedRole: ["accountant"],
+    idempotencyKey,
+    requestHash: canonicalRequestHash({product_id: productId, ...payload}),
+    timestamp,
+    execute: async (transaction, actor) => {
+      const productRef = firestore.collection(COLLECTIONS.products).doc(productId);
+      const branchRef = firestore.collection(COLLECTIONS.branches).doc(payload.branch_id);
+      const profileRef = firestore.collection(COLLECTIONS.accountingProfiles).doc(profileId);
+      const auditRef = firestore.collection(COLLECTIONS.productAudits).doc(randomUUID());
+      const [productSnapshot, branchSnapshot, profileSnapshot] = await Promise.all([
+        transaction.get(productRef),
+        transaction.get(branchRef),
+        transaction.get(profileRef),
+      ]);
+      const product = productSnapshot.data();
+      const branch = cleanBranch(branchSnapshot, payload.branch_id);
+      if (!productSnapshot.exists || product?.active !== true ||
+          product.brand_id !== branch.brandId) {
+        throw new PurchaseCommandError(
+            "product-branch-mismatch", 409, "The product is not available to this branch.",
+        );
+      }
+      const current = profileSnapshot.data();
+      const profile = compact({
+        ...accountingProfileData({
+          productId,
+          brandId: branch.brandId,
+          branchId: branch.id,
+          reference: payload.accounting_reference,
+          syncState: "synced",
+          actor,
+          timestamp,
+          auditId: auditRef.id,
+          notes: payload.notes || current?.notes,
+        }),
+        created_by: current?.created_by || actor.uid,
+        created_at: current?.created_at || timestamp,
+      });
+      transaction.set(profileRef, profile);
+      transaction.set(auditRef, compact({
+        id: auditRef.id,
+        entity_type: "product_branch_accounting_profile",
+        entity_id: profileId,
+        brand_id: branch.brandId,
+        action: current ? "updated" : "created",
+        ...(current ? {before: current} : {}),
+        after: profile,
+        actor_uid: actor.uid,
+        actor_name: actor.name,
+        actor_role: actor.role,
+        created_at: timestamp,
+      }));
+      return {
+        statusCode: 200,
+        responseData: {
+          invoice_id: "",
+          purchase_number: "",
+          status: "",
+          revision: 0,
+          product_id: productId,
+          branch_id: branch.id,
+          sync_state: "synced",
+        },
+      };
+    },
+  });
+}
+
 function approximatelyEqual(left, right) {
   if (left === right) return true;
   const scale = Math.max(1, Math.abs(left), Math.abs(right));
@@ -2058,6 +2149,30 @@ function amendmentChangesForInvoice(invoice, changes) {
   ]));
 }
 
+// The people who must consent to a change are the people who have actually
+// worked on the invoice. A new invoice therefore remains directly editable by
+// its creator, while every later participant is preserved as an approver.
+function amendmentParticipants(invoice) {
+  const participants = new Map();
+  const add = (uid, name, role) => {
+    const cleanUid = String(uid || "").trim();
+    const cleanRole = String(role || "").trim();
+    if (!cleanUid || !OPERATIONAL_ROLES.has(cleanRole) || participants.has(cleanUid)) return;
+    participants.set(cleanUid, {
+      uid: cleanUid,
+      name: String(name || cleanUid),
+      role: cleanRole,
+    });
+  };
+  add(invoice.created_by, invoice.created_by_name, invoice.created_by_role);
+  add(invoice.receipt_confirmed_by, invoice.receipt_confirmed_by_name, "manager");
+  for (const event of Array.isArray(invoice.history) ? invoice.history : []) {
+    if (String(event?.action || "").startsWith("purchase_amendment_")) continue;
+    add(event?.actor_id, event?.actor_name, event?.actor_role);
+  }
+  return [...participants.values()].map(publicActor);
+}
+
 function assertAmendment(amendment, amendmentId, invoice) {
   const itemChangeCount = amendment?.item_change_count ?? 0;
   const hasItemChanges = amendment?.has_item_changes === true;
@@ -2066,7 +2181,7 @@ function assertAmendment(amendment, amendmentId, invoice) {
       amendment.invoice_revision !== invoice.revision ||
       amendment.status !== "pending" ||
       !Array.isArray(amendment.required_approvers) ||
-      amendment.required_approvers.length < 2 ||
+      amendment.required_approvers.length < 1 ||
       !Array.isArray(amendment.approvals) ||
       !amendment.changes || typeof amendment.changes !== "object" ||
       !Number.isSafeInteger(itemChangeCount) ||
@@ -2091,13 +2206,17 @@ function assertAmendment(amendment, amendmentId, invoice) {
   }
 }
 
-function amendmentResponse(invoice, amendmentId, status = "pending") {
+function amendmentResponse(invoice, amendmentId, status = "pending", amendment) {
   return {
     ...responseFor(
         invoice.id, invoice.status, invoice.revision, invoice.purchase_number,
     ),
     amendment_id: amendmentId,
     amendment_status: status,
+    ...(amendment ? {
+      amendment_required_approver_count: amendment.required_approvers.length,
+      amendment_approval_count: amendment.approvals.length,
+    } : {}),
   };
 }
 
@@ -2157,32 +2276,10 @@ async function createPurchaseAmendment({
             "forbidden", 403, "The role cannot propose protected prices.",
         );
       }
-      const branchSnapshot = await transaction.get(
-          firestore.collection(COLLECTIONS.branches).doc(invoice.receiving_branch_id),
-      );
-      const branch = cleanBranch(branchSnapshot, invoice.receiving_branch_id);
-      const managers = await activeBranchManagers(
-          transaction, firestore, branch.id, branch.data,
-      );
-      const collectors = await activeUsersByRole(transaction, firestore, "collector");
-      const creator = collectors.find((entry) => entry.uid === invoice.created_by);
-      if (!creator) {
-        throw new PurchaseCommandError(
-            "invoice-creator-unavailable", 409, "The originating actor is unavailable.",
-        );
-      }
-      const manager = requiredSingleApprover(managers, "manager");
-      const accountant = requiredSingleApprover(
-          await activeUsersByRole(transaction, firestore, "accountant"),
-          "accountant",
-      );
-      const requiredApprovers = [creator, manager, accountant]
-          .filter((entry, index, all) => all.findIndex((candidate) =>
-            candidate.uid === entry.uid) === index)
-          .map(publicActor);
+      const requiredApprovers = amendmentParticipants(invoice);
       if (!requiredApprovers.some((entry) => entry.uid === actor.uid)) {
         throw new PurchaseCommandError(
-            "forbidden", 403, "Only a recorded required participant may request an amendment.",
+            "forbidden", 403, "Only a recorded participant may edit this invoice.",
         );
       }
       const storedItems = await readItems(transaction, invoiceRef, invoice);
@@ -2237,7 +2334,7 @@ async function createPurchaseAmendment({
       }
       const event = eventData(
           "purchase_amendment_requested",
-          "A controlled purchase-invoice amendment was requested.",
+          "تم حفظ تعديل فاتورة المشتريات بانتظار اعتماد المشاركين.",
           actor,
           timestamp,
       );
@@ -2284,13 +2381,16 @@ async function createPurchaseAmendment({
         recipients: requiredApprovers,
         invoice,
         type: "purchase_amendment_requested",
-        title: "Purchase amendment approval required",
-        message: `Purchase invoice ${invoice.purchase_number} has a pending amendment.`,
+        title: "يلزم اعتماد تعديل فاتورة مشتريات",
+        message: `يوجد تعديل بانتظار اعتمادك على الفاتورة ${invoice.purchase_number}.`,
         revision: invoice.revision,
         timestamp,
         excludeUid: actor.uid,
       });
-      return {statusCode: 201, responseData: amendmentResponse(invoice, amendmentRef.id)};
+      return {
+        statusCode: 201,
+        responseData: amendmentResponse(invoice, amendmentRef.id, "pending", amendment),
+      };
     },
   });
 }
@@ -2332,7 +2432,16 @@ async function decidePurchaseAmendment({
             "forbidden", 403, "Only a required participant may decide this amendment.",
         );
       }
-      if (amendment.approvals.some((entry) => entry.uid === actor.uid)) {
+      const alreadyApproved = amendment.approvals.some((entry) => entry.uid === actor.uid);
+      const allAlreadyApproved = amendment.required_approvers.every((entry) =>
+        amendment.approvals.some((approval) => approval.uid === entry.uid));
+      if (payload.decision === "apply") {
+        if (!alreadyApproved || !allAlreadyApproved) {
+          throw new PurchaseCommandError(
+              "amendment-not-ready", 409, "The amendment is not ready to apply.",
+          );
+        }
+      } else if (alreadyApproved) {
         throw new PurchaseCommandError(
             "duplicate-amendment-approval", 409, "This actor already approved the amendment.",
         );
@@ -2340,7 +2449,7 @@ async function decidePurchaseAmendment({
       if (payload.decision === "reject") {
         const event = eventData(
             "purchase_amendment_rejected",
-            "A purchase-invoice amendment was rejected; the invoice was unchanged.",
+            "رُفض تعديل فاتورة المشتريات ولم تتغير الفاتورة.",
             actor,
             timestamp,
         );
@@ -2367,13 +2476,14 @@ async function decidePurchaseAmendment({
           responseData: amendmentResponse(invoice, amendmentId, "rejected"),
         };
       }
-      const approvals = [...amendment.approvals, publicActor(actor)];
+      const approvals = payload.decision === "apply" ?
+        amendment.approvals : [...amendment.approvals, publicActor(actor)];
       const allApproved = amendment.required_approvers.every((entry) =>
         approvals.some((approval) => approval.uid === entry.uid));
       if (!allApproved) {
         const event = eventData(
             "purchase_amendment_approved",
-            "A required participant approved a purchase-invoice amendment.",
+            "اعتمد أحد المشاركين تعديل فاتورة المشتريات.",
             actor,
             timestamp,
         );
@@ -2387,7 +2497,10 @@ async function decidePurchaseAmendment({
         });
         return {
           statusCode: 200,
-          responseData: amendmentResponse(invoice, amendmentId, "pending"),
+          responseData: amendmentResponse(invoice, amendmentId, "pending", {
+            ...amendment,
+            approvals,
+          }),
         };
       }
       const publicChanges = amendment.changes;
@@ -2434,7 +2547,7 @@ async function decidePurchaseAmendment({
       }
       const event = eventData(
           "purchase_amendment_applied",
-          "All required participants approved a purchase-invoice amendment.",
+          "اكتملت الاعتمادات وطُبق تعديل فاتورة المشتريات.",
           actor,
           timestamp,
       );
@@ -2758,7 +2871,8 @@ function createAuthentication({admin}) {
 }
 
 function commandRoute({
-  firestore, admin, now, randomUUID, validator, execute, taskRoute = false, amendmentRoute = false,
+  firestore, admin, now, randomUUID, validator, execute, taskRoute = false,
+  amendmentRoute = false, productRoute = false,
 }) {
   return async (request, response) => {
     try {
@@ -2770,12 +2884,15 @@ function commandRoute({
         documentId(request.params.taskId, "task_id");
       const amendmentId = request.params.amendmentId === undefined ? undefined :
         documentId(request.params.amendmentId, "amendment_id");
+      const productId = request.params.productId === undefined ? undefined :
+        documentId(request.params.productId, "product_id");
       const result = await execute({
         firestore,
         actorUid: request.purchaseAuth.uid,
         ...(invoiceId ? {invoiceId} : {}),
         ...(taskRoute && taskId ? {taskId} : {}),
         ...(amendmentRoute && amendmentId ? {amendmentId} : {}),
+        ...(productRoute && productId ? {productId} : {}),
         payload,
         idempotencyKey,
         timestamp: timestampFor(admin, now),
@@ -2830,6 +2947,10 @@ function createPurchaseInvoiceCommandRouter({
     firestore, admin, now, randomUUID, validator: validateReviewPayload,
     execute: reviewProductTask, taskRoute: true,
   }));
+  router.post("/product-accounting-branches/:productId/sync", commandRoute({
+    firestore, admin, now, randomUUID, validator: validateBranchAccountingSyncPayload,
+    execute: syncProductBranchAccounting, productRoute: true,
+  }));
   return router;
 }
 
@@ -2849,5 +2970,6 @@ module.exports = {
   isOperationalProfile,
   postToAccounting,
   reviewProductTask,
+  syncProductBranchAccounting,
   updateCatalogPrice,
 };

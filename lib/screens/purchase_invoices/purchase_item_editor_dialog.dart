@@ -96,6 +96,7 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
   late final TextEditingController _provisionalPriceController;
   late final TextEditingController _notesController;
   String? _catalogUnitId;
+  String? _validationError;
 
   @override
   void initState() {
@@ -145,6 +146,11 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
         (price != null && price < 0) ||
         !validCatalogUnit ||
         (widget.isUnmatched && (materialName.isEmpty || unitText.isEmpty))) {
+      setState(() {
+        _validationError = widget.isUnmatched
+            ? 'اكتب اسم المادة ووحدتها، ثم أدخل كمية صحيحة.'
+            : 'اختر وحدة صحيحة وأدخل كمية صحيحة.';
+      });
       return;
     }
     final result = widget.isUnmatched
@@ -177,11 +183,45 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: widget.isUnmatched
+                        ? Colors.orange.withValues(alpha: 0.09)
+                        : Colors.green.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        widget.isUnmatched
+                            ? Icons.pending_actions_rounded
+                            : Icons.inventory_2_rounded,
+                        color: widget.isUnmatched
+                            ? Colors.orange.shade800
+                            : Colors.green.shade700,
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          widget.isUnmatched
+                              ? 'هذه المادة غير موجودة في الكتالوج. ستُضاف للفاتورة فقط ثم تُرسل للمراجعة؛ لن تدخل الكتالوج تلقائياً.'
+                              : 'هذه مادة موجودة في الكتالوج. اختر الوحدة والكمية المطلوبة للفاتورة.',
+                          style: const TextStyle(height: 1.35),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
                 if (widget.isUnmatched) ...[
                   TextField(
                     key: const Key('purchase-item-name'),
                     controller: _nameController,
-                    decoration: const InputDecoration(labelText: 'اسم المادة'),
+                    decoration: const InputDecoration(
+                      labelText: 'اسم المادة كما ورد *',
+                    ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
@@ -196,7 +236,7 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                     key: const Key('purchase-item-unit'),
                     controller: _unitController,
                     decoration: const InputDecoration(
-                      labelText: 'الوحدة كما وردت',
+                      labelText: 'الوحدة كما وردت *',
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -258,6 +298,13 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                     helperText: 'يمكن كتابة ملاحظة تفصيلية حتى 1000 حرف.',
                   ),
                 ),
+                if (_validationError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _validationError!,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ],
               ],
             ),
           ),

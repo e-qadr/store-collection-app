@@ -99,6 +99,17 @@ class PurchaseInvoiceRead {
   DateTime? get lastUpdated => _date(data['last_updated']);
   String get openAmendmentId => data['open_amendment_id']?.toString() ?? '';
   bool get hasPendingAmendment => openAmendmentId.isNotEmpty;
+  String get createdBy => data['created_by']?.toString() ?? '';
+  String get receiptConfirmedBy =>
+      data['receipt_confirmed_by']?.toString() ?? '';
+
+  /// Everyone recorded here has performed a business action on the invoice
+  /// and is therefore part of its controlled amendment workflow.
+  Set<String> get amendmentParticipantUids => {
+    if (createdBy.isNotEmpty) createdBy,
+    if (receiptConfirmedBy.isNotEmpty) receiptConfirmedBy,
+    ...history.map((event) => event.actorId).where((id) => id.isNotEmpty),
+  };
 
   String get currentResponsibleParty => switch (status) {
     PurchaseInvoiceStatus.pendingReceiverReview => 'مدير الفرع المستلم',
@@ -348,6 +359,7 @@ class PurchaseInvoiceItem {
 class PurchaseInvoiceHistoryEvent {
   final String action;
   final String message;
+  final String actorId;
   final String actorName;
   final String actorRole;
   final DateTime? timestamp;
@@ -355,6 +367,7 @@ class PurchaseInvoiceHistoryEvent {
   const PurchaseInvoiceHistoryEvent({
     required this.action,
     required this.message,
+    required this.actorId,
     required this.actorName,
     required this.actorRole,
     this.timestamp,
@@ -364,6 +377,7 @@ class PurchaseInvoiceHistoryEvent {
       PurchaseInvoiceHistoryEvent(
         action: data['action']?.toString() ?? '',
         message: data['message']?.toString() ?? '',
+        actorId: data['actor_id']?.toString() ?? '',
         actorName: data['actor_name']?.toString() ?? '',
         actorRole: data['actor_role']?.toString() ?? '',
         timestamp: _date(data['timestamp']),

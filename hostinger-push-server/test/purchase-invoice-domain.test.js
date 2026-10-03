@@ -11,6 +11,7 @@ const {
   validateAmendmentCreatePayload,
   validateCreatePayload,
   validateCatalogPricePayload,
+  validateBranchAccountingSyncPayload,
   validatePostingPayload,
   validatePricingPayload,
   validateReceiptPayload,
@@ -24,6 +25,25 @@ function fillUtf8Bytes(prefix, maximumBytes, character = "م") {
   const remainder = maximumBytes - prefixBytes - (count * characterBytes);
   return `${prefix}${character.repeat(count)}${"x".repeat(remainder)}`;
 }
+
+test("branch accounting synchronization requires a branch and its reference", () => {
+  assert.deepEqual(
+      validateBranchAccountingSyncPayload({
+        branch_id: "branch-r",
+        accounting_reference: " ACC-101 ",
+        notes: " تم الربط ",
+      }),
+      {
+        branch_id: "branch-r",
+        accounting_reference: "ACC-101",
+        notes: "تم الربط",
+      },
+  );
+  assert.throws(
+      () => validateBranchAccountingSyncPayload({branch_id: "branch-r"}),
+      PurchaseCommandError,
+  );
+});
 
 test("purchase creation accepts catalog, unmatched, optional supplier fields, and provisional prices", () => {
   const result = validateCreatePayload({

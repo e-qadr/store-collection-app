@@ -14,6 +14,7 @@ const {
   decidePurchaseAmendment,
   postToAccounting,
   reviewProductTask,
+  syncProductBranchAccounting,
   updateCatalogPrice,
 } = require("../purchase-invoice-commands");
 const {safeJsonErrorHandler} = require("../inter-branch-invoice-commands");
@@ -564,11 +565,6 @@ test("a fully approved protected price amendment keeps an accounting-ready invoi
     payload: {expected_revision: 2, decision: "approve"},
     idempotencyKey: "confirmed-amendment-manager-1", timestamp: now,
   });
-  await decidePurchaseAmendment({
-    firestore, actorUid: "accountant", invoiceId, amendmentId,
-    payload: {expected_revision: 2, decision: "approve"},
-    idempotencyKey: "confirmed-amendment-accountant-1", timestamp: now,
-  });
   const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
   const price = firestore.document(COLLECTIONS.prices, invoiceId);
   assert.equal(invoice.status, "pendingAccountingEntry");
@@ -850,6 +846,62 @@ test("review clarification cycle and concurrent revision checks are enforced", a
   assert.equal(settled.filter((entry) => entry.status === "rejected").length, 1);
 });
 
+test("accountants link shared catalog materials independently per branch", async () => {
+  const data = seed();
+  data.branches["branch-r-2"] = {
+    id: "branch-r-2",
+    name: "فرع العلامة الثاني",
+    brand_id: "brand-r",
+    branch_code: "BR2",
+  };
+  const firestore = new FakeFirestore(data);
+  await syncProductBranchAccounting({
+    firestore,
+    actorUid: "accountant",
+    productId: "product-r",
+    payload: {
+      branch_id: "branch-r",
+      accounting_reference: "ACC-R-01",
+      notes: "تم الربط في الفرع الأول",
+    },
+    idempotencyKey: "branch-accounting-01",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  await syncProductBranchAccounting({
+    firestore,
+    actorUid: "accountant",
+    productId: "product-r",
+    payload: {
+      branch_id: "branch-r-2",
+      accounting_reference: "ACC-R-02",
+    },
+    idempotencyKey: "branch-accounting-02",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  const first = firestore.document(
+      COLLECTIONS.accountingProfiles, "product-r__branch-r",
+  );
+  const second = firestore.document(
+      COLLECTIONS.accountingProfiles, "product-r__branch-r-2",
+  );
+  assert.equal(first.sync_state, "synced");
+  assert.equal(first.accounting_reference, "ACC-R-01");
+  assert.equal(first.branch_id, "branch-r");
+  assert.equal(second.sync_state, "synced");
+  assert.equal(second.accounting_reference, "ACC-R-02");
+  await assert.rejects(() => syncProductBranchAccounting({
+    firestore,
+    actorUid: "collector",
+    productId: "product-r",
+    payload: {branch_id: "branch-r", accounting_reference: "NOT-ALLOWED"},
+    idempotencyKey: "branch-accounting-03",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  }));
+});
+
 test("accountant creates and synchronizes a catalog product with duplicate prevention", async () => {
   const firestore = new FakeFirestore(seed());
   const {result, randomUUID} = await createInvoice(firestore);
@@ -891,8 +943,8 @@ test("accountant creates and synchronizes a catalog product with duplicate preve
   assert.equal(task.original_material_name, "مادة غير مطابقة");
   assert.equal(task.canonical_product_id, productId);
   assert.equal(
-      firestore.document(COLLECTIONS.accountingProfiles, productId).sync_state,
-      "not_synced",
+      firestore.document(COLLECTIONS.accountingProfiles, productId),
+      undefined,
   );
 
   await reviewProductTask({
@@ -911,7 +963,9 @@ test("accountant creates and synchronizes a catalog product with duplicate preve
     randomUUID,
   });
   assert.equal(
-      firestore.document(COLLECTIONS.accountingProfiles, productId).sync_state,
+      firestore.document(
+          COLLECTIONS.accountingProfiles, `${productId}__branch-r`,
+      ).sync_state,
       "synced",
   );
   assert.equal(
@@ -1033,11 +1087,36 @@ test("the purchase route accepts measured 50-item payloads over 16kb and returns
   });
 });
 
-test("controlled amendment waits for all fixed approvers, keeps the invoice authoritative, then applies atomically", async () => {
+test("controlled amendment waits for every recorded participant, keeps the invoice authoritative, then applies atomically", async () => {
   const firestore = new FakeFirestore(seed());
   const {result} = await createInvoice(firestore);
   const invoiceId = result.responseData.invoice_id;
   const item = publicItems(firestore, invoiceId)[0];
+  const originalInvoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).update({
+    status: "pendingAccountingEntry",
+    receipt_confirmed_by: "manager-r",
+    receipt_confirmed_by_name: "مدير الفرع المستلم",
+    receipt_confirmed_at: now,
+    history: [...originalInvoice.history,
+      {
+        action: "purchase_receipt_confirmed",
+        message: "تم تأكيد الاستلام.",
+        actor_id: "manager-r",
+        actor_name: "مدير الفرع المستلم",
+        actor_role: "manager",
+        timestamp: now,
+      },
+      {
+        action: "purchase_prices_confirmed",
+        message: "تم اعتماد الأسعار.",
+        actor_id: "accountant",
+        actor_name: "المحاسب",
+        actor_role: "accountant",
+        timestamp: now,
+      },
+    ],
+  });
   const created = await createPurchaseAmendment({
     firestore,
     actorUid: "collector",
@@ -1142,14 +1221,9 @@ test("pre-receipt amendment atomically replaces a canonical purchase line withou
   assert.equal(publicItems(firestore, invoiceId)[0].canonical_product_id, "product-r");
 
   await decidePurchaseAmendment({
-    firestore, actorUid: "manager-r", invoiceId, amendmentId,
-    payload: {expected_revision: 1, decision: "approve"},
-    idempotencyKey: "amend-item-manager-0001", timestamp: now,
-  });
-  await decidePurchaseAmendment({
-    firestore, actorUid: "accountant", invoiceId, amendmentId,
-    payload: {expected_revision: 1, decision: "approve"},
-    idempotencyKey: "amend-item-accountant-0001", timestamp: now,
+    firestore, actorUid: "collector", invoiceId, amendmentId,
+    payload: {expected_revision: 1, decision: "apply"},
+    idempotencyKey: "amend-item-apply-0001", timestamp: now,
   });
 
   const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
@@ -1188,16 +1262,10 @@ test("header-only amendments remain available through every pre-final purchase s
     });
     assert.equal(created.statusCode, 201);
     await decidePurchaseAmendment({
-      firestore, actorUid: "manager-r", invoiceId,
+      firestore, actorUid: "collector", invoiceId,
       amendmentId: created.responseData.amendment_id,
-      payload: {expected_revision: 1, decision: "approve"},
-      idempotencyKey: `amend-stage-manager-${status}`, timestamp: now,
-    });
-    await decidePurchaseAmendment({
-      firestore, actorUid: "accountant", invoiceId,
-      amendmentId: created.responseData.amendment_id,
-      payload: {expected_revision: 1, decision: "approve"},
-      idempotencyKey: `amend-stage-accountant-${status}`, timestamp: now,
+      payload: {expected_revision: 1, decision: "apply"},
+      idempotencyKey: `amend-stage-apply-${status}`, timestamp: now,
     });
     const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
     assert.equal(invoice.status, status);
@@ -1236,6 +1304,21 @@ test("amendment rejection, stale versions, duplicate approvals, unauthorized act
   const firestore = new FakeFirestore(seed());
   const {result} = await createInvoice(firestore);
   const invoiceId = result.responseData.invoice_id;
+  const originalInvoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).update({
+    status: "pendingPriceEntry",
+    receipt_confirmed_by: "manager-r",
+    receipt_confirmed_by_name: "مدير الفرع المستلم",
+    receipt_confirmed_at: now,
+    history: [...originalInvoice.history, {
+      action: "purchase_receipt_confirmed",
+      message: "تم تأكيد الاستلام.",
+      actor_id: "manager-r",
+      actor_name: "مدير الفرع المستلم",
+      actor_role: "manager",
+      timestamp: now,
+    }],
+  });
   await assert.rejects(
       () => createPurchaseAmendment({
         firestore,
