@@ -581,6 +581,8 @@ class PurchaseInvoiceApiService {
     'purchase-unmatched-unit-invalid' => 'وحدة المادة غير المطابقة غير صالحة.',
     'duplicate-item' => 'لا يمكن تكرار المادة والوحدة نفسها في الفاتورة.',
     'branch-not-found' => 'الفرع المستلم غير متاح.',
+    'branch-code-missing' =>
+      'رمز الفرع غير مهيأ. أضفه من بيانات الفرع قبل إنشاء فاتورة جديدة.',
     'branch-brand-missing' ||
     'branch-brand-invalid' => 'بيانات العلامة التجارية للفرع غير مكتملة.',
     'receiving-manager-not-configured' =>

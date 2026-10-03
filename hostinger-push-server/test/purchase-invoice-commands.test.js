@@ -219,6 +219,9 @@ test("legacy purchase headers without the branch-type marker remain transition-c
   // Historical public headers were written before this explicitly persisted
   // normal-branch marker. They must remain operational without data migration.
   delete firestore._collection(COLLECTIONS.invoices).get(invoiceId).receiving_branch_type;
+  // Branch-scoped invoice numbering was also introduced later. A missing code
+  // must not prevent the branch manager from completing a historical invoice.
+  delete firestore._collection(COLLECTIONS.branches).get("branch-r").branch_code;
   const items = publicItems(firestore, invoiceId);
   const receipt = await confirmReceipt({
     firestore,
@@ -370,6 +373,16 @@ test("creation validates collector role, receiving brand ownership, duplicates, 
     timestamp: now,
     randomUUID,
   }), (error) => error.code === "forbidden");
+  delete firestore._collection(COLLECTIONS.branches).get("branch-r").branch_code;
+  await assert.rejects(() => createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload: createPayload(),
+    idempotencyKey: "missing-branch-code-1",
+    timestamp: now,
+    randomUUID,
+  }), (error) => error.code === "branch-code-missing");
+  firestore._collection(COLLECTIONS.branches).get("branch-r").branch_code = "BR";
   const wrongBrand = createPayload();
   wrongBrand.items[0] = {...wrongBrand.items[0], product_id: "product-x"};
   await assert.rejects(() => createPurchaseInvoice({

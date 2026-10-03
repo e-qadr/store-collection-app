@@ -174,7 +174,7 @@ function activeDocument(data) {
   return data && data.active !== false && data.isActive !== false && data.is_active !== false;
 }
 
-function cleanBranch(snapshot, branchId) {
+function cleanBranch(snapshot, branchId, {requireCode = false} = {}) {
   if (!snapshot.exists || !activeDocument(snapshot.data())) {
     throw new PurchaseCommandError("branch-not-found", 404, "The receiving branch is unavailable.");
   }
@@ -187,7 +187,10 @@ function cleanBranch(snapshot, branchId) {
     throw new PurchaseCommandError("branch-brand-missing", 409, "The branch brand is missing.");
   }
   const branchCode = String(data.branch_code || "").trim().toUpperCase();
-  if (!branchCode || !/^[A-Z0-9_-]{2,12}$/.test(branchCode)) {
+  // Branch codes were introduced after some purchase invoices had already
+  // been created. They are needed to allocate a new branch-scoped number,
+  // but must not block a later action on a historical invoice.
+  if (requireCode && (!branchCode || !/^[A-Z0-9_-]{2,12}$/.test(branchCode))) {
     throw new PurchaseCommandError("branch-code-missing", 409, "The receiving branch code is invalid.");
   }
   return {id: branchId, name: bounded(data.name, branchId, 200), brandId, branchCode, data};
@@ -739,7 +742,7 @@ async function createPurchaseInvoice({
     execute: async (transaction, actor) => {
       const branchRef = firestore.collection(COLLECTIONS.branches).doc(payload.receiving_branch_id);
       const branchSnapshot = await transaction.get(branchRef);
-      const branch = cleanBranch(branchSnapshot, payload.receiving_branch_id);
+      const branch = cleanBranch(branchSnapshot, payload.receiving_branch_id, {requireCode: true});
       const brandSnapshot = await transaction.get(
           firestore.collection(COLLECTIONS.brands).doc(branch.brandId),
       );

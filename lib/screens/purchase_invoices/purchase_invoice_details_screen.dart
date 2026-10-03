@@ -2264,6 +2264,9 @@ class _PurchaseInvoiceDetailsScreenState
   }
 
   String _operationErrorText(Object error) {
+    if (error is PurchaseInvoiceApiException) {
+      return error.message;
+    }
     if (error is FirebaseException) {
       return switch (error.code) {
         'permission-denied' => 'لا تملك صلاحية تنفيذ هذا الإجراء.',
