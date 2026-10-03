@@ -2367,6 +2367,25 @@ service cloud.firestore {
         ]);
     }
 
+    // Some requests created before the consumable workflow was finalized use
+    // the current pending status but do not yet contain the review metadata
+    // fields.  They must be allowed to move forward once, rather than getting
+    // stranded at the General Manager step.  This is deliberately limited to
+    // records that have never been reviewed and to the single forward
+    // transition; it does not permit reopening, arbitrary edits, or a second
+    // review of an existing request.
+    function consumableMetadataCompatibilityReviewAllowed() {
+      return role() == 'collector' &&
+        consumableAwaitingCollectorReview(resource.data) &&
+        !resource.data.keys().hasAny(['reviewed_by', 'reviewed_at']) &&
+        request.resource.data.status == 'pendingAccountingApproval' &&
+        request.resource.data.reviewed_by == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'items', 'collector_quantity', 'status', 'collector_notes',
+          'reviewed_by', 'reviewed_at', 'last_updated', 'history'
+        ]);
+    }
+
     function consumableAccountingApprovalAllowed() {
       return role() == 'accountant' &&
         resource.data.status == 'pendingAccountingApproval' &&
@@ -2420,6 +2439,7 @@ service cloud.firestore {
       allow update: if operationalUser() &&
         (consumableCollectorReviewAllowed() ||
           consumableLegacyCollectorReviewAllowed() ||
+          consumableMetadataCompatibilityReviewAllowed() ||
           consumableAccountingApprovalAllowed() ||
           consumableRejectionAllowed());
       allow delete: if false;
