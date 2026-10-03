@@ -230,24 +230,24 @@ class _PurchaseInvoiceDetailsScreenState
             ),
           ],
         ),
+        bottomNavigationBar: _footerActions(
+          invoice,
+          verifiedPrices ?? verifiedDraft,
+        ),
         body: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 142),
           children: [
             _headerCard(invoice, verifiedPrices),
             const SizedBox(height: 12),
-            Text(
-              'المواد',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            _sectionTitle(
+              icon: Icons.inventory_2_outlined,
+              title: 'مواد الفاتورة',
+              trailing: '${invoice.items.length} مواد',
             ),
             const SizedBox(height: 8),
             ...invoice.items.map((item) => _itemCard(item, verifiedPrices)),
-            const SizedBox(height: 12),
-            _action(invoice, verifiedPrices ?? verifiedDraft),
-            const SizedBox(height: 12),
             _amendmentSection(invoice, verifiedPrices ?? verifiedDraft),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             _timeline(invoice),
           ],
         ),
@@ -260,43 +260,128 @@ class _PurchaseInvoiceDetailsScreenState
     PurchaseInvoicePriceSnapshot? prices,
   ) {
     return Card(
+      clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Container(
+              margin: EdgeInsets.zero,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: invoice.status.color.withValues(alpha: 0.07),
+                border: Border(
+                  bottom: BorderSide(
+                    color: invoice.status.color.withValues(alpha: 0.18),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: invoice.status.color.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      Icons.receipt_long_rounded,
+                      color: invoice.status.color,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'فاتورة مشتريات',
+                          style: TextStyle(color: AppTheme.textHint),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          invoice.purchaseNumber,
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _statusPill(invoice),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (invoice.supplierName.isNotEmpty) ...[
+              Text(
+                invoice.supplierName,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              if (invoice.supplierInvoiceNumber.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Text(
+                    'فاتورة المورد: ${invoice.supplierInvoiceNumber}',
+                    style: const TextStyle(color: AppTheme.textHint),
+                  ),
+                ),
+              const SizedBox(height: 12),
+            ],
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    invoice.status.label,
-                    style: TextStyle(
-                      color: invoice.status.color,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  child: _headerFact(
+                    icon: Icons.storefront_rounded,
+                    label: 'الفرع المستلم',
+                    value: invoice.receivingBranchName.isEmpty
+                        ? 'غير محدد'
+                        : invoice.receivingBranchName,
                   ),
                 ),
-                Text(invoice.currency),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _headerFact(
+                    icon: Icons.calendar_month_rounded,
+                    label: 'تاريخ المورد',
+                    value: invoice.supplierInvoiceDate.isEmpty
+                        ? 'غير محدد'
+                        : invoice.supplierInvoiceDate,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _headerFact(
+                    icon: Icons.payments_outlined,
+                    label: 'العملة',
+                    value: invoice.currency.isEmpty ? '-' : invoice.currency,
+                  ),
+                ),
               ],
             ),
-            const Divider(),
-            _line('رقم الفاتورة (النظام)', invoice.purchaseNumber),
-            _line('الفرع المستلم', invoice.receivingBranchName),
-            _line('المورد', invoice.supplierName),
-            _line('رقم فاتورة المورد / الورقية', invoice.supplierInvoiceNumber),
-            _line('تاريخ فاتورة المورد', invoice.supplierInvoiceDate),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+            Text(
+              'ملخص الفاتورة',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${invoice.itemCount} مواد مطلوبة • ${invoice.currentResponsibleParty}',
+              style: const TextStyle(color: AppTheme.textHint),
+            ),
             if (invoice.generalManagerNotes.isNotEmpty)
-              _line('ملاحظات المدير العام', invoice.generalManagerNotes),
+              _noteLine('ملاحظات المدير العام', invoice.generalManagerNotes),
             if (invoice.receiverNotes.isNotEmpty)
-              _line('ملاحظات الاستلام', invoice.receiverNotes),
+              _noteLine('ملاحظات الاستلام', invoice.receiverNotes),
             if (_mayReadPrices && prices?.pricingState == 'confirmed') ...[
-              const Divider(),
-              _line(
-                'الإجمالي المحمي',
-                '${_number(prices?.invoiceTotal)} ${invoice.currency}',
-              ),
-              if ((prices?.accountingReference ?? '').isNotEmpty)
-                _line('المرجع المحاسبي', prices!.accountingReference),
+              const SizedBox(height: 12),
+              _protectedSummary(invoice, prices!),
             ],
             if (invoice.postedWithUnresolvedOverride)
               const Padding(
@@ -318,6 +403,7 @@ class _PurchaseInvoiceDetailsScreenState
   ) {
     final protectedItem = _mayReadPrices ? prices?.itemById(item.id) : null;
     return Card(
+      margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -325,6 +411,13 @@ class _PurchaseInvoiceDetailsScreenState
           children: [
             Row(
               children: [
+                CircleAvatar(
+                  radius: 15,
+                  backgroundColor: AppTheme.primaryOlive.withValues(alpha: 0.1),
+                  foregroundColor: AppTheme.primaryOlive,
+                  child: Text('${item.lineNumber}'),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     item.displayName,
@@ -335,32 +428,290 @@ class _PurchaseInvoiceDetailsScreenState
               ],
             ),
             if (item.canonicalProductName.isNotEmpty && item.isUnmatched)
-              Text('القيمة الأصلية: ${item.originalMaterialName}'),
-            Text(
-              'المطلوب: ${_number(item.orderedQuantity)} ${item.displayUnit}',
-            ),
-            if (item.receivedQuantity != null)
-              Text(
-                'المستلم: ${_number(item.receivedQuantity)} ${item.displayUnit}',
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('القيمة الأصلية: ${item.originalMaterialName}'),
               ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _itemFact(
+                    label: 'المطلوب',
+                    value:
+                        '${_number(item.orderedQuantity)} ${item.displayUnit}',
+                  ),
+                ),
+                if (item.receivedQuantity != null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _itemFact(
+                      label: 'المستلم',
+                      value:
+                          '${_number(item.receivedQuantity)} ${item.displayUnit}',
+                    ),
+                  ),
+                ],
+              ],
+            ),
             if (item.missingQuantity > 0 || item.damagedQuantity > 0)
-              Text(
-                'ناقص: ${_number(item.missingQuantity)} — تالف: ${_number(item.damagedQuantity)}',
-                style: const TextStyle(color: AppTheme.errorColor),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  'ناقص: ${_number(item.missingQuantity)} — تالف: ${_number(item.damagedQuantity)}',
+                  style: const TextStyle(color: AppTheme.errorColor),
+                ),
               ),
             if (item.discrepancyNotes.isNotEmpty)
-              Text('ملاحظة: ${item.discrepancyNotes}'),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('ملاحظة: ${item.discrepancyNotes}'),
+              ),
             if (protectedItem != null)
-              Text(
-                'السعر: ${_number(protectedItem.unitPrice)} — '
-                'الإجمالي: ${_number(protectedItem.lineTotal)} ${prices!.currency}',
-                key: Key('protected-price-${item.id}'),
-                style: const TextStyle(fontWeight: FontWeight.bold),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  'السعر: ${_number(protectedItem.unitPrice)} — '
+                  'الإجمالي: ${_number(protectedItem.lineTotal)} ${prices!.currency}',
+                  key: Key('protected-price-${item.id}'),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            if (item.lineNotes.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  item.lineNotes,
+                  style: const TextStyle(color: AppTheme.textHint),
+                ),
               ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _sectionTitle({
+    required IconData icon,
+    required String title,
+    String? trailing,
+  }) => Row(
+    children: [
+      Icon(icon, color: AppTheme.primaryOlive),
+      const SizedBox(width: 8),
+      Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+      const Spacer(),
+      if (trailing != null)
+        Text(trailing, style: const TextStyle(color: AppTheme.textHint)),
+    ],
+  );
+
+  Widget _statusPill(PurchaseInvoiceRead invoice) => Container(
+    constraints: const BoxConstraints(maxWidth: 128),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+    decoration: BoxDecoration(
+      color: invoice.status.color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(
+      invoice.status.label,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: invoice.status.color,
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  );
+
+  Widget _headerFact({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) => Container(
+    constraints: const BoxConstraints(minHeight: 82),
+    padding: const EdgeInsets.all(9),
+    decoration: BoxDecoration(
+      color: AppTheme.surfaceColor,
+      border: Border.all(color: AppTheme.dividerColor),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 16, color: AppTheme.primaryOlive),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: AppTheme.textHint),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+        ),
+      ],
+    ),
+  );
+
+  Widget _itemFact({required String label, required String value}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    decoration: BoxDecoration(
+      color: AppTheme.primaryOlive.withValues(alpha: 0.05),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: AppTheme.textHint, fontSize: 11),
+        ),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+      ],
+    ),
+  );
+
+  Widget _noteLine(String label, String text) => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: Text('$label: $text'),
+  );
+
+  Widget _protectedSummary(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoicePriceSnapshot prices,
+  ) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: AppTheme.successColor.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'الإجمالي المعتمد: ${_number(prices.invoiceTotal)} ${invoice.currency}',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        if (prices.accountingReference.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text('المرجع المحاسبي: ${prices.accountingReference}'),
+        ],
+      ],
+    ),
+  );
+
+  Widget _footerActions(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoicePriceSnapshot? prices,
+  ) {
+    final action = _action(invoice, prices);
+    final hasAction = action is! SizedBox;
+    final mayRequestAmendment =
+        !invoice.hasPendingAmendment && _mayRequestAmendment(invoice);
+    if (!hasAction && !mayRequestAmendment) return const SizedBox.shrink();
+    final prompt = _actionPrompt(invoice, hasAction);
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        decoration: const BoxDecoration(
+          color: AppTheme.cardColor,
+          border: Border(top: BorderSide(color: AppTheme.dividerColor)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  hasAction ? Icons.task_alt_rounded : Icons.edit_note_rounded,
+                  size: 18,
+                  color: hasAction
+                      ? invoice.status.color
+                      : AppTheme.warningColor,
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    prompt,
+                    style: const TextStyle(
+                      color: AppTheme.textHint,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 9),
+            if (hasAction && mayRequestAmendment)
+              Row(
+                children: [
+                  Expanded(child: action),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('request-purchase-amendment'),
+                      onPressed: _submitting
+                          ? null
+                          : () => _requestAmendment(invoice, prices),
+                      icon: const Icon(Icons.edit_note_rounded),
+                      label: const Text('طلب تعديل'),
+                    ),
+                  ),
+                ],
+              )
+            else if (hasAction)
+              SizedBox(width: double.infinity, child: action)
+            else
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  key: const Key('request-purchase-amendment'),
+                  onPressed: _submitting
+                      ? null
+                      : () => _requestAmendment(invoice, prices),
+                  icon: const Icon(Icons.edit_note_rounded),
+                  label: const Text('طلب تعديل الفاتورة'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _actionPrompt(PurchaseInvoiceRead invoice, bool hasAction) {
+    if (hasAction) {
+      return switch (invoice.status) {
+        PurchaseInvoiceStatus.pendingReceiverReview =>
+          'راجع الكميات الفعلية ثم أكد الاستلام أو سجّل الفروقات.',
+        PurchaseInvoiceStatus.pendingPriceEntry =>
+          'أدخل سعر كل مادة واعتمده لتنتقل الفاتورة إلى المحاسب.',
+        PurchaseInvoiceStatus.pendingAccountingEntry =>
+          'أكمل الأسعار إن لزم، ثم أدخل المرجع المحاسبي ورحّل الفاتورة.',
+        _ => 'يوجد إجراء متاح لك على هذه الفاتورة.',
+      };
+    }
+    return switch (invoice.status) {
+      PurchaseInvoiceStatus.pendingReceiverReview =>
+        'بانتظار مدير الفرع المستلم لتأكيد الكميات.',
+      PurchaseInvoiceStatus.pendingPriceEntry =>
+        'بانتظار المدير العام لاعتماد الأسعار.',
+      PurchaseInvoiceStatus.pendingAccountingEntry =>
+        'بانتظار المحاسب لإدخال المرجع والترحيل.',
+      PurchaseInvoiceStatus.postedToAccounting =>
+        'اكتملت الفاتورة وتم ترحيلها محاسبياً.',
+      PurchaseInvoiceStatus.unknown =>
+        'تعذر تحديد الإجراء التالي لهذه الفاتورة.',
+    };
   }
 
   Widget _action(
@@ -729,15 +1080,7 @@ class _PurchaseInvoiceDetailsScreenState
     PurchaseInvoicePriceSnapshot? prices,
   ) {
     if (!invoice.hasPendingAmendment) {
-      if (!_mayRequestAmendment(invoice)) return const SizedBox.shrink();
-      return OutlinedButton.icon(
-        key: const Key('request-purchase-amendment'),
-        onPressed: _submitting
-            ? null
-            : () => _requestAmendment(invoice, prices),
-        icon: const Icon(Icons.edit_note_rounded),
-        label: const Text('طلب تعديل الفاتورة'),
-      );
+      return const SizedBox.shrink();
     }
     return StreamBuilder<PurchaseInvoiceAmendment?>(
       stream: _service.watchAmendment(invoice.openAmendmentId),
@@ -1312,14 +1655,6 @@ class _PurchaseInvoiceDetailsScreenState
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
-  }
-
-  Widget _line(String label, String value) {
-    if (value.trim().isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 5),
-      child: Text('$label: $value'),
-    );
   }
 
   String _number(dynamic value) {

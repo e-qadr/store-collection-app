@@ -91,12 +91,22 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 96),
               children: [
+                _branchSummary(invoices),
+                const SizedBox(height: 14),
                 if (widget.role == UserRole.collector ||
                     widget.role == UserRole.accountant) ...[
                   Card(
+                    clipBehavior: Clip.antiAlias,
                     child: ListTile(
                       key: const Key('purchase-review-queue'),
-                      leading: const Icon(Icons.rule_folder_rounded),
+                      leading: Container(
+                        padding: const EdgeInsets.all(9),
+                        decoration: BoxDecoration(
+                          color: AppTheme.oliveSurface,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.rule_folder_rounded),
+                      ),
                       title: const Text('مراجعة المواد غير المطابقة'),
                       subtitle: const Text(
                         'ربط المواد أو إنشاؤها ومتابعة المزامنة المحاسبية',
@@ -118,6 +128,13 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                     context,
                   ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                 ),
+                const SizedBox(height: 3),
+                Text(
+                  invoices.isEmpty
+                      ? 'لا توجد مهام معلقة في هذا الفرع.'
+                      : '${invoices.length} فواتير تحتاج إجراء دورك الآن.',
+                  style: const TextStyle(color: AppTheme.textHint),
+                ),
                 const SizedBox(height: 12),
                 if (invoices.isEmpty)
                   const _PurchaseEmpty(
@@ -128,6 +145,8 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                 else
                   ...invoices.map(
                     (invoice) => Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      clipBehavior: Clip.antiAlias,
                       child: ListTile(
                         key: Key('purchase-${invoice.id}'),
                         leading: CircleAvatar(
@@ -141,7 +160,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                         ),
                         title: Text(invoice.purchaseNumber),
                         subtitle: Text(
-                          '${invoice.receivingBranchName}\n${invoice.status.label}',
+                          '${invoice.receivingBranchName}\n${invoice.status.label} • ${invoice.itemCount} مواد',
                         ),
                         isThreeLine: true,
                         trailing: const Icon(Icons.chevron_left_rounded),
@@ -172,6 +191,81 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
     UserRole.accountant => 'بانتظار الترحيل المحاسبي',
     UserRole.admin => 'فواتير المشتريات',
   };
+
+  Widget _branchSummary(List<PurchaseInvoiceRead> invoices) {
+    final roleColor = switch (widget.role) {
+      UserRole.collector => AppTheme.collectorColor,
+      UserRole.accountant => AppTheme.accountantColor,
+      UserRole.manager => AppTheme.managerColor,
+      UserRole.admin => AppTheme.adminColor,
+    };
+    final title = widget.branchId == null || widget.branchId!.isEmpty
+        ? 'مركز المتابعة'
+        : widget.branchName;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [roleColor, roleColor.withValues(alpha: 0.78)],
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: const Icon(
+              Icons.shopping_cart_checkout_rounded,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${invoices.length} تحتاج متابعة',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.84)),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PurchaseInvoiceHistoryScreen(
+                  role: widget.role,
+                  branchId: widget.branchId,
+                  branchName: widget.branchName,
+                ),
+              ),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            icon: const Icon(Icons.history_rounded, size: 18),
+            label: const Text('السجل'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _createInvoice() async {
     final invoiceId = await Navigator.push<String>(

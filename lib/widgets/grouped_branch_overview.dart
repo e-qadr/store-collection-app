@@ -513,26 +513,6 @@ class _BranchSection extends StatelessWidget {
     );
   }
 
-  Widget _expenseRow(CashExpenseRead request) => ListTile(
-    dense: true,
-    contentPadding: EdgeInsets.zero,
-    title: Text(request.requestNumber),
-    subtitle: Text('${_date(request.createdAt)} • ${request.status.label}'),
-    trailing: SizedBox(
-      width: 96,
-      child: Text(
-        request.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        textAlign: TextAlign.end,
-      ),
-    ),
-  );
-
-  Widget _consumptionRow(ConsumableRequestRead request) {
-    return _consumptionPreviewRow(request);
-  }
-
   Widget _consumptionPreviewRow(ConsumableRequestRead request) {
     final item = request.items.isEmpty ? null : request.items.first;
     return Container(
