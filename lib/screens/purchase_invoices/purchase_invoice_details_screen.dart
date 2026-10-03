@@ -261,7 +261,7 @@ class _PurchaseInvoiceDetailsScreenState
               trailing: '${invoice.items.length} مواد',
             ),
             const SizedBox(height: 8),
-            ...invoice.items.map((item) => _itemCard(item, verifiedPrices)),
+            _itemsTable(invoice, verifiedPrices),
             const SizedBox(height: 8),
             _invoiceSummaryCard(invoice, verifiedPrices),
             _amendmentSection(invoice, verifiedPrices ?? verifiedDraft),
@@ -455,99 +455,145 @@ class _PurchaseInvoiceDetailsScreenState
     );
   }
 
-  Widget _itemCard(
-    PurchaseInvoiceItem item,
+  Widget _itemsTable(
+    PurchaseInvoiceRead invoice,
     PurchaseInvoicePriceSnapshot? prices,
   ) {
-    final protectedItem = _mayReadPrices ? prices?.itemById(item.id) : null;
+    final showPrices = _mayReadPrices && prices != null;
+    final priceCurrency = prices?.currency ?? '';
+    final itemsWithNotes = invoice.items.where(
+      (item) =>
+          item.missingQuantity > 0 ||
+          item.damagedQuantity > 0 ||
+          item.discrepancyNotes.isNotEmpty ||
+          item.lineNotes.isNotEmpty,
+    );
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 15,
-                  backgroundColor: AppTheme.primaryOlive.withValues(alpha: 0.1),
-                  foregroundColor: AppTheme.primaryOlive,
-                  child: Text('${item.lineNumber}'),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    item.displayName,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: showPrices ? 820 : 650),
+                child: Table(
+                  defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+                  border: TableBorder.all(
+                    color: AppTheme.dividerColor,
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  columnWidths: {
+                    0: const FixedColumnWidth(42),
+                    1: const FlexColumnWidth(3.1),
+                    2: const FlexColumnWidth(1.25),
+                    3: const FlexColumnWidth(1.2),
+                    4: const FlexColumnWidth(1.2),
+                    5: const FlexColumnWidth(1.5),
+                    if (showPrices) 6: const FlexColumnWidth(1.75),
+                  },
+                  children: [
+                    TableRow(
+                      decoration: const BoxDecoration(
+                        color: AppTheme.oliveSurface,
+                      ),
+                      children: [
+                        _tableCell('#', header: true),
+                        _tableCell('المادة', header: true),
+                        _tableCell('الوحدة', header: true),
+                        _tableCell('المطلوب', header: true),
+                        _tableCell('المستلم', header: true),
+                        _tableCell('الحالة', header: true),
+                        if (showPrices)
+                          _tableCell('السعر / الإجمالي', header: true),
+                      ],
+                    ),
+                    ...invoice.items.map((item) {
+                      final protectedItem = prices?.itemById(item.id);
+                      final material =
+                          item.canonicalProductName.isNotEmpty &&
+                              item.isUnmatched
+                          ? '${item.displayName}\nالأصل: ${item.originalMaterialName}'
+                          : item.displayName;
+                      return TableRow(
+                        children: [
+                          _tableCell('${item.lineNumber}', centered: true),
+                          _tableCell(material, bold: true),
+                          _tableCell(item.displayUnit),
+                          _tableCell(_number(item.orderedQuantity)),
+                          _tableCell(
+                            item.receivedQuantity == null
+                                ? '—'
+                                : _number(item.receivedQuantity),
+                          ),
+                          _tableCell(item.reviewLabel),
+                          if (showPrices)
+                            _tableCell(
+                              protectedItem == null
+                                  ? '—'
+                                  : '${_number(protectedItem.unitPrice)}\n${_number(protectedItem.lineTotal)} $priceCurrency',
+                              key: Key('protected-price-${item.id}'),
+                            ),
+                        ],
+                      );
+                    }),
+                  ],
                 ),
-                Chip(label: Text(item.reviewLabel)),
-              ],
-            ),
-            if (item.canonicalProductName.isNotEmpty && item.isUnmatched)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text('القيمة الأصلية: ${item.originalMaterialName}'),
               ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: _itemFact(
-                    label: 'المطلوب',
-                    value:
-                        '${_number(item.orderedQuantity)} ${item.displayUnit}',
-                  ),
-                ),
-                if (item.receivedQuantity != null) ...[
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _itemFact(
-                      label: 'المستلم',
-                      value:
-                          '${_number(item.receivedQuantity)} ${item.displayUnit}',
+            ),
+            if (itemsWithNotes.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'ملاحظات الاستلام',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 6),
+              ...itemsWithNotes.map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${item.lineNumber}. ${item.displayName}: '
+                    '${item.missingQuantity > 0 ? 'ناقص ${_number(item.missingQuantity)} ' : ''}'
+                    '${item.damagedQuantity > 0 ? 'تالف ${_number(item.damagedQuantity)} ' : ''}'
+                    '${item.discrepancyNotes.isNotEmpty ? item.discrepancyNotes : item.lineNotes}',
+                    style: TextStyle(
+                      color:
+                          item.missingQuantity > 0 || item.damagedQuantity > 0
+                          ? AppTheme.errorColor
+                          : AppTheme.textSecondary,
+                      fontSize: 12,
                     ),
                   ),
-                ],
-              ],
-            ),
-            if (item.missingQuantity > 0 || item.damagedQuantity > 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  'ناقص: ${_number(item.missingQuantity)} — تالف: ${_number(item.damagedQuantity)}',
-                  style: const TextStyle(color: AppTheme.errorColor),
                 ),
               ),
-            if (item.discrepancyNotes.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text('ملاحظة: ${item.discrepancyNotes}'),
-              ),
-            if (protectedItem != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  'السعر: ${_number(protectedItem.unitPrice)} — '
-                  'الإجمالي: ${_number(protectedItem.lineTotal)} ${prices!.currency}',
-                  key: Key('protected-price-${item.id}'),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            if (item.lineNotes.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  item.lineNotes,
-                  style: const TextStyle(color: AppTheme.textHint),
-                ),
-              ),
+            ],
           ],
         ),
       ),
     );
   }
+
+  Widget _tableCell(
+    String value, {
+    bool header = false,
+    bool bold = false,
+    bool centered = false,
+    Key? key,
+  }) => Padding(
+    key: key,
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+    child: Text(
+      value,
+      textAlign: centered ? TextAlign.center : TextAlign.right,
+      style: TextStyle(
+        fontSize: header ? 11 : 12,
+        height: 1.35,
+        color: header ? AppTheme.primaryOlive : AppTheme.textPrimary,
+        fontWeight: header || bold ? FontWeight.w800 : FontWeight.w500,
+      ),
+    ),
+  );
 
   Widget _sectionTitle({
     required IconData icon,
@@ -613,25 +659,6 @@ class _PurchaseInvoiceDetailsScreenState
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
         ),
-      ],
-    ),
-  );
-
-  Widget _itemFact({required String label, required String value}) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-    decoration: BoxDecoration(
-      color: AppTheme.primaryOlive.withValues(alpha: 0.05),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(color: AppTheme.textHint, fontSize: 11),
-        ),
-        const SizedBox(height: 2),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
       ],
     ),
   );
