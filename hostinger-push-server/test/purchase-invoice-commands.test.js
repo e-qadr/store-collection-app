@@ -1274,30 +1274,39 @@ test("header-only amendments remain available through every pre-final purchase s
   }
 });
 
-test("item amendments are rejected after receipt while final invoices remain blocked", async () => {
-  const firestore = new FakeFirestore(seed());
-  const {result} = await createInvoice(firestore);
-  const invoiceId = result.responseData.invoice_id;
-  const item = publicItems(firestore, invoiceId)[0];
-  await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).update({
-    status: "pendingAccountingEntry",
-  });
-  await assert.rejects(
-      () => createPurchaseAmendment({
-        firestore,
-        actorUid: "collector",
-        invoiceId,
-        payload: {
-          expected_revision: 1,
-          reason: "Too late for a line change.",
-          changes: {},
-          item_changes: [{item_id: item.item_id, ordered_quantity: 9}],
-        },
-        idempotencyKey: "amend-item-late-0001",
-        timestamp: now,
-      }),
-      (error) => error.code === "item-amendment-stage-blocked",
-  );
+test("item amendments remain available through every pre-final purchase state", async () => {
+  for (const status of ["pendingReceiverReview", "pendingPriceEntry", "pendingAccountingEntry"]) {
+    const firestore = new FakeFirestore(seed());
+    const {result} = await createInvoice(firestore, `item-stage-${status}`);
+    const invoiceId = result.responseData.invoice_id;
+    const item = publicItems(firestore, invoiceId)[0];
+    await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).update({status});
+    const created = await createPurchaseAmendment({
+      firestore,
+      actorUid: "collector",
+      invoiceId,
+      payload: {
+        expected_revision: 1,
+        reason: `Correct the line during ${status}.`,
+        changes: {},
+        item_changes: [{item_id: item.item_id, ordered_quantity: 9}],
+      },
+      idempotencyKey: `amend-item-${status}`,
+      timestamp: now,
+    });
+    await decidePurchaseAmendment({
+      firestore,
+      actorUid: "collector",
+      invoiceId,
+      amendmentId: created.responseData.amendment_id,
+      payload: {expected_revision: 1, decision: "apply"},
+      idempotencyKey: `amend-item-apply-${status}`,
+      timestamp: now,
+    });
+    const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+    assert.equal(invoice.status, status);
+    assert.equal(publicItems(firestore, invoiceId)[0].ordered_quantity, 9);
+  }
 });
 
 test("amendment rejection, stale versions, duplicate approvals, unauthorized actors, and posted invoices fail closed", async () => {

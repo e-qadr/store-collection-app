@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/screens/purchase_invoices/new_purchase_invoice_screen.dart';
-import 'package:store_collection_app/screens/purchase_invoices/product_review_queue_screen.dart';
-import 'package:store_collection_app/screens/purchase_invoices/product_branch_accounting_screen.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_materials_center_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_details_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_history_screen.dart';
 import 'package:store_collection_app/services/purchase_invoice_service.dart';
@@ -118,29 +117,23 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
               const SizedBox(height: 10),
               ..._quickActions(actionInvoices.length),
               const SizedBox(height: 28),
-              _sectionTitle(
-                _queueTitle,
-                Icons.assignment_rounded,
-                trailing: actionInvoices.isEmpty
-                    ? 'لا توجد مهام'
-                    : '${actionInvoices.length} مهام',
-              ),
-              const SizedBox(height: 8),
-              Container(
-                key: _tasksKey,
-                child: actionInvoices.isEmpty
-                    ? _inlineEmpty(
-                        icon: Icons.task_alt_rounded,
-                        title: 'لا توجد مهام تحتاج إجراءك',
-                        subtitle: _emptyActionText,
-                      )
-                    : Column(
-                        children: actionInvoices
-                            .map(_invoiceRow)
-                            .toList(growable: false),
-                      ),
-              ),
-              const SizedBox(height: 28),
+              if (actionInvoices.isNotEmpty) ...[
+                _sectionTitle(
+                  'مهام تحتاج إجراءك',
+                  Icons.assignment_rounded,
+                  trailing: '${actionInvoices.length} مهام',
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  key: _tasksKey,
+                  child: Column(
+                    children: actionInvoices
+                        .map(_invoiceRow)
+                        .toList(growable: false),
+                  ),
+                ),
+                const SizedBox(height: 28),
+              ],
               _sectionTitle(
                 'آخر فواتير الفرع',
                 Icons.history_rounded,
@@ -418,18 +411,6 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
           onTap: _createInvoice,
         ),
       );
-      actions.add(
-        _quickAction(
-          icon: Icons.price_check_rounded,
-          color: AppTheme.warningColor,
-          title: 'اعتماد الأسعار',
-          subtitle: _actionSubtitle(
-            actionCount,
-            'راجع الأسعار واعتمد الفواتير الجاهزة',
-          ),
-          onTap: _scrollToTasks,
-        ),
-      );
     }
     if (widget.role == UserRole.manager) {
       actions.add(
@@ -459,44 +440,44 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
         ),
       );
     }
+    actions.add(
+      _quickAction(
+        icon: Icons.manage_search_rounded,
+        color: AppTheme.primaryOlive,
+        title: 'سجل الفواتير والبحث',
+        subtitle: 'اعرض الفواتير السابقة وابحث أو صفِّ النتائج',
+        onTap: _openHistory,
+      ),
+    );
+    if (widget.role == UserRole.collector) {
+      actions.add(
+        _quickAction(
+          icon: Icons.price_check_rounded,
+          color: AppTheme.warningColor,
+          title: 'اعتماد الأسعار',
+          subtitle: _actionSubtitle(
+            actionCount,
+            'راجع الأسعار واعتمد الفواتير الجاهزة',
+          ),
+          onTap: _scrollToTasks,
+        ),
+      );
+    }
     if (widget.role == UserRole.collector ||
         widget.role == UserRole.accountant) {
       actions.add(
         _quickAction(
-          key: const Key('purchase-branch-accounting'),
-          icon: Icons.account_tree_rounded,
-          color: widget.role == UserRole.accountant
-              ? AppTheme.accountantColor
-              : AppTheme.oliveGreen,
-          title: widget.role == UserRole.accountant
-              ? 'ربط مواد الفرع محاسبيًا'
-              : 'متابعة ربط المواد بالفروع',
-          subtitle: widget.role == UserRole.accountant
-              ? 'أدخل مرجع كل مادة في سجل فرعك'
-              : 'راقب حالة ربط مادة الكتالوج في فروع العلامة',
-          onTap: _openBranchAccounting,
-        ),
-      );
-      actions.add(
-        _quickAction(
-          key: const Key('purchase-review-queue'),
-          icon: Icons.rule_folder_rounded,
+          key: const Key('purchase-materials-center'),
+          icon: Icons.inventory_2_rounded,
           color: AppTheme.oliveGreen,
-          title: 'مراجعة المواد غير المطابقة',
-          subtitle: 'ربط مادة موجودة أو إنشاء مادة جديدة في الدليل',
-          onTap: _openReviewQueue,
+          title: 'إدارة المواد الجديدة',
+          subtitle: widget.role == UserRole.accountant
+              ? 'راجع المواد الجديدة واربط مواد فرعك محاسبيًا'
+              : 'راجع المواد الجديدة وتابع ربطها في فروع العلامة',
+          onTap: _openMaterialsCenter,
         ),
       );
     }
-    actions.add(
-      _quickAction(
-        icon: Icons.history_rounded,
-        color: AppTheme.primaryOlive,
-        title: 'سجل فواتير الفرع',
-        subtitle: 'بحث وفلترة ومتابعة كل الفواتير السابقة',
-        onTap: _openHistory,
-      ),
-    );
     return actions;
   }
 
@@ -701,20 +682,6 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
     UserRole.admin => 'الإدارة',
   };
 
-  String get _queueTitle => switch (widget.role) {
-    UserRole.collector => 'فواتير الشراء الجديدة والقديمة',
-    UserRole.manager => 'فواتير بانتظار تأكيد الاستلام',
-    UserRole.accountant => 'فواتير بانتظار الترحيل المحاسبي',
-    UserRole.admin => 'فواتير المشتريات',
-  };
-
-  String get _emptyActionText => switch (widget.role) {
-    UserRole.collector => 'ستظهر هنا الفواتير الجاهزة لمراجعة الأسعار.',
-    UserRole.manager => 'ستظهر هنا فواتير فرعك الجاهزة لتأكيد الاستلام.',
-    UserRole.accountant => 'ستظهر هنا الفواتير الجاهزة لإدخال المرجع والترحيل.',
-    UserRole.admin => 'لا توجد إجراءات متاحة لهذا الدور.',
-  };
-
   String _actionSubtitle(int count, String base) =>
       count == 0 ? 'لا توجد مهام معلقة الآن' : '$base — لديك $count مهام';
 
@@ -728,22 +695,12 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
     }
   }
 
-  void _openReviewQueue() => Navigator.push(
+  void _openMaterialsCenter() => Navigator.push(
     context,
     MaterialPageRoute(
-      builder: (_) => ProductReviewQueueScreen(
+      builder: (_) => PurchaseMaterialsCenterScreen(
         role: widget.role,
         branchId: widget.branchId,
-      ),
-    ),
-  );
-
-  void _openBranchAccounting() => Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => ProductBranchAccountingScreen(
-        role: widget.role,
-        branchId: widget.branchId ?? '',
         branchName: widget.branchName,
       ),
     ),

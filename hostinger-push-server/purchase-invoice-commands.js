@@ -384,11 +384,11 @@ async function resolveAmendmentItems({
   transaction, firestore, invoice, invoiceItems, amendmentRef, itemChanges,
 }) {
   if (!itemChanges) return [];
-  if (invoice.status !== STATUS.pendingReceiverReview) {
+  if (!AMENDABLE_STATUSES.has(invoice.status)) {
     throw new PurchaseCommandError(
         "item-amendment-stage-blocked",
         409,
-        "Materials, units, and quantities can only change before receipt.",
+        "Materials, units, and quantities can only change before accounting posting.",
     );
   }
   const storedById = new Map(invoiceItems.map((item) => [item.item_id, item]));
@@ -399,7 +399,7 @@ async function resolveAmendmentItems({
       throw new PurchaseCommandError(
           "item-amendment-invalid",
           409,
-          "Only canonical catalog lines may be amended before receipt.",
+          "Only canonical catalog lines may be amended.",
       );
     }
     return {change, stored};

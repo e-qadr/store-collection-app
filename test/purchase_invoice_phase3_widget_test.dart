@@ -96,7 +96,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('فواتير المشتريات'), findsOneWidget);
       expect(find.byKey(const Key('new-purchase-invoice')), findsOneWidget);
-      expect(find.text('فواتير الشراء الجديدة والقديمة'), findsOneWidget);
+      expect(find.text('مهام تحتاج إجراءك'), findsOneWidget);
       expect(
         tester
             .widgetList<Directionality>(find.byType(Directionality))

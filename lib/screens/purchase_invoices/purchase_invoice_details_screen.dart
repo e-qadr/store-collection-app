@@ -1490,8 +1490,11 @@ class _PurchaseInvoiceDetailsScreenState
       text: invoice.supplierInvoiceDate,
     );
     final notes = TextEditingController(text: invoice.generalManagerNotes);
+    // A purchase line remains amendable until accounting posting. Any people
+    // who have already acted on the invoice still approve the same amendment
+    // before it is applied on the server.
     final itemDrafts =
-        invoice.status == PurchaseInvoiceStatus.pendingReceiverReview
+        invoice.status != PurchaseInvoiceStatus.postedToAccounting
         ? invoice.items
               .where(
                 (item) =>
@@ -1679,77 +1682,118 @@ class _PurchaseInvoiceDetailsScreenState
                           ),
                           if (itemDrafts.isNotEmpty) ...[
                             const SizedBox(height: 18),
-                            const _AmendmentDialogSectionTitle(
-                              icon: Icons.inventory_2_outlined,
-                              title: 'المواد والكميات',
-                            ),
-                            const SizedBox(height: 6),
-                            ...itemDrafts.map(
-                              (draft) => Container(
-                                margin: const EdgeInsets.only(bottom: 10),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.cardColor,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: AppTheme.dividerColor,
-                                  ),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: AppTheme.goldSurface,
+                                border: Border.all(
+                                  color: AppTheme.dividerColor,
                                 ),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    Text(
-                                      '${draft.displayName} — ${draft.displayUnit}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                      ),
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Theme(
+                                data: Theme.of(
+                                  context,
+                                ).copyWith(dividerColor: Colors.transparent),
+                                child: ExpansionTile(
+                                  initiallyExpanded: true,
+                                  leading: const Icon(
+                                    Icons.inventory_2_outlined,
+                                    color: AppTheme.primaryOlive,
+                                  ),
+                                  title: const Text(
+                                    'تعديل المواد والكميات',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
                                     ),
-                                    Align(
-                                      alignment:
-                                          AlignmentDirectional.centerStart,
-                                      child: TextButton.icon(
-                                        onPressed: () async {
-                                          final selection =
-                                              await showPurchaseCatalogPicker(
-                                                dialogContext,
-                                                brandId:
-                                                    invoice.receivingBrandId,
-                                                service: _catalog,
-                                              );
-                                          if (selection != null) {
-                                            setDialogState(
-                                              () => draft.selection = selection,
-                                            );
-                                          }
-                                        },
-                                        icon: const Icon(
-                                          Icons.swap_horiz_rounded,
-                                        ),
-                                        label: const Text(
-                                          'تغيير المادة أو الوحدة',
-                                        ),
-                                      ),
-                                    ),
-                                    TextField(
-                                      controller: draft.quantity,
-                                      keyboardType:
-                                          const TextInputType.numberWithOptions(
-                                            decimal: true,
+                                  ),
+                                  subtitle: const Text(
+                                    'غيّر المادة أو الوحدة أو الكمية عند الحاجة',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
+                                  childrenPadding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    0,
+                                    12,
+                                    14,
+                                  ),
+                                  children: itemDrafts
+                                      .map(
+                                        (draft) => Container(
+                                          margin: const EdgeInsets.only(
+                                            top: 10,
                                           ),
-                                      decoration: const InputDecoration(
-                                        labelText: 'الكمية',
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    TextField(
-                                      controller: draft.notes,
-                                      maxLines: 2,
-                                      decoration: const InputDecoration(
-                                        labelText: 'ملاحظة البند (اختيارية)',
-                                      ),
-                                    ),
-                                  ],
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.cardColor,
+                                            borderRadius: BorderRadius.circular(
+                                              16,
+                                            ),
+                                            border: Border.all(
+                                              color: AppTheme.dividerColor,
+                                            ),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              Text(
+                                                '${draft.displayName} — ${draft.displayUnit}',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              Align(
+                                                alignment: AlignmentDirectional
+                                                    .centerStart,
+                                                child: TextButton.icon(
+                                                  onPressed: () async {
+                                                    final selection =
+                                                        await showPurchaseCatalogPicker(
+                                                          dialogContext,
+                                                          brandId: invoice
+                                                              .receivingBrandId,
+                                                          service: _catalog,
+                                                        );
+                                                    if (selection != null) {
+                                                      setDialogState(
+                                                        () => draft.selection =
+                                                            selection,
+                                                      );
+                                                    }
+                                                  },
+                                                  icon: const Icon(
+                                                    Icons.swap_horiz_rounded,
+                                                  ),
+                                                  label: const Text(
+                                                    'اختيار مادة أو وحدة أخرى',
+                                                  ),
+                                                ),
+                                              ),
+                                              TextField(
+                                                controller: draft.quantity,
+                                                keyboardType:
+                                                    const TextInputType.numberWithOptions(
+                                                      decimal: true,
+                                                    ),
+                                                decoration:
+                                                    const InputDecoration(
+                                                      labelText: 'الكمية',
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 8),
+                                              TextField(
+                                                controller: draft.notes,
+                                                maxLines: 2,
+                                                decoration: const InputDecoration(
+                                                  labelText:
+                                                      'ملاحظة البند (اختيارية)',
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                      .toList(growable: false),
                                 ),
                               ),
                             ),
