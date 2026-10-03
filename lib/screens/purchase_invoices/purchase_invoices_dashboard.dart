@@ -100,7 +100,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
       children: [
         _heroHeader(),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 36),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -113,11 +113,11 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                 const SizedBox(height: 12),
                 _amendmentNotice(amendmentCount),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               _sectionTitle('الإجراءات السريعة', Icons.bolt_rounded),
               const SizedBox(height: 10),
               ..._quickActions(actionInvoices.length),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               _sectionTitle(
                 _queueTitle,
                 Icons.assignment_rounded,
@@ -140,7 +140,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                             .toList(growable: false),
                       ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               _sectionTitle(
                 'آخر فواتير الفرع',
                 Icons.history_rounded,
@@ -155,7 +155,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                   subtitle: 'ستظهر أحدث فواتير هذا الفرع هنا.',
                 )
               else
-                ...recent.map(_recentInvoiceRow),
+                _recentInvoicesCard(recent),
             ],
           ),
         ),
@@ -171,7 +171,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
       UserRole.admin => AppTheme.adminColor,
     };
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 28),
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 30),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [roleColor, roleColor.withValues(alpha: 0.78)],
@@ -201,11 +201,11 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(13),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.16),
                     borderRadius: BorderRadius.circular(16),
@@ -213,7 +213,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                   child: const Icon(
                     Icons.shopping_cart_checkout_rounded,
                     color: Colors.white,
-                    size: 28,
+                    size: 29,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -243,25 +243,36 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                 ),
               ],
             ),
-            const SizedBox(height: 22),
+            const SizedBox(height: 26),
             Align(
               alignment: Alignment.centerRight,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'فواتير المشتريات',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.82),
-                      fontSize: 14,
-                    ),
+                  Row(
+                    children: [
+                      Text(
+                        'فواتير المشتريات',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.82),
+                          fontSize: 13,
+                        ),
+                      ),
+                      Text(
+                        ' • $_roleShortLabel',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 3),
                   Text(
                     _roleDashboardTitle,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 27,
+                      fontSize: 28,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -317,23 +328,23 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
   }) => Card(
     margin: EdgeInsets.zero,
     child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
       child: Column(
         children: [
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(11),
+              borderRadius: BorderRadius.circular(13),
             ),
-            child: Icon(icon, color: color, size: 20),
+            child: Icon(icon, color: color, size: 21),
           ),
           const SizedBox(height: 8),
           Text(
             '$value',
             style: TextStyle(
               color: color,
-              fontSize: 22,
+              fontSize: 25,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -341,7 +352,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
           Text(
             label,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppTheme.textHint, fontSize: 10),
+            style: const TextStyle(color: AppTheme.textHint, fontSize: 11),
           ),
         ],
       ),
@@ -376,18 +387,18 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
   }) => Row(
     children: [
       Container(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(9),
         decoration: BoxDecoration(
           color: AppTheme.oliveSurface,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, size: 20, color: AppTheme.primaryOlive),
+        child: Icon(icon, size: 21, color: AppTheme.primaryOlive),
       ),
       const SizedBox(width: 8),
       Expanded(
         child: Text(
           title,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
         ),
       ),
       if (trailing != null) TextButton(onPressed: onTap, child: Text(trailing)),
@@ -498,21 +509,23 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
     required VoidCallback onTap,
   }) => Card(
     key: key,
-    margin: const EdgeInsets.only(bottom: 9),
+    margin: const EdgeInsets.only(bottom: 12),
     clipBehavior: Clip.antiAlias,
     child: InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(11),
+              width: 58,
+              height: 58,
+              alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(13),
+                borderRadius: BorderRadius.circular(17),
               ),
-              child: Icon(icon, color: color),
+              child: Icon(icon, color: color, size: 27),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -521,14 +534,17 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
                     style: const TextStyle(
                       color: AppTheme.textHint,
-                      fontSize: 12,
+                      fontSize: 12.5,
                     ),
                   ),
                 ],
@@ -583,14 +599,62 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
     ),
   );
 
-  Widget _recentInvoiceRow(PurchaseInvoiceRead invoice) => Card(
-    margin: const EdgeInsets.only(bottom: 8),
-    child: ListTile(
-      onTap: () => _openInvoice(invoice),
-      leading: Icon(Icons.receipt_long_outlined, color: invoice.status.color),
-      title: Text(invoice.purchaseNumber),
-      subtitle: Text('${invoice.status.label} • ${invoice.itemCount} مواد'),
-      trailing: const Icon(Icons.chevron_left_rounded),
+  Widget _recentInvoicesCard(List<PurchaseInvoiceRead> invoices) => Card(
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      children: [
+        for (var index = 0; index < invoices.length; index++) ...[
+          _recentInvoiceRow(invoices[index]),
+          if (index != invoices.length - 1)
+            const Padding(
+              padding: EdgeInsetsDirectional.only(start: 18, end: 18),
+              child: Divider(height: 1),
+            ),
+        ],
+      ],
+    ),
+  );
+
+  Widget _recentInvoiceRow(PurchaseInvoiceRead invoice) => InkWell(
+    onTap: () => _openInvoice(invoice),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: invoice.status.color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              Icons.receipt_long_outlined,
+              color: invoice.status.color,
+              size: 23,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  invoice.purchaseNumber,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${invoice.status.label} • ${invoice.itemCount} مواد',
+                  style: TextStyle(color: invoice.status.color, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_left_rounded, color: AppTheme.textHint),
+        ],
+      ),
     ),
   );
 
@@ -628,6 +692,13 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
     UserRole.manager => 'لوحة مدير الفرع',
     UserRole.accountant => 'لوحة المحاسب',
     UserRole.admin => 'لوحة المشتريات',
+  };
+
+  String get _roleShortLabel => switch (widget.role) {
+    UserRole.collector => 'المدير العام',
+    UserRole.manager => 'مدير الفرع',
+    UserRole.accountant => 'المحاسب',
+    UserRole.admin => 'الإدارة',
   };
 
   String get _queueTitle => switch (widget.role) {

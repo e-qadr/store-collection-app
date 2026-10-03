@@ -1526,150 +1526,325 @@ class _PurchaseInvoiceDetailsScreenState
     final accepted = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('تعديل فاتورة المشتريات'),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
+        builder: (context, setDialogState) => Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(26),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: reason,
-                    maxLines: 2,
-                    decoration: const InputDecoration(
-                      labelText: 'سبب التعديل *',
-                      helperText:
-                          'سيُطبق مباشرة إن كنت الطرف الوحيد الذي عمل على الفاتورة.',
-                    ),
-                  ),
-                  TextField(
-                    controller: supplier,
-                    decoration: const InputDecoration(labelText: 'المورد'),
-                  ),
-                  TextField(
-                    controller: supplierNumber,
-                    decoration: const InputDecoration(
-                      labelText: 'رقم فاتورة المورد',
-                    ),
-                  ),
-                  TextField(
-                    controller: supplierDate,
-                    decoration: const InputDecoration(
-                      labelText: 'تاريخ فاتورة المورد (YYYY-MM-DD)',
-                    ),
-                  ),
-                  TextField(
-                    controller: notes,
-                    maxLines: 2,
-                    decoration: const InputDecoration(
-                      labelText: 'ملاحظات المدير العام',
-                    ),
-                  ),
-                  if (itemDrafts.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        'تعديل المواد والوحدات والكميات قبل الاستلام',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppTheme.oliveSurface,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Icon(
+                          Icons.edit_note_rounded,
+                          color: AppTheme.primaryOlive,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    ...itemDrafts.map(
-                      (draft) => Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                '${draft.displayName} — ${draft.displayUnit}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'تعديل فاتورة المشتريات',
+                              style: TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w800,
                               ),
-                              Align(
-                                alignment: AlignmentDirectional.centerStart,
-                                child: TextButton.icon(
-                                  onPressed: () async {
-                                    final selection =
-                                        await showPurchaseCatalogPicker(
-                                          dialogContext,
-                                          brandId: invoice.receivingBrandId,
-                                          service: _catalog,
-                                        );
-                                    if (selection != null) {
-                                      setDialogState(
-                                        () => draft.selection = selection,
-                                      );
-                                    }
-                                  },
-                                  icon: const Icon(Icons.inventory_2_outlined),
-                                  label: const Text(
-                                    'اختيار مادة أو وحدة بديلة',
+                            ),
+                            SizedBox(height: 3),
+                            Text(
+                              'حدّد التغييرات ثم احفظها للمراجعة.',
+                              style: TextStyle(
+                                color: AppTheme.textHint,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(13),
+                            decoration: BoxDecoration(
+                              color: AppTheme.oliveSurface.withValues(
+                                alpha: 0.62,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: const Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  color: AppTheme.primaryOlive,
+                                ),
+                                SizedBox(width: 9),
+                                Expanded(
+                                  child: Text(
+                                    'يُطبّق التعديل مباشرة إذا كنت الطرف الوحيد الذي عمل على الفاتورة، وإلا ينتظر موافقة كل من شارك فيها.',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      height: 1.45,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              TextField(
-                                controller: draft.quantity,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                decoration: const InputDecoration(
-                                  labelText: 'الكمية',
-                                ),
-                              ),
-                              TextField(
-                                controller: draft.notes,
-                                maxLines: 2,
-                                decoration: const InputDecoration(
-                                  labelText: 'ملاحظة البند (اختيارية)',
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: reason,
+                            maxLines: 2,
+                            decoration: const InputDecoration(
+                              labelText: 'سبب التعديل *',
+                              hintText: 'مثال: تصحيح رقم الفاتورة أو السعر',
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          const _AmendmentDialogSectionTitle(
+                            icon: Icons.storefront_outlined,
+                            title: 'بيانات المورد والفاتورة',
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppTheme.goldSurface,
+                              border: Border.all(color: AppTheme.dividerColor),
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            child: Column(
+                              children: [
+                                TextField(
+                                  controller: supplier,
+                                  decoration: const InputDecoration(
+                                    labelText: 'اسم المورد',
+                                    prefixIcon: Icon(Icons.store_outlined),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: supplierNumber,
+                                  decoration: const InputDecoration(
+                                    labelText: 'رقم فاتورة المورد',
+                                    prefixIcon: Icon(Icons.tag_outlined),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: supplierDate,
+                                  decoration: const InputDecoration(
+                                    labelText: 'تاريخ فاتورة المورد',
+                                    hintText: 'YYYY-MM-DD',
+                                    prefixIcon: Icon(
+                                      Icons.calendar_today_outlined,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: notes,
+                                  maxLines: 2,
+                                  decoration: const InputDecoration(
+                                    labelText: 'ملاحظات إضافية (اختيارية)',
+                                    alignLabelWithHint: true,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (itemDrafts.isNotEmpty) ...[
+                            const SizedBox(height: 18),
+                            const _AmendmentDialogSectionTitle(
+                              icon: Icons.inventory_2_outlined,
+                              title: 'المواد والكميات',
+                            ),
+                            const SizedBox(height: 6),
+                            ...itemDrafts.map(
+                              (draft) => Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.cardColor,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: AppTheme.dividerColor,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Text(
+                                      '${draft.displayName} — ${draft.displayUnit}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    Align(
+                                      alignment:
+                                          AlignmentDirectional.centerStart,
+                                      child: TextButton.icon(
+                                        onPressed: () async {
+                                          final selection =
+                                              await showPurchaseCatalogPicker(
+                                                dialogContext,
+                                                brandId:
+                                                    invoice.receivingBrandId,
+                                                service: _catalog,
+                                              );
+                                          if (selection != null) {
+                                            setDialogState(
+                                              () => draft.selection = selection,
+                                            );
+                                          }
+                                        },
+                                        icon: const Icon(
+                                          Icons.swap_horiz_rounded,
+                                        ),
+                                        label: const Text(
+                                          'تغيير المادة أو الوحدة',
+                                        ),
+                                      ),
+                                    ),
+                                    TextField(
+                                      controller: draft.quantity,
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                            decimal: true,
+                                          ),
+                                      decoration: const InputDecoration(
+                                        labelText: 'الكمية',
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: draft.notes,
+                                      maxLines: 2,
+                                      decoration: const InputDecoration(
+                                        labelText: 'ملاحظة البند (اختيارية)',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (_mayReadPrices) ...[
+                            const SizedBox(height: 8),
+                            Theme(
+                              data: Theme.of(
+                                context,
+                              ).copyWith(dividerColor: Colors.transparent),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: AppTheme.goldSurface,
+                                  border: Border.all(
+                                    color: AppTheme.dividerColor,
+                                  ),
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                child: ExpansionTile(
+                                  leading: const Icon(
+                                    Icons.price_check_rounded,
+                                    color: AppTheme.primaryOlive,
+                                  ),
+                                  title: const Text(
+                                    'تعديل الأسعار المحمية',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  subtitle: const Text(
+                                    'اختياري — اترك الحقول كما هي إن لم تتغير الأسعار',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
+                                  childrenPadding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    0,
+                                    12,
+                                    14,
+                                  ),
+                                  children: invoice.items
+                                      .map(
+                                        (item) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 10,
+                                          ),
+                                          child: TextField(
+                                            controller:
+                                                priceControllers[item.id],
+                                            keyboardType:
+                                                const TextInputType.numberWithOptions(
+                                                  decimal: true,
+                                                ),
+                                            decoration: InputDecoration(
+                                              labelText:
+                                                  'سعر ${item.displayName} (${item.displayUnit})',
+                                              prefixIcon: const Icon(
+                                                Icons.payments_outlined,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(growable: false),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
-                  ],
-                  if (_mayReadPrices) ...[
-                    const SizedBox(height: 12),
-                    const Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        'تعديل السعر المحمي (اختياري)',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    ...invoice.items.map(
-                      (item) => TextField(
-                        controller: priceControllers[item.id],
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText:
-                              '${item.displayName} — ${item.displayUnit}',
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('إلغاء'),
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton.icon(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('حفظ التعديل'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('حفظ التعديل'),
-            ),
-          ],
         ),
       ),
     );
@@ -2082,4 +2257,29 @@ class _PurchaseInvoiceDetailsScreenState
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
+}
+
+class _AmendmentDialogSectionTitle extends StatelessWidget {
+  final IconData icon;
+  final String title;
+
+  const _AmendmentDialogSectionTitle({required this.icon, required this.title});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppTheme.oliveSurface,
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Icon(icon, color: AppTheme.primaryOlive, size: 17),
+      ),
+      const SizedBox(width: 8),
+      Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+    ],
+  );
 }
