@@ -4,6 +4,8 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
+import 'package:store_collection_app/services/purchase_invoice_service.dart';
+import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 
 /// A single catalog material belongs to a brand. Its accounting reference,
@@ -30,6 +32,7 @@ class _ProductBranchAccountingScreenState
     extends State<ProductBranchAccountingScreen> {
   final _catalog = ProductCatalogService();
   final _api = PurchaseInvoiceApiService();
+  final _purchase = PurchaseInvoiceService();
   final Set<String> _saving = {};
   bool _pendingOnly = true;
 
@@ -116,11 +119,26 @@ class _ProductBranchAccountingScreenState
                   text: 'تعذر تحميل حالات الربط المحاسبي.',
                 );
               }
-              return _content(
-                brandId: brandId,
-                products: productSnapshot.data ?? const [],
-                branches: branches,
-                profiles: profileSnapshot.data ?? const [],
+              return StreamBuilder<List<ProductReviewTask>>(
+                stream: _purchase.watchReviewQueue(),
+                builder: (context, taskSnapshot) {
+                  if (taskSnapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (taskSnapshot.hasError) {
+                    return const _AccountingMessage(
+                      icon: Icons.cloud_off_rounded,
+                      text: 'تعذر تحميل المواد الجديدة المضافة من الفواتير.',
+                    );
+                  }
+                  return _content(
+                    brandId: brandId,
+                    products: productSnapshot.data ?? const [],
+                    branches: branches,
+                    profiles: profileSnapshot.data ?? const [],
+                    reviewTasks: taskSnapshot.data ?? const [],
+                  );
+                },
               );
             },
           );
@@ -134,6 +152,7 @@ class _ProductBranchAccountingScreenState
     required List<ProductCatalogModel> products,
     required List<_BranchEntry> branches,
     required List<ProductAccountingProfile> profiles,
+    required List<ProductReviewTask> reviewTasks,
   }) {
     final profileByKey = {
       for (final profile in profiles)
@@ -146,7 +165,22 @@ class _ProductBranchAccountingScreenState
         .where((branch) => branch.id == widget.branchId)
         .toList(growable: false);
     final focusBranch = focusedBranches.isEmpty ? null : focusedBranches.first;
-    final visible = products
+    // This is a deployment queue, not a second catalog browser. A material
+    // appears only when it was newly created from a purchase-invoice review;
+    // existing catalog materials were already available to every branch.
+    final newlyCreatedIds = reviewTasks
+        .where(
+          (task) =>
+              task.brandId == brandId &&
+              task.status == 'newly_created_material' &&
+              task.canonicalProductId.trim().isNotEmpty,
+        )
+        .map((task) => task.canonicalProductId)
+        .toSet();
+    final newlyCreatedProducts = products
+        .where((product) => newlyCreatedIds.contains(product.id))
+        .toList(growable: false);
+    final visible = newlyCreatedProducts
         .where((product) {
           if (!_pendingOnly) return true;
           if (_isAccountant) {
@@ -163,7 +197,7 @@ class _ProductBranchAccountingScreenState
         .toList(growable: false);
     final pendingForBranch = focusBranch == null
         ? 0
-        : products
+        : newlyCreatedProducts
               .where(
                 (product) => !_isSynced(
                   _profileFor(profileByKey, product.id, focusBranch.id),
@@ -190,7 +224,7 @@ class _ProductBranchAccountingScreenState
               ),
             ),
             FilterChip(
-              label: Text(_pendingOnly ? 'تحتاج ربطًا' : 'كل المواد'),
+              label: Text(_pendingOnly ? 'تحتاج ربطًا' : 'كل المواد الجديدة'),
               selected: _pendingOnly,
               onSelected: (value) => setState(() => _pendingOnly = value),
             ),
@@ -244,8 +278,8 @@ class _ProductBranchAccountingScreenState
             children: [
               Text(
                 _isAccountant
-                    ? 'اربط مواد فرعك بالنظام المحاسبي'
-                    : 'متابعة ربط المواد في الفروع',
+                    ? 'اربط المواد الجديدة لفرعك'
+                    : 'متابعة المواد الجديدة في الفروع',
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w900,
@@ -254,8 +288,8 @@ class _ProductBranchAccountingScreenState
               const SizedBox(height: 4),
               Text(
                 _isAccountant
-                    ? '$pendingForBranch مواد بانتظار مرجعك المحاسبي.'
-                    : 'المادة تُنشأ مرة واحدة وتظهر في $branchCount فروع للعلامة.',
+                    ? '$pendingForBranch مواد جديدة بانتظار مرجعك المحاسبي.'
+                    : 'المادة الجديدة تظهر مرة واحدة في $branchCount فروع للعلامة.',
                 style: TextStyle(color: Colors.white.withValues(alpha: .86)),
               ),
             ],
@@ -414,8 +448,8 @@ class _ProductBranchAccountingScreenState
           const SizedBox(height: 10),
           Text(
             _pendingOnly
-                ? 'لا توجد مواد تحتاج ربطًا الآن'
-                : 'لا توجد مواد في الكتالوج',
+                ? 'لا توجد مواد جديدة تحتاج ربطًا الآن'
+                : 'لا توجد مواد جديدة أُضيفت من فواتير الشراء',
             style: const TextStyle(fontWeight: FontWeight.w900),
           ),
         ],

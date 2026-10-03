@@ -659,7 +659,12 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
 
   void _openReviewQueue() => Navigator.push(
     context,
-    MaterialPageRoute(builder: (_) => const ProductReviewQueueScreen()),
+    MaterialPageRoute(
+      builder: (_) => ProductReviewQueueScreen(
+        role: widget.role,
+        branchId: widget.branchId,
+      ),
+    ),
   );
 
   void _openBranchAccounting() => Navigator.push(

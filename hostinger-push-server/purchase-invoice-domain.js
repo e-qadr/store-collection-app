@@ -474,14 +474,14 @@ function validatePostingPayload(body) {
 
 const REVIEW_ACTIONS = new Set([
   "link_existing", "create_product", "request_clarification", "return_to_pending",
-  "mark_synchronized",
+  "mark_synchronized", "update_details", "reject_material",
 ]);
 
 function validateReviewPayload(body) {
   const input = object(body);
   onlyKeys(input, new Set([
     "expected_revision", "expected_invoice_revision", "action", "product_id", "unit_id",
-    "group_id", "material_name", "legacy_code", "units", "primary_unit_id",
+    "group_id", "group_text", "unit_text", "material_name", "legacy_code", "units", "primary_unit_id",
     "accounting_reference", "sync_state", "note",
   ]), "body");
   const action = requiredString(input.action, "action", 32);
@@ -497,6 +497,8 @@ function validateReviewPayload(body) {
     unit_id: input.unit_id === undefined ? undefined :
       documentId(input.unit_id, "unit_id", MAX_UNIT_ID_BYTES),
     group_id: input.group_id === undefined ? undefined : documentId(input.group_id, "group_id"),
+    group_text: optionalString(input.group_text, "group_text", MAX_MATERIAL_BYTES),
+    unit_text: optionalString(input.unit_text, "unit_text", MAX_UNIT_BYTES),
     material_name: optionalString(input.material_name, "material_name", MAX_MATERIAL_BYTES),
     legacy_code: optionalString(input.legacy_code, "legacy_code", 128),
     primary_unit_id: input.primary_unit_id === undefined ? undefined :
@@ -543,7 +545,10 @@ function validateReviewPayload(body) {
   } else if (input.units !== undefined) {
     throw new PurchaseCommandError("invalid-argument", 400, "units are not allowed.");
   }
-  if (["request_clarification", "return_to_pending"].includes(action) && !result.note) {
+  if (action === "update_details" && !result.material_name) {
+    throw new PurchaseCommandError("invalid-argument", 400, "A material name is required.");
+  }
+  if (["request_clarification", "return_to_pending", "reject_material"].includes(action) && !result.note) {
     throw new PurchaseCommandError("invalid-argument", 400, "A note is required.");
   }
   return compact(result);

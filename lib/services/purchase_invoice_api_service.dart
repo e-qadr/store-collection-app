@@ -391,6 +391,8 @@ class PurchaseInvoiceApiService {
     String? productId,
     String? unitId,
     String? groupId,
+    String? groupText,
+    String? unitText,
     String? materialName,
     String? legacyCode,
     List<CatalogUnit>? units,
@@ -408,6 +410,8 @@ class PurchaseInvoiceApiService {
       if ((productId ?? '').trim().isNotEmpty) 'product_id': productId!.trim(),
       if ((unitId ?? '').trim().isNotEmpty) 'unit_id': unitId!.trim(),
       if ((groupId ?? '').trim().isNotEmpty) 'group_id': groupId!.trim(),
+      if ((groupText ?? '').trim().isNotEmpty) 'group_text': groupText!.trim(),
+      if ((unitText ?? '').trim().isNotEmpty) 'unit_text': unitText!.trim(),
       if ((materialName ?? '').trim().isNotEmpty)
         'material_name': materialName!.trim(),
       if ((legacyCode ?? '').trim().isNotEmpty)

@@ -68,6 +68,7 @@ const REVIEW_STATUS = Object.freeze({
   notRequired: "not_required",
   pending: "pending_review",
   clarification: "clarification_requested",
+  rejected: "rejected_material",
   linked: "linked_material",
   created: "newly_created_material",
   synchronized: "synchronized",
@@ -913,6 +914,7 @@ async function createPurchaseInvoice({
         transaction.set(firestore.collection(COLLECTIONS.reviewTasks).doc(taskId), {
           id: taskId,
           invoice_id: invoiceRef.id,
+          invoice_number: purchaseNumber,
           item_id: itemIds[index],
           brand_id: branch.brandId,
           receiving_branch_id: branch.id,
@@ -1651,7 +1653,9 @@ async function reviewProductTask({
       const priceSnapshot = await transaction.get(priceRef);
       const price = priceSnapshot.data();
 
-      const pendingActions = new Set(["link_existing", "create_product", "request_clarification"]);
+      const pendingActions = new Set([
+        "link_existing", "create_product", "request_clarification", "update_details", "reject_material",
+      ]);
       if (pendingActions.has(payload.action) && task.status !== REVIEW_STATUS.pending) {
         throw new PurchaseCommandError("invalid-state", 409, "The task is not pending review.");
       }
@@ -1802,6 +1806,15 @@ async function reviewProductTask({
       if (payload.action === "request_clarification") {
         nextStatus = REVIEW_STATUS.clarification;
         actionName = "clarification_requested";
+      } else if (payload.action === "reject_material") {
+        nextStatus = REVIEW_STATUS.rejected;
+        actionName = "material_rejected";
+      } else if (payload.action === "update_details") {
+        // Keep the invoice's source snapshot immutable. The reviewed values
+        // belong to the task until the reviewer selects or creates the
+        // canonical catalog material.
+        nextStatus = REVIEW_STATUS.pending;
+        actionName = "review_details_updated";
       } else if (payload.action === "return_to_pending") {
         nextStatus = REVIEW_STATUS.pending;
         actionName = "clarification_returned";
@@ -1962,6 +1975,11 @@ async function reviewProductTask({
         canonical_product_name: canonical?.canonical_product_name || task.canonical_product_name,
         canonical_unit_id: canonical?.canonical_unit_id || task.canonical_unit_id,
         canonical_unit_value: canonical?.canonical_unit_value || task.canonical_unit_value,
+        ...(payload.action === "update_details" ? {
+          reviewed_material_name: payload.material_name,
+          reviewed_group_text: payload.group_text,
+          reviewed_unit_text: payload.unit_text,
+        } : {}),
         accounting_reference: payload.accounting_reference || task.accounting_reference,
         sync_state: payload.action === "mark_synchronized" ? "synced" :
           (payload.sync_state || task.sync_state),
@@ -2007,12 +2025,18 @@ async function reviewProductTask({
       const publicEventDetails = payload.action === "request_clarification" ? {
         action: "purchase_material_clarification_requested",
         message: "طلب المحاسب توضيح بيانات مادة في فاتورة المشتريات.",
+      } : payload.action === "reject_material" ? {
+        action: "purchase_material_rejected",
+        message: "رُفضت مادة من فاتورة المشتريات وتحتاج الفاتورة إلى معالجة قبل الترحيل.",
       } : payload.action === "return_to_pending" ? {
         action: "purchase_material_review_resumed",
         message: "أعيدت مادة فاتورة المشتريات إلى قائمة المراجعة.",
       } : payload.action === "mark_synchronized" ? {
         action: "purchase_material_synchronized",
         message: "تم تأكيد مزامنة مادة فاتورة المشتريات محاسبيًا.",
+      } : payload.action === "update_details" ? {
+        action: "purchase_material_review_details_updated",
+        message: "تم تعديل معلومات المادة قبل اتخاذ قرار ربطها بالكتالوج.",
       } : {
         action: "purchase_material_reconciled",
         message: invoice.status === STATUS.postedToAccounting ?

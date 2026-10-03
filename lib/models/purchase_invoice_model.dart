@@ -599,6 +599,7 @@ class PurchaseAmendmentPriceItem {
 class ProductReviewTask {
   final String id;
   final String invoiceId;
+  final String invoiceNumber;
   final String itemId;
   final String brandId;
   final String receivingBranchId;
@@ -607,6 +608,9 @@ class ProductReviewTask {
   final String originalMaterialName;
   final String originalGroupText;
   final String originalUnitText;
+  final String reviewedMaterialName;
+  final String reviewedGroupText;
+  final String reviewedUnitText;
   final String canonicalProductId;
   final String accountingReference;
   final String syncState;
@@ -615,6 +619,7 @@ class ProductReviewTask {
   const ProductReviewTask({
     required this.id,
     required this.invoiceId,
+    this.invoiceNumber = '',
     required this.itemId,
     required this.brandId,
     required this.receivingBranchId,
@@ -623,6 +628,9 @@ class ProductReviewTask {
     required this.originalMaterialName,
     required this.originalGroupText,
     required this.originalUnitText,
+    this.reviewedMaterialName = '',
+    this.reviewedGroupText = '',
+    this.reviewedUnitText = '',
     this.canonicalProductId = '',
     this.accountingReference = '',
     this.syncState = '',
@@ -633,6 +641,7 @@ class ProductReviewTask {
       ProductReviewTask(
         id: data['id']?.toString() ?? id,
         invoiceId: data['invoice_id']?.toString() ?? '',
+        invoiceNumber: data['invoice_number']?.toString() ?? '',
         itemId: data['item_id']?.toString() ?? '',
         brandId: data['brand_id']?.toString() ?? '',
         receivingBranchId: data['receiving_branch_id']?.toString() ?? '',
@@ -641,11 +650,24 @@ class ProductReviewTask {
         originalMaterialName: data['original_material_name']?.toString() ?? '',
         originalGroupText: data['original_group_text']?.toString() ?? '',
         originalUnitText: data['original_unit_text']?.toString() ?? '',
+        reviewedMaterialName: data['reviewed_material_name']?.toString() ?? '',
+        reviewedGroupText: data['reviewed_group_text']?.toString() ?? '',
+        reviewedUnitText: data['reviewed_unit_text']?.toString() ?? '',
         canonicalProductId: data['canonical_product_id']?.toString() ?? '',
         accountingReference: data['accounting_reference']?.toString() ?? '',
         syncState: data['sync_state']?.toString() ?? '',
         updatedAt: _date(data['updated_at']),
       );
+
+  String get materialName => reviewedMaterialName.trim().isEmpty
+      ? originalMaterialName
+      : reviewedMaterialName;
+
+  String get groupText =>
+      reviewedGroupText.trim().isEmpty ? originalGroupText : reviewedGroupText;
+
+  String get unitText =>
+      reviewedUnitText.trim().isEmpty ? originalUnitText : reviewedUnitText;
 }
 
 DateTime? _date(dynamic value) {

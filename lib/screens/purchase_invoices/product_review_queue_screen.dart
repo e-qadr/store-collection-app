@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
+import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_details_screen.dart';
 import 'package:store_collection_app/screens/products/catalog_product_editor_dialog.dart';
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
@@ -9,8 +11,15 @@ import 'package:store_collection_app/theme/app_theme.dart';
 
 class ProductReviewQueueScreen extends StatefulWidget {
   final Stream<List<ProductReviewTask>>? taskStream;
+  final UserRole role;
+  final String? branchId;
 
-  const ProductReviewQueueScreen({super.key, this.taskStream});
+  const ProductReviewQueueScreen({
+    super.key,
+    this.taskStream,
+    this.role = UserRole.collector,
+    this.branchId,
+  });
 
   @override
   State<ProductReviewQueueScreen> createState() =>
@@ -218,20 +227,14 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        task.originalMaterialName,
+                        task.materialName,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 16,
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        'وردت من الفاتورة برقم ${task.invoiceId.isEmpty ? '-' : task.invoiceId}',
-                        style: const TextStyle(
-                          color: AppTheme.textHint,
-                          fontSize: 12,
-                        ),
-                      ),
+                      _invoiceReference(task),
                     ],
                   ),
                 ),
@@ -250,18 +253,14 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
                   Expanded(
                     child: _fact(
                       'المجموعة الواردة',
-                      task.originalGroupText.isEmpty
-                          ? 'غير محددة'
-                          : task.originalGroupText,
+                      task.groupText.isEmpty ? 'غير محددة' : task.groupText,
                     ),
                   ),
                   Container(width: 1, height: 34, color: AppTheme.dividerColor),
                   Expanded(
                     child: _fact(
                       'الوحدة الواردة',
-                      task.originalUnitText.isEmpty
-                          ? 'غير محددة'
-                          : task.originalUnitText,
+                      task.unitText.isEmpty ? 'غير محددة' : task.unitText,
                     ),
                   ),
                 ],
@@ -303,6 +302,78 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
     ),
   );
 
+  Widget _invoiceReference(ProductReviewTask task) {
+    // Tests inject a stream without initializing Firebase. The real app
+    // resolves legacy tasks live; injected previews use the stored reference.
+    if (widget.taskStream != null) {
+      return _invoiceReferenceLabel(
+        task,
+        task.invoiceNumber.trim().isEmpty
+            ? 'فاتورة الشراء'
+            : task.invoiceNumber,
+      );
+    }
+    return StreamBuilder<PurchaseInvoiceRead?>(
+      stream: task.invoiceId.isEmpty
+          ? null
+          : _service.watchInvoice(task.invoiceId),
+      builder: (context, snapshot) {
+        final invoice = snapshot.data;
+        final number = invoice?.purchaseNumber.trim().isNotEmpty == true
+            ? invoice!.purchaseNumber
+            : task.invoiceNumber.trim().isNotEmpty
+            ? task.invoiceNumber
+            : 'فاتورة الشراء';
+        return _invoiceReferenceLabel(task, number);
+      },
+    );
+  }
+
+  Widget _invoiceReferenceLabel(ProductReviewTask task, String number) =>
+      InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: task.invoiceId.isEmpty
+            ? null
+            : () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PurchaseInvoiceDetailsScreen(
+                    invoiceId: task.invoiceId,
+                    role: widget.role,
+                    branchId: widget.branchId,
+                  ),
+                ),
+              ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.receipt_long_outlined,
+                size: 15,
+                color: AppTheme.primaryOlive,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'فاتورة الشراء: $number',
+                style: const TextStyle(
+                  color: AppTheme.primaryOlive,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 3),
+              const Icon(
+                Icons.open_in_new_rounded,
+                size: 13,
+                color: AppTheme.primaryOlive,
+              ),
+            ],
+          ),
+        ),
+      );
+
   Widget _statusBadge(ProductReviewTask task, Color color) => Container(
     constraints: const BoxConstraints(maxWidth: 116),
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -322,6 +393,7 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
     'clarification_requested' => AppTheme.errorColor,
     'linked_material' || 'newly_created_material' => AppTheme.primaryOlive,
     'synchronized' => AppTheme.successColor,
+    'rejected_material' => AppTheme.errorColor,
     _ => AppTheme.textHint,
   };
 
@@ -331,6 +403,7 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
     'linked_material' => Icons.link_rounded,
     'newly_created_material' => Icons.add_box_rounded,
     'synchronized' => Icons.verified_rounded,
+    'rejected_material' => Icons.cancel_outlined,
     _ => Icons.help_outline_rounded,
   };
 
@@ -344,6 +417,8 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
     'newly_created_material' =>
       'أُنشئت مادة الكتالوج. ستظهر في فروع العلامة، ويربطها محاسب كل فرع محاسبيًا.',
     'synchronized' => 'اكتملت معالجة المادة ومزامنتها محاسبياً.',
+    'rejected_material' =>
+      'رُفضت المادة. عدّل أو أزل سطر الفاتورة قبل متابعة الترحيل المحاسبي.',
     _ => 'راجع حالة هذه المادة قبل المتابعة.',
   };
 
@@ -363,6 +438,11 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
           label: const Text('إنشاء مادة جديدة'),
         ),
         OutlinedButton.icon(
+          onPressed: () => _editDetails(task),
+          icon: const Icon(Icons.edit_note_rounded),
+          label: const Text('تعديل المعلومات'),
+        ),
+        OutlinedButton.icon(
           onPressed: () => _simpleAction(
             task,
             action: 'request_clarification',
@@ -370,6 +450,16 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
           ),
           icon: const Icon(Icons.question_answer_rounded),
           label: const Text('طلب توضيح'),
+        ),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(foregroundColor: AppTheme.errorColor),
+          onPressed: () => _simpleAction(
+            task,
+            action: 'reject_material',
+            title: 'رفض المادة',
+          ),
+          icon: const Icon(Icons.cancel_outlined),
+          label: const Text('رفض المادة'),
         ),
       ];
     }
@@ -460,8 +550,8 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
     final draft = await showCatalogProductEditor(
       context,
       groups: groups,
-      initialName: task.originalMaterialName,
-      initialPrimaryUnit: task.originalUnitText,
+      initialName: task.materialName,
+      initialPrimaryUnit: task.unitText,
     );
     if (!mounted || draft == null) return;
     final invoiceRevision = await _invoiceRevision(task);
@@ -478,6 +568,76 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
         legacyCode: draft.legacyCode,
         units: draft.units,
         primaryUnitId: draft.primaryUnitId,
+        idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
+      ),
+    );
+  }
+
+  Future<void> _editDetails(ProductReviewTask task) async {
+    final name = TextEditingController(text: task.materialName);
+    final group = TextEditingController(text: task.groupText);
+    final unit = TextEditingController(text: task.unitText);
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تعديل معلومات المادة'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: 'اسم المادة *'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: group,
+                decoration: const InputDecoration(
+                  labelText: 'المجموعة الواردة',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: unit,
+                decoration: const InputDecoration(labelText: 'الوحدة الواردة'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('حفظ المعلومات'),
+          ),
+        ],
+      ),
+    );
+    final materialName = name.text.trim();
+    final groupText = group.text.trim();
+    final unitText = unit.text.trim();
+    name.dispose();
+    group.dispose();
+    unit.dispose();
+    if (accepted != true || materialName.isEmpty) {
+      if (accepted == true) _message('اسم المادة مطلوب.');
+      return;
+    }
+    final invoiceRevision = await _invoiceRevision(task);
+    if (invoiceRevision == null) return;
+    await _run(
+      task,
+      () => _api.reviewTask(
+        taskId: task.id,
+        expectedRevision: task.revision,
+        expectedInvoiceRevision: invoiceRevision,
+        action: 'update_details',
+        materialName: materialName,
+        groupText: groupText,
+        unitText: unitText,
         idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
       ),
     );
@@ -548,6 +708,7 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
     'linked_material' => 'أُضيفت للكتالوج',
     'newly_created_material' => 'أُنشئت في الكتالوج',
     'synchronized' => 'متزامنة محاسبيًا',
+    'rejected_material' => 'مرفوضة',
     _ => 'حالة غير معروفة',
   };
 
