@@ -17,20 +17,21 @@ class PurchaseInvoiceService {
     String? branchId,
   }) {
     Query<Map<String, dynamic>> query;
+    PurchaseInvoiceStatus? actionStatus;
     if (role == UserRole.manager) {
       final branch = branchId?.trim() ?? '';
       if (branch.isEmpty) return Stream.value(const []);
       query = _invoices.where('receiving_branch_id', isEqualTo: branch);
     } else if (role == UserRole.collector) {
-      query = _invoices.where(
-        'status',
-        isEqualTo: PurchaseInvoiceStatus.pendingPriceEntry.value,
-      );
+      actionStatus = PurchaseInvoiceStatus.pendingPriceEntry;
+      query = (branchId?.trim().isNotEmpty ?? false)
+          ? _invoices.where('receiving_branch_id', isEqualTo: branchId!.trim())
+          : _invoices.where('status', isEqualTo: actionStatus.value);
     } else if (role == UserRole.accountant) {
-      query = _invoices.where(
-        'status',
-        isEqualTo: PurchaseInvoiceStatus.pendingAccountingEntry.value,
-      );
+      actionStatus = PurchaseInvoiceStatus.pendingAccountingEntry;
+      query = (branchId?.trim().isNotEmpty ?? false)
+          ? _invoices.where('receiving_branch_id', isEqualTo: branchId!.trim())
+          : _invoices.where('status', isEqualTo: actionStatus.value);
     } else {
       return Stream.value(const []);
     }
@@ -41,6 +42,10 @@ class PurchaseInvoiceService {
         .map(
           (snapshot) => snapshot.docs
               .map((doc) => PurchaseInvoiceRead(id: doc.id, data: doc.data()))
+              .where(
+                (invoice) =>
+                    actionStatus == null || invoice.status == actionStatus,
+              )
               .toList(growable: false),
         );
   }

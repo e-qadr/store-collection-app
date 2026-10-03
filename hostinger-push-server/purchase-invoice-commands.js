@@ -75,8 +75,6 @@ const REVIEW_STATUS = Object.freeze({
 const PURCHASE_JSON_LIMIT = "64kb";
 const ITEMS_SUBCOLLECTION = "items";
 const OPERATIONAL_ROLES = new Set(["manager", "collector", "accountant", "admin"]);
-const PURCHASE_COUNTER_DOCUMENT_ID = "global";
-const PURCHASE_NUMBER_PREFIX = "PUR";
 const INITIAL_PRICING_MODE = "initial_purchase";
 const PRICE_SOURCE = Object.freeze({
   purchaseInvoice: "purchase_invoice",
@@ -186,7 +184,11 @@ function cleanBranch(snapshot, branchId) {
   if (!brandId) {
     throw new PurchaseCommandError("branch-brand-missing", 409, "The branch brand is missing.");
   }
-  return {id: branchId, name: bounded(data.name, branchId, 200), brandId, data};
+  const branchCode = String(data.branch_code || "").trim().toUpperCase();
+  if (!branchCode || !/^[A-Z0-9_-]{2,12}$/.test(branchCode)) {
+    throw new PurchaseCommandError("branch-code-missing", 409, "The receiving branch code is invalid.");
+  }
+  return {id: branchId, name: bounded(data.name, branchId, 200), brandId, branchCode, data};
 }
 
 function requireBrand(snapshot, brandId) {
@@ -697,14 +699,14 @@ function responseFor(invoiceId, status, revision, purchaseNumber) {
   return compact({invoice_id: invoiceId, purchase_number: purchaseNumber, status, revision});
 }
 
-function nextPurchaseNumber(counterSnapshot) {
-  const stored = counterSnapshot.exists ? counterSnapshot.data()?.next_number : 1;
-  if (!Number.isSafeInteger(stored) || stored < 1 || stored >= Number.MAX_SAFE_INTEGER) {
+function nextPurchaseNumber(counterSnapshot, branchCode) {
+  const stored = counterSnapshot.exists ? counterSnapshot.data()?.next_number : 0;
+  if (!Number.isSafeInteger(stored) || stored < 0 || stored > 999) {
     throw new PurchaseCommandError(
         "purchase-counter-invalid", 409, "The purchase invoice counter is invalid.",
     );
   }
-  return {nextNumber: stored, purchaseNumber: `${PURCHASE_NUMBER_PREFIX}-${String(stored).padStart(4, "0")}`};
+  return {nextNumber: stored, purchaseNumber: `${branchCode}${String(stored).padStart(3, "0")}`};
 }
 
 function supplierUniqueKey(payload) {
@@ -826,9 +828,9 @@ async function createPurchaseInvoice({
         };
       });
       const itemDigest = purchaseItemDigest(items);
-      const counterRef = firestore.collection(COLLECTIONS.counters).doc(PURCHASE_COUNTER_DOCUMENT_ID);
+      const counterRef = firestore.collection(COLLECTIONS.counters).doc(branch.id);
       const counterSnapshot = await transaction.get(counterRef);
-      const {nextNumber, purchaseNumber} = nextPurchaseNumber(counterSnapshot);
+      const {nextNumber, purchaseNumber} = nextPurchaseNumber(counterSnapshot, branch.branchCode);
       const createdEvent = eventData(
           "purchase_invoice_created",
           "تم إنشاء فاتورة المشتريات وإرسالها إلى الفرع المستلم.",
@@ -875,8 +877,10 @@ async function createPurchaseInvoice({
       const allInitialPricesProvided = provisionalItems.length === items.length;
       transaction.set(invoiceRef, invoice);
       transaction.set(counterRef, {
-        id: PURCHASE_COUNTER_DOCUMENT_ID,
-        scope: "global",
+        id: branch.id,
+        scope: "receiving_branch",
+        branch_id: branch.id,
+        branch_code: branch.branchCode,
         next_number: nextNumber + 1,
         last_purchase_number: purchaseNumber,
         last_invoice_id: invoiceRef.id,
@@ -2832,7 +2836,6 @@ function createPurchaseInvoiceCommandRouter({
 module.exports = {
   COLLECTIONS,
   PURCHASE_JSON_LIMIT,
-  PURCHASE_COUNTER_DOCUMENT_ID,
   REVIEW_STATUS,
   STATUS,
   assertProtectedPrice,

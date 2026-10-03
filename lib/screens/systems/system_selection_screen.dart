@@ -16,6 +16,7 @@ import 'package:store_collection_app/screens/purchase_invoices/purchase_invoices
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
+import 'package:store_collection_app/widgets/company_branch_selector.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
 class SystemSelectionScreen extends StatelessWidget {
@@ -263,6 +264,33 @@ class SystemSelectionScreen extends StatelessWidget {
     if (!_hasPurchaseRole) return;
     final id = branchId?.trim() ?? '';
     if (role == UserRole.manager && id.isEmpty) return;
+    if (role == UserRole.collector || role == UserRole.accountant) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => CompanyBranchSelector(
+            title: 'اختيار فرع المشتريات',
+            intro: 'اختر الفرع لعرض عملياته وسجل فواتير مشترياته.',
+            color: _roleColor(role),
+            branchIcon: Icons.shopping_cart_checkout_rounded,
+            onBranchSelected: (selectorContext, branch) {
+              final data = branch.data() as Map<String, dynamic>;
+              Navigator.push(
+                selectorContext,
+                MaterialPageRoute(
+                  builder: (_) => PurchaseInvoicesDashboard(
+                    role: role,
+                    branchId: branch.id,
+                    branchName: data['name']?.toString() ?? 'فرع غير مسمى',
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(

@@ -5,7 +5,9 @@ const MAX_ID_BYTES = 128;
 const MAX_ITEM_ID_BYTES = 64;
 const MAX_UNIT_ID_BYTES = 64;
 const MAX_NOTES_BYTES = 1000;
-const MAX_LINE_NOTES_BYTES = 200;
+// A line note is operational context, not a short label. Keep it bounded for
+// request safety while allowing a meaningful Arabic explanation.
+const MAX_LINE_NOTES_BYTES = 1000;
 const MAX_MATERIAL_BYTES = 400;
 const MAX_GROUP_BYTES = 300;
 const MAX_UNIT_BYTES = 100;

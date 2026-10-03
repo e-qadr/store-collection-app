@@ -200,11 +200,16 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                ] else if (widget.catalogUnits.length > 1) ...[
+                ] else if (widget.catalogUnits.isNotEmpty) ...[
                   DropdownButtonFormField<String>(
                     key: const Key('purchase-item-catalog-unit'),
                     initialValue: _catalogUnitId,
-                    decoration: const InputDecoration(labelText: 'الوحدة'),
+                    decoration: InputDecoration(
+                      labelText: 'وحدة المادة',
+                      helperText: widget.catalogUnits.length == 1
+                          ? 'هذه هي الوحدة المتاحة للمادة.'
+                          : 'اختر الوحدة المطلوبة لهذه المادة.',
+                    ),
                     items: widget.catalogUnits
                         .map(
                           (unit) => DropdownMenuItem(
@@ -213,8 +218,9 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                           ),
                         )
                         .toList(growable: false),
-                    onChanged: (value) =>
-                        setState(() => _catalogUnitId = value),
+                    onChanged: widget.catalogUnits.length == 1
+                        ? null
+                        : (value) => setState(() => _catalogUnitId = value),
                   ),
                   const SizedBox(height: 10),
                 ],
@@ -244,9 +250,12 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                 TextField(
                   key: const Key('purchase-item-notes'),
                   controller: _notesController,
-                  maxLines: 2,
+                  minLines: 2,
+                  maxLines: 5,
+                  maxLength: 1000,
                   decoration: const InputDecoration(
                     labelText: 'ملاحظات البند (اختيارية)',
+                    helperText: 'يمكن كتابة ملاحظة تفصيلية حتى 1000 حرف.',
                   ),
                 ),
               ],

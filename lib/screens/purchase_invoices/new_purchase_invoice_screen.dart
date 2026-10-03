@@ -40,7 +40,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
   String? _branchId;
   String _brandId = '';
   String _currency = 'YER';
-  DateTime? _supplierDate;
+  late DateTime _supplierDate;
   bool _submitting = false;
   String? _idempotencyKey;
 
@@ -48,6 +48,12 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
     0,
     (total, item) => total + (item.provisionalPrice ?? 0) * item.quantity,
   );
+
+  @override
+  void initState() {
+    super.initState();
+    _supplierDate = DateTime.now();
+  }
 
   @override
   void dispose() {
@@ -97,11 +103,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
                     child: OutlinedButton.icon(
                       onPressed: _submitting ? null : _pickDate,
                       icon: const Icon(Icons.event_rounded),
-                      label: Text(
-                        _supplierDate == null
-                            ? 'تاريخ فاتورة المورد (اختياري)'
-                            : _dateValue(_supplierDate!),
-                      ),
+                      label: Text(_dateValue(_supplierDate)),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -468,7 +470,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
   Future<void> _pickDate() async {
     final selected = await showDatePicker(
       context: context,
-      initialDate: _supplierDate ?? DateTime.now(),
+      initialDate: _supplierDate,
       firstDate: DateTime(2000),
       lastDate: DateTime.now().add(const Duration(days: 1)),
     );
@@ -711,9 +713,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         currency: _currency,
         supplierName: _supplierName.text,
         supplierInvoiceNumber: _supplierNumber.text,
-        supplierInvoiceDate: _supplierDate == null
-            ? null
-            : _dateValue(_supplierDate!),
+        supplierInvoiceDate: _dateValue(_supplierDate),
         generalManagerNotes: _notes.text,
         idempotencyKey: _idempotencyKey!,
         items: _items.map((item) => item.toInput()).toList(growable: false),

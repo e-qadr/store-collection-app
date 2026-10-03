@@ -54,12 +54,14 @@ function seed() {
         id: "branch-r",
         name: "الفرع المستلم",
         brand_id: "brand-r",
+        branch_code: "BR",
         branch_manager_id: "manager-r",
       },
       "branch-x": {
         id: "branch-x",
         name: "فرع آخر",
         brand_id: "brand-x",
+        branch_code: "BX",
         branch_manager_id: "manager-x",
       },
     },
@@ -176,15 +178,17 @@ test("collector creates an atomic scalable purchase invoice and unmatched task w
   const task = findTask(firestore, invoiceId);
 
   assert.equal(result.statusCode, 201);
-  assert.equal(result.responseData.purchase_number, "PUR-0001");
-  assert.equal(invoice.purchase_number, "PUR-0001");
+  assert.equal(result.responseData.purchase_number, "BR000");
+  assert.equal(invoice.purchase_number, "BR000");
   assert.deepEqual(
-      firestore.document(COLLECTIONS.counters, "global"),
+      firestore.document(COLLECTIONS.counters, "branch-r"),
       {
-        id: "global",
-        scope: "global",
-        next_number: 2,
-        last_purchase_number: "PUR-0001",
+        id: "branch-r",
+        scope: "receiving_branch",
+        branch_id: "branch-r",
+        branch_code: "BR",
+        next_number: 1,
+        last_purchase_number: "BR000",
         last_invoice_id: invoiceId,
         last_updated: now,
       },
@@ -325,11 +329,11 @@ test("purchase numbers are atomic, sequential, and independent of optional suppl
 
   assert.deepEqual(
       [first, second, third].map((result) => result.responseData.purchase_number),
-      ["PUR-0001", "PUR-0002", "PUR-0003"],
+      ["BR000", "BR001", "BR002"],
   );
   const thirdInvoice = firestore.document(COLLECTIONS.invoices, third.responseData.invoice_id);
   assert.equal(thirdInvoice.supplier_invoice_number, "PAPER-3");
-  assert.equal(firestore.document(COLLECTIONS.counters, "global").next_number, 4);
+  assert.equal(firestore.document(COLLECTIONS.counters, "branch-r").next_number, 3);
 });
 
 test("concurrent purchase creation allocates distinct sequential system numbers", async () => {
@@ -349,9 +353,9 @@ test("concurrent purchase creation allocates distinct sequential system numbers"
 
   assert.deepEqual(
       results.map((result) => result.responseData.purchase_number).sort(),
-      ["PUR-0001", "PUR-0002", "PUR-0003", "PUR-0004"],
+      ["BR000", "BR001", "BR002", "BR003"],
   );
-  assert.equal(firestore.document(COLLECTIONS.counters, "global").next_number, 5);
+  assert.equal(firestore.document(COLLECTIONS.counters, "branch-r").next_number, 4);
 });
 
 test("creation validates collector role, receiving brand ownership, duplicates, and idempotency", async () => {
@@ -426,7 +430,7 @@ test("purchase creation rejects a transfer-only Main Branch without writing an i
   }), (error) => error.code === "branch-not-found" && error.status === 404);
 
   assert.equal(firestore.documents(COLLECTIONS.invoices).length, 0);
-  assert.equal(firestore.document(COLLECTIONS.counters, "global"), undefined);
+  assert.equal(firestore.document(COLLECTIONS.counters, "branch-r"), undefined);
 });
 
 test("new receipt is non-blocking with unresolved review tasks and goes directly to accounting", async () => {
@@ -977,6 +981,7 @@ test("the purchase route accepts measured 50-item payloads over 16kb and returns
     id: receivingId,
     name: "فرع كبير",
     brand_id: "brand-r",
+    branch_code: "BIG",
     branch_manager_id: "manager-r",
   };
   data.users["manager-r"].branchId = receivingId;
