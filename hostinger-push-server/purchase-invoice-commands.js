@@ -347,6 +347,18 @@ function requireAmendableState(invoice, expectedRevision) {
   }
 }
 
+// An invoice amendment is tied to one exact public revision. Letting receipt,
+// pricing, review, or posting advance that revision while the amendment is
+// pending would leave a permanent stale amendment behind. The requester must
+// apply or reject it before the normal workflow can continue.
+function requireNoPendingAmendment(invoice) {
+  if (invoice.open_amendment_id && invoice.open_amendment_status === "pending") {
+    throw new PurchaseCommandError(
+        "active-amendment-exists", 409, "An amendment must be decided before this workflow step.",
+    );
+  }
+}
+
 function amendmentItemView(item) {
   return compact({
     product_id: item.canonical_product_id,
@@ -1029,6 +1041,7 @@ async function confirmReceipt({firestore, actorUid, invoiceId, payload, idempote
       const branch = cleanBranch(branchSnapshot, branchId);
       assertManager(actor, branchId, branch.data);
       const invoice = requireInvoice(rawSnapshot, invoiceId);
+      requireNoPendingAmendment(invoice);
       requireState(invoice, STATUS.pendingReceiverReview, payload.expected_revision);
       const stored = await readItems(transaction, invoiceRef, invoice);
       const priceRef = firestore.collection(COLLECTIONS.prices).doc(invoiceId);
@@ -1423,6 +1436,7 @@ async function confirmPrices({firestore, actorUid, invoiceId, payload, idempoten
         transaction.get(invoiceRef), transaction.get(priceRef),
       ]);
       const invoice = requireInvoice(invoiceSnapshot, invoiceId);
+      requireNoPendingAmendment(invoice);
       const storedItems = await readItems(transaction, invoiceRef, invoice);
       const currentPrice = priceSnapshot.data();
       const legacyPricing = invoice.status === STATUS.pendingPriceEntry &&
@@ -1641,6 +1655,7 @@ async function reviewProductTask({
       const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(String(task.invoice_id || ""));
       const invoiceSnapshot = await transaction.get(invoiceRef);
       const invoice = requireInvoice(invoiceSnapshot, invoiceRef.id);
+      requireNoPendingAmendment(invoice);
       if (invoice.revision !== payload.expected_invoice_revision) {
         throw new PurchaseCommandError("stale-revision", 409, "The invoice revision has changed.");
       }
@@ -2565,7 +2580,10 @@ async function decidePurchaseAmendment({
         newKeyRef ? transaction.get(newKeyRef) : Promise.resolve(null),
         amendment.includes_protected_price_changes ?
           transaction.get(amendmentPriceRef) : Promise.resolve(null),
-        needsPriceUpdate ? transaction.get(priceRef) : Promise.resolve(null),
+        // Every amendment advances the invoice revision. Read and advance the
+        // protected snapshot even for header-only edits, otherwise the next
+        // receipt/pricing action sees a stale price revision and fails.
+        transaction.get(priceRef),
       ]);
       if (newKeySnapshot?.exists && newKeySnapshot.data()?.invoice_id !== invoiceId) {
         throw new PurchaseCommandError(
@@ -2589,6 +2607,15 @@ async function decidePurchaseAmendment({
       Object.entries(publicChanges).forEach(([field, change]) => {
         invoiceUpdate[field] = change.after;
       });
+      const price = priceSnapshot.data();
+      if (!priceSnapshot.exists || !hasOnlyKeys(price, PROTECTED_PRICE_KEYS) ||
+          price.locked !== false || price.invoice_revision !== invoice.revision ||
+          price.item_digest !== invoice.item_digest || price.currency !== invoice.currency ||
+          !["initial", "provisional", "confirmed"].includes(price.pricing_state)) {
+        throw new PurchaseCommandError(
+            "price-snapshot-invalid", 409, "The protected price draft is invalid.",
+        );
+      }
       if (needsPriceUpdate) {
         const amendmentPrice = amendmentPriceSnapshot?.data();
         if (amendment.includes_protected_price_changes &&
@@ -2599,16 +2626,7 @@ async function decidePurchaseAmendment({
               "amendment-price-invalid", 409, "The protected amendment data is invalid.",
           );
         }
-        const price = priceSnapshot.data();
         const confirmedPrice = price?.pricing_state === "confirmed";
-        if (!priceSnapshot.exists || !hasOnlyKeys(price, PROTECTED_PRICE_KEYS) ||
-            price.locked !== false || price.invoice_revision !== invoice.revision ||
-            price.item_digest !== invoice.item_digest || price.currency !== invoice.currency ||
-            !["initial", "provisional", "confirmed"].includes(price.pricing_state)) {
-          throw new PurchaseCommandError(
-              "price-snapshot-invalid", 409, "The protected price draft is invalid.",
-          );
-        }
         if (confirmedPrice) assertProtectedPrice(invoice, invoiceItems, price);
         const validItemIds = new Set(invoiceItems.map((item) => item.item_id));
         const amendmentPriceItems = amendment.includes_protected_price_changes ?
@@ -2688,6 +2706,11 @@ async function decidePurchaseAmendment({
             pricing_state: provisionalItems.length === nextItems.length ? "initial" : "provisional",
           });
         }
+      } else {
+        transaction.update(priceRef, {
+          invoice_revision: nextRevision,
+          item_digest: nextItemDigest,
+        });
       }
       amendmentItems.forEach((item) => {
         const nextItem = nextItems.find((candidate) => candidate.item_id === item.item_id);
@@ -2791,6 +2814,7 @@ async function postToAccounting({firestore, actorUid, invoiceId, payload, idempo
         transaction.get(invoiceRef), transaction.get(priceRef),
       ]);
       const invoice = requireInvoice(invoiceSnapshot, invoiceId);
+      requireNoPendingAmendment(invoice);
       requireState(invoice, STATUS.pendingAccountingEntry, payload.expected_revision);
       const items = await readItems(transaction, invoiceRef, invoice);
       const price = priceSnapshot.data();

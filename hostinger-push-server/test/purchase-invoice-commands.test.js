@@ -218,7 +218,12 @@ test("legacy purchase headers without the branch-type marker remain transition-c
   const invoiceId = result.responseData.invoice_id;
   // Historical public headers were written before this explicitly persisted
   // normal-branch marker. They must remain operational without data migration.
-  delete firestore._collection(COLLECTIONS.invoices).get(invoiceId).receiving_branch_type;
+  const legacyInvoice = firestore._collection(COLLECTIONS.invoices).get(invoiceId);
+  delete legacyInvoice.receiving_branch_type;
+  // Before branch-scoped numbering, human-facing numbers used the old global
+  // PUR prefix. A number format must never prevent an existing invoice from
+  // completing its original workflow.
+  legacyInvoice.purchase_number = "PUR-0014";
   // Branch-scoped invoice numbering was also introduced later. A missing code
   // must not prevent the branch manager from completing a historical invoice.
   delete firestore._collection(COLLECTIONS.branches).get("branch-r").branch_code;
@@ -237,6 +242,68 @@ test("legacy purchase headers without the branch-type marker remain transition-c
       })),
     },
     idempotencyKey: "legacy-header-branch-type-receipt-1",
+    timestamp: now,
+  });
+  assert.equal(receipt.responseData.status, "pendingAccountingEntry");
+  assert.equal(firestore.document(COLLECTIONS.invoices, invoiceId).purchase_number, "PUR-0014");
+});
+
+test("a pending amendment freezes invoice workflow transitions until it is decided", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore, "freeze-pending-amendment-1");
+  const invoiceId = result.responseData.invoice_id;
+  const items = publicItems(firestore, invoiceId);
+  const amendment = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      reason: "Correct the supplier reference before receipt.",
+      changes: {supplier_invoice_number: "S-101"},
+    },
+    idempotencyKey: "freeze-pending-amendment-request-1",
+    timestamp: now,
+  });
+  await assert.rejects(() => confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      items: items.map((item) => ({
+        item_id: item.item_id,
+        received_quantity: item.ordered_quantity,
+        damaged_quantity: 0,
+        missing_quantity: 0,
+      })),
+    },
+    idempotencyKey: "freeze-pending-amendment-receipt-1",
+    timestamp: now,
+  }), (error) => error.code === "active-amendment-exists");
+  await decidePurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    amendmentId: amendment.responseData.amendment_id,
+    payload: {expected_revision: 1, decision: "apply"},
+    idempotencyKey: "freeze-pending-amendment-apply-1",
+    timestamp: now,
+  });
+  const receipt = await confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 2,
+      items: items.map((item) => ({
+        item_id: item.item_id,
+        received_quantity: item.ordered_quantity,
+        damaged_quantity: 0,
+        missing_quantity: 0,
+      })),
+    },
+    idempotencyKey: "freeze-pending-amendment-receipt-2",
     timestamp: now,
   });
   assert.equal(receipt.responseData.status, "pendingAccountingEntry");
@@ -615,6 +682,35 @@ test("legacy purchase price drafts remain on the collector pricing path", async 
     timestamp: now,
   });
   assert.equal(receipt.responseData.status, "pendingPriceEntry");
+  const priced = await confirmPrices({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 2,
+      items: publicItems(firestore, invoiceId).map((item) => ({
+        item_id: item.item_id,
+        unit_price: 10,
+      })),
+    },
+    idempotencyKey: "legacy-price-confirm-1",
+    timestamp: now,
+  });
+  assert.equal(priced.responseData.status, "pendingAccountingEntry");
+  const posted = await postToAccounting({
+    firestore,
+    actorUid: "accountant",
+    invoiceId,
+    payload: {
+      expected_revision: 3,
+      accounting_reference: "LEGACY-PUR-001",
+      override_unresolved_materials: true,
+      override_reason: "Historical invoice reviewed before posting.",
+    },
+    idempotencyKey: "legacy-price-post-1",
+    timestamp: now,
+  });
+  assert.equal(posted.responseData.status, "postedToAccounting");
 });
 
 test("each workflow command fails closed for the wrong role or state", async () => {

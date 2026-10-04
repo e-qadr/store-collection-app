@@ -796,6 +796,30 @@ class _PurchaseInvoiceDetailsScreenState
     PurchaseInvoiceRead invoice,
     PurchaseInvoicePriceSnapshot? prices,
   ) {
+    if (invoice.hasPendingAmendment) {
+      return SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          decoration: const BoxDecoration(
+            color: AppTheme.cardColor,
+            border: Border(top: BorderSide(color: AppTheme.dividerColor)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.pending_actions_rounded, color: AppTheme.warningColor),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'يوجد تعديل معلّق. اعتمده أو ارفضه من بطاقة التعديل قبل متابعة الفاتورة.',
+                  style: TextStyle(color: AppTheme.textHint, height: 1.35),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final action = _action(invoice, prices);
     final hasAction = action is! SizedBox;
     final mayEditInvoice =
