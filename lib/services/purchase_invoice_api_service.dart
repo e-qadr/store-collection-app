@@ -344,6 +344,7 @@ class PurchaseInvoiceApiService {
     String? supplierInvoiceNumber,
     String? supplierInvoiceDate,
     String? generalManagerNotes,
+    String? currency,
     List<PurchaseAmendmentPriceInput>? priceItems,
     List<PurchaseAmendmentItemChangeInput>? itemChanges,
   }) => _command(
@@ -359,6 +360,7 @@ class PurchaseInvoiceApiService {
         'supplier_invoice_date': supplierInvoiceDate.trim(),
       if (generalManagerNotes != null)
         'general_manager_notes': generalManagerNotes.trim(),
+      if (currency != null) 'currency': currency.toUpperCase(),
       if (priceItems != null)
         'price_items': priceItems.map((item) => item.toJson()).toList(),
       if (itemChanges != null)

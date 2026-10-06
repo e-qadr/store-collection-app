@@ -242,6 +242,20 @@ test("pre-receipt item amendment payloads preserve an explicit blank note and re
   );
 });
 
+test("amendments validate an explicitly selected invoice currency", () => {
+  const amendment = validateAmendmentCreatePayload({
+    expected_revision: 1,
+    reason: "Correct invoice currency",
+    currency: "sar",
+  });
+  assert.equal(amendment.changes.currency, "SAR");
+  assert.throws(() => validateAmendmentCreatePayload({
+    expected_revision: 1,
+    reason: "Unsupported currency",
+    currency: "EUR",
+  }), (error) => error.code === "invalid-argument");
+});
+
 test("review product validation supports the bounded dynamic catalog unit limit", () => {
   const units = Array.from({length: MAX_CATALOG_UNITS}, (_, index) => ({
     unit_id: index === 0 ? "primary" : `unit_${index + 1}`,

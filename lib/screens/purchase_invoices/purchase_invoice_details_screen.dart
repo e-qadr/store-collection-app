@@ -1534,6 +1534,7 @@ class _PurchaseInvoiceDetailsScreenState
     'supplier_invoice_number' => 'رقم فاتورة المورد',
     'supplier_invoice_date' => 'تاريخ فاتورة المورد',
     'general_manager_notes' => 'ملاحظات المدير العام',
+    'currency' => 'عملة الفاتورة',
     _ => field,
   };
 
@@ -1550,6 +1551,7 @@ class _PurchaseInvoiceDetailsScreenState
       text: invoice.supplierInvoiceDate,
     );
     final notes = TextEditingController(text: invoice.generalManagerNotes);
+    var selectedCurrency = invoice.currency;
     // A purchase line remains amendable until accounting posting. Any people
     // who have already acted on the invoice still approve the same amendment
     // before it is applied on the server.
@@ -1703,6 +1705,30 @@ class _PurchaseInvoiceDetailsScreenState
                                   decoration: const InputDecoration(
                                     labelText: 'اسم المورد',
                                     prefixIcon: Icon(Icons.store_outlined),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                DropdownButtonFormField<String>(
+                                  initialValue: selectedCurrency,
+                                  isExpanded: true,
+                                  decoration: const InputDecoration(
+                                    labelText: 'عملة الفاتورة',
+                                    prefixIcon: Icon(Icons.payments_outlined),
+                                    helperText:
+                                        'تغيير العملة يلغي الأسعار المحفوظة حتى تُعتمد بالعملة الجديدة.',
+                                  ),
+                                  items: PurchaseInvoiceApiService
+                                      .supportedCurrencies
+                                      .map(
+                                        (currency) => DropdownMenuItem(
+                                          value: currency,
+                                          child: Text(currency),
+                                        ),
+                                      )
+                                      .toList(growable: false),
+                                  onChanged: (value) => setDialogState(
+                                    () => selectedCurrency =
+                                        value ?? invoice.currency,
                                   ),
                                 ),
                                 const SizedBox(height: 10),
@@ -1870,7 +1896,8 @@ class _PurchaseInvoiceDetailsScreenState
                               ),
                             ),
                           ],
-                          if (_mayReadPrices) ...[
+                          if (_mayReadPrices &&
+                              selectedCurrency == invoice.currency) ...[
                             const SizedBox(height: 8),
                             Theme(
                               data: Theme.of(
@@ -1932,6 +1959,15 @@ class _PurchaseInvoiceDetailsScreenState
                                 ),
                               ),
                             ),
+                          ] else if (selectedCurrency != invoice.currency) ...[
+                            const SizedBox(height: 10),
+                            const Text(
+                              'ستُدخل الأسعار وتُعتمد لاحقاً بالعملة الجديدة بعد اكتمال الموافقات.',
+                              style: TextStyle(
+                                color: AppTheme.textHint,
+                                fontSize: 12,
+                              ),
+                            ),
                           ],
                         ],
                       ),
@@ -1968,7 +2004,11 @@ class _PurchaseInvoiceDetailsScreenState
       final priceItems = <PurchaseAmendmentPriceInput>[];
       for (final item in invoice.items) {
         final controller = priceControllers[item.id];
-        if (controller == null || controller.text.trim().isEmpty) continue;
+        if (selectedCurrency != invoice.currency ||
+            controller == null ||
+            controller.text.trim().isEmpty) {
+          continue;
+        }
         final value = double.tryParse(controller.text.trim());
         final original = prices?.provisionalPrices[item.id];
         if (value == null || value < 0) {
@@ -1986,7 +2026,8 @@ class _PurchaseInvoiceDetailsScreenState
           supplier.text.trim() != invoice.supplierName ||
           supplierNumber.text.trim() != invoice.supplierInvoiceNumber ||
           supplierDate.text.trim() != invoice.supplierInvoiceDate ||
-          notes.text.trim() != invoice.generalManagerNotes;
+          notes.text.trim() != invoice.generalManagerNotes ||
+          selectedCurrency != invoice.currency;
       final itemChanges = <PurchaseAmendmentItemChangeInput>[];
       try {
         for (final draft in itemDrafts) {
@@ -2022,6 +2063,9 @@ class _PurchaseInvoiceDetailsScreenState
                 notes.text.trim() == invoice.generalManagerNotes
                 ? null
                 : notes.text,
+            currency: selectedCurrency == invoice.currency
+                ? null
+                : selectedCurrency,
             priceItems: priceItems.isEmpty ? null : priceItems,
             itemChanges: itemChanges.isEmpty ? null : itemChanges,
             idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),

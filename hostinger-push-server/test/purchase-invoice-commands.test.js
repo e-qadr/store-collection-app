@@ -666,6 +666,49 @@ test("receipt variance remains immutable until the receiving manager and creator
   assert.equal(publicItems(firestore, invoiceId)[0].received_quantity, 2);
 });
 
+test("approved currency amendment resets protected prices for the new currency", async () => {
+  const firestore = new FakeFirestore(seed());
+  const payload = createPayload();
+  payload.items = [payload.items[0]];
+  const created = await createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload,
+    idempotencyKey: "currency-amendment-create-1",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  const invoiceId = created.responseData.invoice_id;
+  const amendment = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      reason: "فاتورة المورد مقيدة بعملة مختلفة.",
+      changes: {currency: "SAR"},
+    },
+    idempotencyKey: "currency-amendment-request-1",
+    timestamp: now,
+  });
+  await decidePurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    amendmentId: amendment.responseData.amendment_id,
+    payload: {expected_revision: 1, decision: "apply"},
+    idempotencyKey: "currency-amendment-apply-1",
+    timestamp: now,
+  });
+  const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  const price = firestore.document(COLLECTIONS.prices, invoiceId);
+  assert.equal(invoice.currency, "SAR");
+  assert.equal(price.currency, "SAR");
+  assert.equal(price.pricing_state, "provisional");
+  assert.deepEqual(price.provisional_items, []);
+  assert.equal(price.items, undefined);
+});
+
 test("a fully approved protected price amendment keeps an accounting-ready invoice confirmed", async () => {
   const firestore = new FakeFirestore(seed());
   const payload = createPayload();

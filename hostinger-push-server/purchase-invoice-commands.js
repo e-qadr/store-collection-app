@@ -2638,8 +2638,10 @@ async function decidePurchaseAmendment({
         firestore.collection(COLLECTIONS.supplierKeys).doc(oldKeyId) : null;
       const newKeyRef = newKeyId ?
         firestore.collection(COLLECTIONS.supplierKeys).doc(newKeyId) : null;
+      const nextCurrency = publicChanges.currency?.after ?? invoice.currency;
+      const currencyChanged = nextCurrency !== invoice.currency;
       const needsPriceUpdate =
-        amendment.includes_protected_price_changes || amendmentItems.length > 0;
+        amendment.includes_protected_price_changes || amendmentItems.length > 0 || currencyChanged;
       const priceRef = firestore.collection(COLLECTIONS.prices).doc(invoiceId);
       const [oldKeySnapshot, newKeySnapshot, amendmentPriceSnapshot, priceSnapshot] = await Promise.all([
         oldKeyRef ? transaction.get(oldKeyRef) : Promise.resolve(null),
@@ -2682,7 +2684,25 @@ async function decidePurchaseAmendment({
             "price-snapshot-invalid", 409, "The protected price draft is invalid.",
         );
       }
-      if (needsPriceUpdate) {
+      if (currencyChanged) {
+        // A numeric price cannot be copied into a different currency. Keep
+        // the previous currency's price history intact, but reset this
+        // invoice's protected snapshot so an authorized user enters and
+        // confirms prices in the newly approved currency.
+        transaction.set(priceRef, compact({
+          id: price.id,
+          invoice_id: invoiceId,
+          invoice_revision: nextRevision,
+          pricing_revision: 0,
+          pricing_state: "provisional",
+          ...(price.pricing_mode ? {pricing_mode: price.pricing_mode} : {}),
+          item_count: nextItems.length,
+          item_digest: nextItemDigest,
+          currency: nextCurrency,
+          provisional_items: [],
+          locked: false,
+        }));
+      } else if (needsPriceUpdate) {
         const amendmentPrice = amendmentPriceSnapshot?.data();
         if (amendment.includes_protected_price_changes &&
             (!amendmentPrice || amendmentPrice.invoice_id !== invoiceId ||

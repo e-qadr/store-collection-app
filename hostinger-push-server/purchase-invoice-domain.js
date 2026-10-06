@@ -410,7 +410,7 @@ function validateAmendmentCreatePayload(body) {
   const input = object(body);
   onlyKeys(input, new Set([
     "expected_revision", "reason", "supplier_name", "supplier_invoice_number",
-    "supplier_invoice_date", "general_manager_notes", "price_items", "item_changes",
+    "supplier_invoice_date", "general_manager_notes", "currency", "price_items", "item_changes",
   ]), "body");
   const changes = compact({
     supplier_name: amendmentStringChange(input, "supplier_name", MAX_SUPPLIER_BYTES),
@@ -423,6 +423,7 @@ function validateAmendmentCreatePayload(body) {
     general_manager_notes: amendmentStringChange(
         input, "general_manager_notes", MAX_NOTES_BYTES,
     ),
+    currency: hasOwn(input, "currency") ? currency(input.currency) : undefined,
   });
   let priceItems;
   if (hasOwn(input, "price_items")) {
