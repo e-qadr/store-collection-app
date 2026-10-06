@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_price_model.dart';
+import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
 
 class PurchaseInvoiceService {
   final FirebaseFirestore _firestore;
@@ -138,18 +139,34 @@ class PurchaseInvoiceService {
         );
   }
 
-  Stream<PurchaseInvoiceAmendment?> watchAmendment(String amendmentId) {
-    if (amendmentId.trim().isEmpty) return Stream.value(null);
-    return _firestore
-        .collection(PurchaseInvoiceCollections.amendments)
-        .doc(amendmentId.trim())
-        .snapshots()
-        .map((snapshot) {
-          final data = snapshot.data();
-          return data == null
-              ? null
-              : PurchaseInvoiceAmendment.fromMap(snapshot.id, data);
-        });
+  Stream<PurchaseInvoiceAmendment?> watchAmendment(
+    String amendmentId, {
+    String? invoiceId,
+  }) async* {
+    if (amendmentId.trim().isEmpty) {
+      yield null;
+      return;
+    }
+    try {
+      await for (final snapshot
+          in _firestore
+              .collection(PurchaseInvoiceCollections.amendments)
+              .doc(amendmentId.trim())
+              .snapshots()) {
+        final data = snapshot.data();
+        yield data == null
+            ? null
+            : PurchaseInvoiceAmendment.fromMap(snapshot.id, data);
+      }
+    } catch (_) {
+      final cleanInvoiceId = invoiceId?.trim() ?? '';
+      final api = PurchaseInvoiceApiService();
+      if (cleanInvoiceId.isEmpty || !api.isConfigured) rethrow;
+      yield await api.fetchAmendment(
+        invoiceId: cleanInvoiceId,
+        amendmentId: amendmentId.trim(),
+      );
+    }
   }
 
   /// Returns only amendments where the signed-in user still has a decision to
@@ -168,6 +185,10 @@ class PurchaseInvoiceService {
   }) {
     final cleanUserId = userId.trim();
     if (cleanUserId.isEmpty) return Stream.value(const []);
+    final api = PurchaseInvoiceApiService();
+    if (api.isConfigured) {
+      return Stream.fromFuture(api.fetchMyPendingAmendments());
+    }
     final cleanBranchId = branchId?.trim() ?? '';
     if (role == UserRole.manager && cleanBranchId.isEmpty) {
       return Stream.value(const []);

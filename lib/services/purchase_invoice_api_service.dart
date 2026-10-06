@@ -236,6 +236,53 @@ class PurchaseInvoiceApiService {
 
   bool get isConfigured => _baseUrl.isNotEmpty;
 
+  /// Reads the public operational amendment through the command service.
+  /// This is deliberately separate from the protected amendment-price record.
+  Future<PurchaseInvoiceAmendment> fetchAmendment({
+    required String invoiceId,
+    required String amendmentId,
+  }) async {
+    final response = await _read(
+      '/v1/purchase-invoices/${Uri.encodeComponent(invoiceId)}/amendments/'
+      '${Uri.encodeComponent(amendmentId)}',
+    );
+    final raw = response['amendment'];
+    if (raw is! Map) {
+      throw const PurchaseInvoiceApiException(
+        'invalid-response',
+        'تعذر تحميل تفاصيل التعديل من الخادم.',
+      );
+    }
+    return PurchaseInvoiceAmendment.fromMap(
+      raw['id']?.toString() ?? amendmentId,
+      Map<String, dynamic>.from(raw),
+    );
+  }
+
+  /// Returns only amendments that still need a decision from the signed-in
+  /// account. The server checks the authenticated role and branch before
+  /// returning any document.
+  Future<List<PurchaseInvoiceAmendment>> fetchMyPendingAmendments() async {
+    final response = await _read('/v1/purchase-invoices/amendments/pending');
+    final raw = response['amendments'];
+    if (raw is! List) {
+      throw const PurchaseInvoiceApiException(
+        'invalid-response',
+        'تعذر تحميل مهام التعديل من الخادم.',
+      );
+    }
+    return raw
+        .whereType<Map>()
+        .map(
+          (entry) => PurchaseInvoiceAmendment.fromMap(
+            entry['id']?.toString() ?? '',
+            Map<String, dynamic>.from(entry),
+          ),
+        )
+        .where((amendment) => amendment.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
   Future<PurchaseInvoiceCommandResult> createInvoice({
     required String receivingBranchId,
     required String currency,
@@ -551,6 +598,60 @@ class PurchaseInvoiceApiService {
       );
     }
     return result;
+  }
+
+  Future<Map<String, dynamic>> _read(String path) async {
+    if (!isConfigured) {
+      throw const PurchaseInvoiceApiException(
+        'configuration-error',
+        'خدمة أوامر فواتير المشتريات غير مهيأة.',
+      );
+    }
+    String? token;
+    try {
+      token = await _tokenProvider();
+    } catch (_) {
+      throw const PurchaseInvoiceApiException(
+        'session-refresh-failed',
+        'تعذر تحديث جلسة المستخدم. سجل الدخول مجددًا ثم حاول.',
+      );
+    }
+    if (token == null || token.isEmpty) {
+      throw const PurchaseInvoiceApiException(
+        'unauthenticated',
+        'انتهت جلسة الدخول. سجل الدخول مجددًا.',
+      );
+    }
+    late http.Response response;
+    try {
+      response = await _client
+          .get(
+            Uri.parse('$_baseUrl$path'),
+            headers: {'authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 25));
+    } catch (_) {
+      throw const PurchaseInvoiceApiException(
+        'network-error',
+        'تعذر الاتصال بالخادم. تحقق من الشبكة وحاول مرة أخرى.',
+      );
+    }
+    final decoded = _decode(response.body);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final rawError = decoded['error'];
+      final error = rawError is Map
+          ? Map<String, dynamic>.from(rawError)
+          : const <String, dynamic>{};
+      final code = error['code']?.toString() ?? 'request-failed';
+      throw PurchaseInvoiceApiException(
+        code,
+        safeMessageForCode(code),
+        httpStatus: response.statusCode,
+        sanitizedBackendMessage: _sanitizeBackendMessage(error['message']),
+        firstClientFrame: _firstClientFrame(StackTrace.current),
+      );
+    }
+    return decoded;
   }
 
   static String generateIdempotencyKey() {

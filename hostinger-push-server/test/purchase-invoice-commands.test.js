@@ -1253,6 +1253,61 @@ function post(base, path, body) {
   });
 }
 
+test("authenticated amendment reads return only the caller's pending decisions", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore, "amendment-read-create-1");
+  const invoiceId = result.responseData.invoice_id;
+  const receiptItems = publicItems(firestore, invoiceId).map((item) => ({
+    item_id: item.item_id,
+    received_quantity: item.ordered_quantity,
+    damaged_quantity: 0,
+    missing_quantity: 0,
+  }));
+  const receipt = await confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {expected_revision: 1, items: receiptItems},
+    idempotencyKey: "amendment-read-receipt-1",
+    timestamp: now,
+  });
+  const amendment = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: receipt.responseData.revision,
+      reason: "تصحيح بيانات المورد",
+      changes: {supplier_name: "مورد مصحح"},
+    },
+    idempotencyKey: "amendment-read-request-1",
+    timestamp: now,
+  });
+  const amendmentId = amendment.responseData.amendment_id;
+  await withServer(firestore, async (base) => {
+    const headers = (uid) => ({authorization: `Bearer token-${uid}`});
+    const pending = await fetch(
+        `${base}/v1/purchase-invoices/amendments/pending`,
+        {headers: headers("manager-r")},
+    );
+    assert.equal(pending.status, 200);
+    assert.equal((await pending.json()).amendments[0].id, amendmentId);
+
+    const detail = await fetch(
+        `${base}/v1/purchase-invoices/${invoiceId}/amendments/${amendmentId}`,
+        {headers: headers("manager-r")},
+    );
+    assert.equal(detail.status, 200);
+    assert.equal((await detail.json()).amendment.invoice_id, invoiceId);
+
+    const otherBranch = await fetch(
+        `${base}/v1/purchase-invoices/${invoiceId}/amendments/${amendmentId}`,
+        {headers: headers("manager-x")},
+    );
+    assert.equal(otherBranch.status, 404);
+  });
+});
+
 test("the purchase route accepts measured 50-item payloads over 16kb and returns safe 413 over 64kb", async () => {
   const data = seed();
   const receivingId = "b".repeat(128);

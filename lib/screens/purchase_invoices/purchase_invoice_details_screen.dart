@@ -881,7 +881,10 @@ class _PurchaseInvoiceDetailsScreenState
   Widget _pendingAmendmentFooter(
     PurchaseInvoiceRead invoice,
   ) => StreamBuilder<PurchaseInvoiceAmendment?>(
-    stream: _service.watchAmendment(invoice.openAmendmentId),
+    stream: _service.watchAmendment(
+      invoice.openAmendmentId,
+      invoiceId: invoice.id,
+    ),
     builder: (context, snapshot) {
       final amendment = snapshot.data;
       final hasError = snapshot.hasError;
@@ -1366,7 +1369,10 @@ class _PurchaseInvoiceDetailsScreenState
       return const SizedBox.shrink();
     }
     return StreamBuilder<PurchaseInvoiceAmendment?>(
-      stream: _service.watchAmendment(invoice.openAmendmentId),
+      stream: _service.watchAmendment(
+        invoice.openAmendmentId,
+        invoiceId: invoice.id,
+      ),
       builder: (context, snapshot) {
         final amendment = snapshot.data;
         if (snapshot.hasError) {

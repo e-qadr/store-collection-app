@@ -625,6 +625,115 @@ async function readActor(transaction, firestore, uid, expectedRole) {
   return actor;
 }
 
+async function readOperationalActor(firestore, uid) {
+  const snapshot = await firestore.collection(COLLECTIONS.users).doc(uid).get();
+  const profile = snapshot.data();
+  if (!snapshot.exists || !isOperationalProfile(profile)) {
+    throw new PurchaseCommandError("forbidden", 403, "The account cannot read purchase invoices.");
+  }
+  return actorFromProfile(uid, profile);
+}
+
+function mayReadPurchaseInvoice(actor, invoice) {
+  if (!invoice || typeof invoice !== "object") return false;
+  if (["collector", "accountant", "admin"].includes(actor.role)) return true;
+  return actor.role === "manager" && actor.branchId &&
+    actor.branchId === String(invoice.receiving_branch_id || "").trim();
+}
+
+function publicAmendmentActor(value) {
+  if (!value || typeof value !== "object") return null;
+  const uid = String(value.uid || "").trim();
+  const role = String(value.role || "").trim();
+  if (!uid || !["manager", "collector", "accountant"].includes(role)) return null;
+  return {uid, name: bounded(value.name, uid, 200), role};
+}
+
+function publicAmendmentActors(value) {
+  return Array.isArray(value) ? value.map(publicAmendmentActor).filter(Boolean) : [];
+}
+
+function publicAmendmentChanges(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const changes = {};
+  for (const field of [
+    "supplier_name", "supplier_invoice_number", "supplier_invoice_date",
+    "general_manager_notes", "currency",
+  ]) {
+    const change = value[field];
+    if (!change || typeof change !== "object" || Array.isArray(change) ||
+        typeof change.after !== "string" ||
+        (change.before !== null && typeof change.before !== "string")) continue;
+    changes[field] = {before: change.before ?? null, after: change.after};
+  }
+  return changes;
+}
+
+function publicIsoTimestamp(value) {
+  const candidate = value instanceof Date ? value :
+    (value && typeof value.toDate === "function" ? value.toDate() : null);
+  return candidate instanceof Date && Number.isFinite(candidate.getTime())
+    ? candidate.toISOString()
+    : null;
+}
+
+// The amendment is intentionally projected field-by-field. The companion
+// amendment-price document remains the only source of financial values.
+function publicAmendmentView(data) {
+  return {
+    id: String(data.id || ""),
+    invoice_id: String(data.invoice_id || ""),
+    invoice_revision: Number.isSafeInteger(data.invoice_revision) ? data.invoice_revision : 0,
+    status: String(data.status || ""),
+    reason: bounded(data.reason, "", 1000),
+    changes: publicAmendmentChanges(data.changes),
+    has_item_changes: data.has_item_changes === true,
+    item_change_count: Number.isSafeInteger(data.item_change_count) ? data.item_change_count : 0,
+    includes_protected_price_changes: data.includes_protected_price_changes === true,
+    required_approvers: publicAmendmentActors(data.required_approvers),
+    approvals: publicAmendmentActors(data.approvals),
+    requested_by_name: bounded(data.requested_by_name, "", 200),
+    requested_by_role: String(data.requested_by_role || ""),
+    requested_at: publicIsoTimestamp(data.requested_at),
+    rejection_reason: bounded(data.rejection_reason, "", 1000),
+  };
+}
+
+async function readPurchaseAmendmentView({firestore, actorUid, invoiceId, amendmentId}) {
+  const actor = await readOperationalActor(firestore, actorUid);
+  const [invoiceSnapshot, amendmentSnapshot] = await Promise.all([
+    firestore.collection(COLLECTIONS.invoices).doc(invoiceId).get(),
+    firestore.collection(COLLECTIONS.amendments).doc(amendmentId).get(),
+  ]);
+  const invoice = invoiceSnapshot.data();
+  const amendment = amendmentSnapshot.data();
+  if (!invoiceSnapshot.exists || !mayReadPurchaseInvoice(actor, invoice) ||
+      !amendmentSnapshot.exists || amendment?.invoice_id !== invoiceId) {
+    throw new PurchaseCommandError("not-found", 404, "The amendment is unavailable.");
+  }
+  return publicAmendmentView(amendment);
+}
+
+async function listMyPendingPurchaseAmendments({firestore, actorUid}) {
+  const actor = await readOperationalActor(firestore, actorUid);
+  const snapshot = await firestore.collection(COLLECTIONS.amendments)
+      .where("status", "==", "pending").limit(100).get();
+  const candidates = snapshot.docs.map((document) => document.data()).filter((amendment) =>
+    Array.isArray(amendment?.required_approvers) &&
+    amendment.required_approvers.some((entry) => entry?.uid === actor.uid),
+  );
+  const results = [];
+  for (const amendment of candidates) {
+    const approvals = Array.isArray(amendment.approvals) ? amendment.approvals : [];
+    if (approvals.some((entry) => entry?.uid === actor.uid)) continue;
+    const invoiceId = String(amendment.invoice_id || "").trim();
+    if (!invoiceId) continue;
+    const invoice = (await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).get()).data();
+    if (mayReadPurchaseInvoice(actor, invoice)) results.push(publicAmendmentView(amendment));
+  }
+  return results;
+}
+
 function commandRef(firestore, command, uid, idempotencyKey) {
   const id = deterministicDocumentId("purchase-invoice-v1", command, uid, idempotencyKey);
   return firestore.collection(COLLECTIONS.commands).doc(id);
@@ -3046,12 +3155,41 @@ function commandRoute({
   };
 }
 
+function readRoute(execute) {
+  return async (request, response) => {
+    try {
+      response.status(200).json(await execute(request));
+    } catch (error) {
+      const details = publicError(error);
+      response.status(details.status).json(details.body);
+    }
+  };
+}
+
 function createPurchaseInvoiceCommandRouter({
   admin, firestore, now = () => new Date(), randomUUID = crypto.randomUUID,
 }) {
   if (!admin || !firestore) throw new Error("Firebase Admin and Firestore are required.");
   const router = express.Router();
   router.use(createAuthentication({admin}));
+  router.get("/purchase-invoices/amendments/pending", readRoute(async (request) => ({
+    amendments: await listMyPendingPurchaseAmendments({
+      firestore,
+      actorUid: request.purchaseAuth.uid,
+    }),
+  })));
+  router.get("/purchase-invoices/:invoiceId/amendments/:amendmentId", readRoute(async (request) => {
+    const invoiceId = documentId(request.params.invoiceId, "invoice_id");
+    const amendmentId = documentId(request.params.amendmentId, "amendment_id");
+    return {
+      amendment: await readPurchaseAmendmentView({
+        firestore,
+        actorUid: request.purchaseAuth.uid,
+        invoiceId,
+        amendmentId,
+      }),
+    };
+  }));
   router.post("/purchase-invoices", commandRoute({
     firestore, admin, now, randomUUID, validator: validateCreatePayload,
     execute: createPurchaseInvoice,
@@ -3105,7 +3243,9 @@ module.exports = {
   decidePurchaseAmendment,
   finalPriceItems,
   isOperationalProfile,
+  listMyPendingPurchaseAmendments,
   postToAccounting,
+  readPurchaseAmendmentView,
   reviewProductTask,
   syncProductBranchAccounting,
   updateCatalogPrice,
