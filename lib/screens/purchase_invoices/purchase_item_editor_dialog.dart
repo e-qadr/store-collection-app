@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
+import 'package:store_collection_app/utils/catalog_normalization.dart';
+
+typedef PurchaseGroupCreator = Future<ProductGroupModel?> Function(String name);
 
 /// Immutable values returned after an item editor route has completely closed.
 /// Controllers remain owned by the dialog to avoid use-after-dispose errors.
@@ -48,6 +51,8 @@ class PurchaseItemEditorDialog extends StatefulWidget {
   final String initialGroupText;
   final String initialUnitText;
   final List<CatalogUnit> initialProposedUnits;
+  final List<ProductGroupModel> groupSuggestions;
+  final PurchaseGroupCreator? onCreateGroup;
   final String initialLineNotes;
   final String? priceHelperText;
   final bool showPricing;
@@ -70,7 +75,9 @@ class PurchaseItemEditorDialog extends StatefulWidget {
        initialMaterialName = '',
        initialGroupText = '',
        initialUnitText = '',
-       initialProposedUnits = const [];
+       initialProposedUnits = const [],
+       groupSuggestions = const [],
+       onCreateGroup = null;
 
   const PurchaseItemEditorDialog.unmatched({
     super.key,
@@ -78,6 +85,8 @@ class PurchaseItemEditorDialog extends StatefulWidget {
     this.initialGroupText = '',
     this.initialUnitText = '',
     this.initialProposedUnits = const [],
+    this.groupSuggestions = const [],
+    this.onCreateGroup,
     this.initialQuantity = 1,
     this.initialProvisionalPrice,
     this.initialLineNotes = '',
@@ -290,10 +299,51 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                   TextField(
                     key: const Key('purchase-item-group'),
                     controller: _groupController,
+                    onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(
                       labelText: 'المجموعة (اختيارية)',
+                      hintText: 'ابحث أو أنشئ مجموعة جديدة',
+                      prefixIcon: Icon(Icons.search_rounded),
                     ),
                   ),
+                  if (_matchingGroups.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 148),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.black12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: _matchingGroups
+                            .map(
+                              (group) => ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.folder_outlined),
+                                title: Text(group.name),
+                                onTap: () => setState(
+                                  () => _groupController.text = group.name,
+                                ),
+                              ),
+                            )
+                            .toList(growable: false),
+                      ),
+                    ),
+                  ],
+                  if (_canCreateGroup)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: _creatingGroup
+                            ? null
+                            : () => _createGroup(_groupController.text.trim()),
+                        icon: const Icon(Icons.create_new_folder_outlined),
+                        label: Text(
+                          'إنشاء مجموعة «${_groupController.text.trim()}»',
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 10),
                   const Align(
                     alignment: Alignment.centerRight,
@@ -488,6 +538,41 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
         ],
       ),
     );
+  }
+
+  List<ProductGroupModel> get _matchingGroups {
+    final query = normalizeCatalogText(_groupController.text);
+    if (query.isEmpty) return widget.groupSuggestions.take(5).toList();
+    return widget.groupSuggestions
+        .where((group) => normalizeCatalogText(group.name).contains(query))
+        .take(5)
+        .toList(growable: false);
+  }
+
+  bool get _canCreateGroup {
+    final query = _groupController.text.trim();
+    return widget.onCreateGroup != null &&
+        query.isNotEmpty &&
+        !widget.groupSuggestions.any(
+          (group) =>
+              normalizeCatalogText(group.name) == normalizeCatalogText(query),
+        );
+  }
+
+  bool get _creatingGroup => false;
+
+  Future<void> _createGroup(String name) async {
+    try {
+      final group = await widget.onCreateGroup?.call(name);
+      if (!mounted || group == null) return;
+      setState(() => _groupController.text = group.name);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
   }
 }
 

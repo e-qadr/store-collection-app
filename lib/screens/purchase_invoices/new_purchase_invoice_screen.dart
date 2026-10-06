@@ -807,10 +807,17 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
   }
 
   Future<void> _addUnmatchedItem() async {
+    final groups = _brandId.trim().isEmpty
+        ? const <ProductGroupModel>[]
+        : await _catalog.watchGroups(brandId: _brandId, activeOnly: true).first;
+    if (!mounted) return;
     final draft = await showDialog<PurchaseItemEditorResult>(
       context: context,
-      builder: (_) =>
-          const PurchaseItemEditorDialog.unmatched(confirmLabel: 'إضافة'),
+      builder: (_) => PurchaseItemEditorDialog.unmatched(
+        confirmLabel: 'إضافة',
+        groupSuggestions: groups,
+        onCreateGroup: _createInvoiceGroup,
+      ),
     );
     if (!mounted || draft == null) return;
     setState(() {
@@ -863,6 +870,10 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       });
       return;
     }
+    final groups = _brandId.trim().isEmpty
+        ? const <ProductGroupModel>[]
+        : await _catalog.watchGroups(brandId: _brandId, activeOnly: true).first;
+    if (!mounted) return;
     final result = await showDialog<PurchaseItemEditorResult>(
       context: context,
       builder: (_) => PurchaseItemEditorDialog.unmatched(
@@ -873,6 +884,8 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         initialQuantity: item.quantity,
         initialProvisionalPrice: item.provisionalPrice,
         initialLineNotes: item.lineNotes,
+        groupSuggestions: groups,
+        onCreateGroup: _createInvoiceGroup,
       ),
     );
     if (!mounted || result == null) return;
@@ -887,6 +900,42 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         lineNotes: result.lineNotes,
       );
     });
+  }
+
+  Future<ProductGroupModel?> _createInvoiceGroup(String name) async {
+    if (_brandId.trim().isEmpty) {
+      throw StateError('اختر الفرع المستلم أولاً لإنشاء مجموعة.');
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw StateError('انتهت جلسة الدخول. سجل الدخول مجدداً.');
+    final profile = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    final data = profile.data();
+    final role = data?['role']?.toString() ?? '';
+    if (data == null ||
+        (role != 'collector' && role != 'accountant') ||
+        data['isActive'] == false) {
+      throw StateError('إنشاء مجموعة متاح للمدير العام والمحاسب فقط.');
+    }
+    final id = await _catalog.createGroup(
+      actor: CatalogActor(
+        uid: user.uid,
+        name: data['name']?.toString().trim().isNotEmpty == true
+            ? data['name'].toString().trim()
+            : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
+        role: role,
+      ),
+      brandId: _brandId,
+      name: name,
+    );
+    return ProductGroupModel(
+      id: id,
+      brandId: _brandId,
+      name: name,
+      normalizedName: '',
+    );
   }
 
   Future<void> _changeCatalogUnit(
