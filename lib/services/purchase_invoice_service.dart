@@ -143,15 +143,34 @@ class PurchaseInvoiceService {
     String amendmentId, {
     String? invoiceId,
   }) async* {
-    if (amendmentId.trim().isEmpty) {
+    final cleanAmendmentId = amendmentId.trim();
+    if (cleanAmendmentId.isEmpty) {
       yield null;
       return;
+    }
+    final cleanInvoiceId = invoiceId?.trim() ?? '';
+    final api = PurchaseInvoiceApiService();
+
+    // Amendments are operational decisions.  Read them from the authenticated
+    // command service first so a restrictive or legacy Firestore rule cannot
+    // hide an approval action from the very user who must decide it.
+    if (cleanInvoiceId.isNotEmpty && api.isConfigured) {
+      try {
+        yield await api.fetchAmendment(
+          invoiceId: cleanInvoiceId,
+          amendmentId: cleanAmendmentId,
+        );
+        return;
+      } catch (_) {
+        // Keep the direct read as a compatibility fallback for an outage or
+        // installations that temporarily have no command-service access.
+      }
     }
     try {
       await for (final snapshot
           in _firestore
               .collection(PurchaseInvoiceCollections.amendments)
-              .doc(amendmentId.trim())
+              .doc(cleanAmendmentId)
               .snapshots()) {
         final data = snapshot.data();
         yield data == null
@@ -159,12 +178,10 @@ class PurchaseInvoiceService {
             : PurchaseInvoiceAmendment.fromMap(snapshot.id, data);
       }
     } catch (_) {
-      final cleanInvoiceId = invoiceId?.trim() ?? '';
-      final api = PurchaseInvoiceApiService();
       if (cleanInvoiceId.isEmpty || !api.isConfigured) rethrow;
       yield await api.fetchAmendment(
         invoiceId: cleanInvoiceId,
-        amendmentId: amendmentId.trim(),
+        amendmentId: cleanAmendmentId,
       );
     }
   }

@@ -679,10 +679,13 @@ function publicIsoTimestamp(value) {
 
 // The amendment is intentionally projected field-by-field. The companion
 // amendment-price document remains the only source of financial values.
-function publicAmendmentView(data) {
+function publicAmendmentView(data, invoice = {}) {
   return {
     id: String(data.id || ""),
     invoice_id: String(data.invoice_id || ""),
+    purchase_number: bounded(invoice.purchase_number, "", 100),
+    receiving_branch_id: bounded(invoice.receiving_branch_id, "", 200),
+    receiving_branch_name: bounded(invoice.receiving_branch_name, "", 200),
     invoice_revision: Number.isSafeInteger(data.invoice_revision) ? data.invoice_revision : 0,
     status: String(data.status || ""),
     reason: bounded(data.reason, "", 1000),
@@ -711,7 +714,7 @@ async function readPurchaseAmendmentView({firestore, actorUid, invoiceId, amendm
       !amendmentSnapshot.exists || amendment?.invoice_id !== invoiceId) {
     throw new PurchaseCommandError("not-found", 404, "The amendment is unavailable.");
   }
-  return publicAmendmentView(amendment);
+  return publicAmendmentView(amendment, invoice);
 }
 
 async function listMyPendingPurchaseAmendments({firestore, actorUid}) {
@@ -729,7 +732,9 @@ async function listMyPendingPurchaseAmendments({firestore, actorUid}) {
     const invoiceId = String(amendment.invoice_id || "").trim();
     if (!invoiceId) continue;
     const invoice = (await firestore.collection(COLLECTIONS.invoices).doc(invoiceId).get()).data();
-    if (mayReadPurchaseInvoice(actor, invoice)) results.push(publicAmendmentView(amendment));
+    if (mayReadPurchaseInvoice(actor, invoice)) {
+      results.push(publicAmendmentView(amendment, invoice));
+    }
   }
   return results;
 }

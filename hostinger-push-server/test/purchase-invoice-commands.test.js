@@ -1291,7 +1291,12 @@ test("authenticated amendment reads return only the caller's pending decisions",
         {headers: headers("manager-r")},
     );
     assert.equal(pending.status, 200);
-    assert.equal((await pending.json()).amendments[0].id, amendmentId);
+    const pendingBody = await pending.json();
+    assert.equal(pendingBody.amendments[0].id, amendmentId);
+    assert.equal(
+        pendingBody.amendments[0].purchase_number,
+        firestore.document(COLLECTIONS.invoices, invoiceId).purchase_number,
+    );
 
     const detail = await fetch(
         `${base}/v1/purchase-invoices/${invoiceId}/amendments/${amendmentId}`,

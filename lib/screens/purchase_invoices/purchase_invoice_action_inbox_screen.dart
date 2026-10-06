@@ -52,25 +52,19 @@ class _PurchaseInvoiceActionInboxScreenState
                         role: widget.role,
                       ),
                       builder: (context, amendmentSnapshot) {
-                        if (workflowSnapshot.connectionState ==
-                                ConnectionState.waiting ||
-                            amendmentSnapshot.connectionState ==
-                                ConnectionState.waiting) {
+                        if (amendmentSnapshot.connectionState ==
+                            ConnectionState.waiting) {
                           return const Center(
                             child: CircularProgressIndicator(),
                           );
                         }
-                        if (workflowSnapshot.hasError ||
-                            amendmentSnapshot.hasError) {
-                          return const Center(
-                            child: Text(
-                              'تعذر تحميل المهام. اسحب للتحديث لاحقاً.',
-                            ),
-                          );
+                        if (amendmentSnapshot.hasError) {
+                          return _amendmentLoadError();
                         }
                         return _body(
                           workflowSnapshot.data ?? const [],
                           amendmentSnapshot.data ?? const [],
+                          workflowUnavailable: workflowSnapshot.hasError,
                         );
                       },
                     ),
@@ -81,8 +75,9 @@ class _PurchaseInvoiceActionInboxScreenState
 
   Widget _body(
     List<PurchaseInvoiceRead> workflowInvoices,
-    List<PurchaseInvoiceAmendment> amendments,
-  ) {
+    List<PurchaseInvoiceAmendment> amendments, {
+    required bool workflowUnavailable,
+  }) {
     final query = _search.text.trim().toLowerCase();
     final visibleWorkflow = workflowInvoices
         .where((invoice) => _matchesInvoice(invoice, query))
@@ -93,6 +88,10 @@ class _PurchaseInvoiceActionInboxScreenState
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
       children: [
         _intro(workflowInvoices.length, amendments.length),
+        if (workflowUnavailable) ...[
+          const SizedBox(height: 10),
+          _workflowLoadWarning(),
+        ],
         const SizedBox(height: 14),
         TextField(
           controller: _search,
@@ -175,6 +174,42 @@ class _PurchaseInvoiceActionInboxScreenState
     ),
   );
 
+  Widget _amendmentLoadError() => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.cloud_off_rounded, size: 38),
+          const SizedBox(height: 10),
+          const Text(
+            'تعذر تحميل اعتمادات التعديل من الخدمة. تحقق من الاتصال ثم أعد المحاولة.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () => setState(() {}),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('إعادة المحاولة'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _workflowLoadWarning() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFFF3E0),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: const Text(
+      'تعذر تحميل بعض مهام سير الفاتورة، لكن اعتمادات التعديل أدناه ما زالت متاحة.',
+      textAlign: TextAlign.center,
+    ),
+  );
+
   Widget _workflowCard(PurchaseInvoiceRead invoice) => Card(
     margin: const EdgeInsets.only(bottom: 9),
     child: ListTile(
@@ -194,43 +229,59 @@ class _PurchaseInvoiceActionInboxScreenState
     ),
   );
 
-  Widget _amendmentCard(PurchaseInvoiceAmendment amendment, String query) =>
-      StreamBuilder<PurchaseInvoiceRead?>(
-        stream: _service.watchInvoice(amendment.invoiceId),
-        builder: (context, snapshot) {
-          final invoice = snapshot.data;
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Padding(
-              padding: EdgeInsets.all(12),
-              child: LinearProgressIndicator(),
-            );
-          }
-          if (invoice == null || !_matchesInvoice(invoice, query)) {
-            return const SizedBox.shrink();
-          }
-          return Card(
-            margin: const EdgeInsets.only(bottom: 9),
-            child: ListTile(
-              leading: const CircleAvatar(
-                backgroundColor: Color(0xFFFFE0B2),
-                child: Icon(
-                  Icons.edit_note_rounded,
-                  color: AppTheme.warningColor,
-                ),
-              ),
-              title: Text(
-                invoice.purchaseNumber,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-              subtitle: Text(
-                '${invoice.receivingBranchName} • تعديل بانتظار اعتمادك',
-              ),
-              trailing: const Icon(Icons.chevron_left_rounded),
-              onTap: () => _openInvoice(invoice),
-            ),
-          );
-        },
+  Widget _amendmentCard(
+    PurchaseInvoiceAmendment amendment,
+    String query,
+  ) => StreamBuilder<PurchaseInvoiceRead?>(
+    stream: _service.watchInvoice(amendment.invoiceId),
+    builder: (context, snapshot) {
+      final invoice = snapshot.data;
+      if (snapshot.connectionState == ConnectionState.waiting) {
+        return const Padding(
+          padding: EdgeInsets.all(12),
+          child: LinearProgressIndicator(),
+        );
+      }
+      if (invoice != null && !_matchesInvoice(invoice, query)) {
+        return const SizedBox.shrink();
+      }
+      if (invoice == null && !_matchesAmendment(amendment, query)) {
+        return const SizedBox.shrink();
+      }
+      return Card(
+        margin: const EdgeInsets.only(bottom: 9),
+        child: ListTile(
+          leading: const CircleAvatar(
+            backgroundColor: Color(0xFFFFE0B2),
+            child: Icon(Icons.edit_note_rounded, color: AppTheme.warningColor),
+          ),
+          title: Text(
+            invoice?.purchaseNumber.isNotEmpty == true
+                ? invoice!.purchaseNumber
+                : (amendment.purchaseNumber.isNotEmpty
+                      ? amendment.purchaseNumber
+                      : 'فاتورة بانتظار اعتماد تعديل'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          subtitle: Text(
+            '${invoice?.receivingBranchName.isNotEmpty == true ? invoice!.receivingBranchName : amendment.receivingBranchName} • تعديل بانتظار اعتمادك',
+          ),
+          trailing: const Icon(Icons.chevron_left_rounded),
+          onTap: () => _openAmendmentInvoice(amendment, invoice),
+        ),
       );
+    },
+  );
+
+  bool _matchesAmendment(PurchaseInvoiceAmendment amendment, String query) {
+    if (query.isEmpty) return true;
+    return [
+      amendment.purchaseNumber,
+      amendment.receivingBranchName,
+      amendment.requestedByName,
+      amendment.reason,
+    ].any((value) => value.toLowerCase().contains(query));
+  }
 
   bool _matchesInvoice(PurchaseInvoiceRead invoice, String query) {
     if (query.isEmpty) return true;
@@ -255,6 +306,20 @@ class _PurchaseInvoiceActionInboxScreenState
         invoiceId: invoice.id,
         role: widget.role,
         branchId: invoice.receivingBranchId,
+      ),
+    ),
+  );
+
+  void _openAmendmentInvoice(
+    PurchaseInvoiceAmendment amendment,
+    PurchaseInvoiceRead? invoice,
+  ) => Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => PurchaseInvoiceDetailsScreen(
+        invoiceId: amendment.invoiceId,
+        role: widget.role,
+        branchId: invoice?.receivingBranchId ?? amendment.receivingBranchId,
       ),
     ),
   );

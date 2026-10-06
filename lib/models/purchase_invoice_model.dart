@@ -419,6 +419,9 @@ class PurchaseInvoiceAmendment {
   final String requestedByRole;
   final DateTime? requestedAt;
   final String rejectionReason;
+  final String purchaseNumber;
+  final String receivingBranchId;
+  final String receivingBranchName;
 
   const PurchaseInvoiceAmendment({
     required this.id,
@@ -436,6 +439,9 @@ class PurchaseInvoiceAmendment {
     required this.requestedByRole,
     this.requestedAt,
     this.rejectionReason = '',
+    this.purchaseNumber = '',
+    this.receivingBranchId = '',
+    this.receivingBranchName = '',
   });
 
   factory PurchaseInvoiceAmendment.fromMap(
@@ -480,6 +486,9 @@ class PurchaseInvoiceAmendment {
       requestedByRole: data['requested_by_role']?.toString() ?? '',
       requestedAt: _date(data['requested_at']),
       rejectionReason: data['rejection_reason']?.toString() ?? '',
+      purchaseNumber: data['purchase_number']?.toString() ?? '',
+      receivingBranchId: data['receiving_branch_id']?.toString() ?? '',
+      receivingBranchName: data['receiving_branch_name']?.toString() ?? '',
     );
   }
 
