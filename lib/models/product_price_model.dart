@@ -19,6 +19,9 @@ class ProductPriceLatest {
   final double price;
   final String sourceType;
   final String sourceInvoiceId;
+
+  /// A human-readable purchase number. The source ID is internal-only.
+  final String sourceInvoiceNumber;
   final String changedBy;
   final String changedByName;
   final String changedByRole;
@@ -37,6 +40,7 @@ class ProductPriceLatest {
     required this.price,
     this.sourceType = 'purchase_invoice',
     required this.sourceInvoiceId,
+    this.sourceInvoiceNumber = '',
     required this.changedBy,
     required this.changedByName,
     required this.changedByRole,
@@ -60,6 +64,7 @@ class ProductPriceLatest {
       price: (data['price'] as num?)?.toDouble() ?? 0,
       sourceType: data['source_type']?.toString() ?? 'purchase_invoice',
       sourceInvoiceId: data['source_invoice_id']?.toString() ?? '',
+      sourceInvoiceNumber: data['source_invoice_number']?.toString() ?? '',
       changedBy: data['changed_by']?.toString() ?? '',
       changedByName: data['changed_by_name']?.toString() ?? '',
       changedByRole: data['changed_by_role']?.toString() ?? '',
@@ -82,6 +87,7 @@ class ProductPriceHistoryEntry {
   final String? previousSourceInvoiceId;
   final String sourceType;
   final String sourceInvoiceId;
+  final String sourceInvoiceNumber;
   final String changedBy;
   final String changedByName;
   final String changedByRole;
@@ -99,6 +105,7 @@ class ProductPriceHistoryEntry {
     required this.price,
     this.sourceType = 'purchase_invoice',
     required this.sourceInvoiceId,
+    this.sourceInvoiceNumber = '',
     required this.changedBy,
     required this.changedByName,
     required this.changedByRole,
@@ -125,6 +132,7 @@ class ProductPriceHistoryEntry {
       previousSourceInvoiceId: _nonEmpty(data['previous_source_invoice_id']),
       sourceType: data['source_type']?.toString() ?? 'purchase_invoice',
       sourceInvoiceId: data['source_invoice_id']?.toString() ?? '',
+      sourceInvoiceNumber: data['source_invoice_number']?.toString() ?? '',
       changedBy: data['changed_by']?.toString() ?? '',
       changedByName: data['changed_by_name']?.toString() ?? '',
       changedByRole: data['changed_by_role']?.toString() ?? '',

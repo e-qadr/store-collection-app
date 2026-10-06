@@ -1096,7 +1096,7 @@ class _PurchaseInvoiceDetailsScreenState
     PurchaseInvoicePriceSnapshot? prices,
   ) async {
     final controllers = <String, TextEditingController>{};
-    final suggestions = <String, ProductPriceLatest?>{};
+    final suggestionTexts = <String, String>{};
     final priceService = ProductPriceService();
     for (final item in invoice.items) {
       ProductPriceLatest? latest;
@@ -1109,7 +1109,30 @@ class _PurchaseInvoiceDetailsScreenState
           currency: invoice.currency,
         );
       }
-      suggestions[item.id] = latest;
+      if (latest == null) {
+        suggestionTexts[item.id] = 'لا يوجد سعر محفوظ؛ يلزم إدخال صريح.';
+      } else if (latest.sourceType == 'catalog_manual') {
+        suggestionTexts[item.id] = 'آخر سعر مقترح من تسعير دليل المواد.';
+      } else {
+        var sourceNumber = latest.sourceInvoiceNumber.trim();
+        if (sourceNumber.isEmpty) {
+          try {
+            sourceNumber =
+                await _service.fetchPurchaseNumber(latest.sourceInvoiceId) ??
+                '';
+          } catch (_) {
+            // Legacy sources can be unavailable to this participant. Keep the
+            // description useful without rendering an internal document ID.
+          }
+        }
+        final source = sourceNumber.isEmpty
+            ? 'فاتورة سابقة'
+            : 'الفاتورة $sourceNumber';
+        final date = latest.changedAt == null
+            ? ''
+            : ' — ${DateFormat('yyyy/MM/dd').format(latest.changedAt!)}';
+        suggestionTexts[item.id] = 'آخر سعر مقترح من $source$date';
+      }
       final provisional = prices?.provisionalPrices[item.id];
       controllers[item.id] = TextEditingController(
         text: provisional?.toString() ?? latest?.price.toString() ?? '',
@@ -1126,7 +1149,6 @@ class _PurchaseInvoiceDetailsScreenState
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: invoice.items.map((item) {
-                final suggestion = suggestions[item.id];
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: TextField(
@@ -1136,12 +1158,7 @@ class _PurchaseInvoiceDetailsScreenState
                     ),
                     decoration: InputDecoration(
                       labelText: '${item.displayName} — ${item.displayUnit}',
-                      helperText: suggestion == null
-                          ? 'لا يوجد سعر محفوظ؛ يلزم إدخال صريح.'
-                          : suggestion.sourceType == 'catalog_manual'
-                          ? 'آخر سعر مقترح من تسعير دليل المواد '
-                          : 'آخر سعر مقترح من ${suggestion.sourceInvoiceId} '
-                                '${suggestion.changedAt == null ? '' : DateFormat('yyyy/MM/dd').format(suggestion.changedAt!)}',
+                      helperText: suggestionTexts[item.id],
                     ),
                   ),
                 );

@@ -59,6 +59,17 @@ class PurchaseInvoiceService {
     });
   }
 
+  /// Resolves the public number for a protected-price source. Price memory
+  /// stores document IDs for referential integrity, but UI text must show the
+  /// readable purchase number instead of exposing an internal ID.
+  Future<String?> fetchPurchaseNumber(String invoiceId) async {
+    final cleanId = invoiceId.trim();
+    if (cleanId.isEmpty) return null;
+    final snapshot = await _invoices.doc(cleanId).get();
+    final number = snapshot.data()?['purchase_number']?.toString().trim();
+    return number == null || number.isEmpty ? null : number;
+  }
+
   /// The history page intentionally uses one bounded, live header query. It
   /// does not fetch items or protected prices until a user opens one invoice.
   Stream<List<PurchaseInvoiceRead>> watchHistory({

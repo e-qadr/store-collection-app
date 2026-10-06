@@ -9,6 +9,7 @@ import 'package:store_collection_app/screens/purchase_invoices/purchase_item_edi
 import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
+import 'package:store_collection_app/services/purchase_invoice_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/branch_scope.dart';
 
@@ -31,6 +32,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
   final _api = PurchaseInvoiceApiService();
   final _catalog = ProductCatalogService();
   final _prices = ProductPriceService();
+  final _purchaseInvoices = PurchaseInvoiceService();
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _branchesStream =
       FirebaseFirestore.instance
           .collection('branches')
@@ -639,6 +641,40 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
     }
   }
 
+  Future<String> _priceSuggestionText(
+    ProductPriceLatest? latest, {
+    required bool editing,
+  }) async {
+    if (latest == null) return 'لا يوجد سعر محفوظ لهذه المادة والوحدة.';
+    if (latest.sourceType == 'catalog_manual') {
+      return editing
+          ? 'آخر سعر محفوظ من تسعير دليل المواد.'
+          : 'اقتراح من تسعير دليل المواد.';
+    }
+
+    var purchaseNumber = latest.sourceInvoiceNumber.trim();
+    if (purchaseNumber.isEmpty) {
+      try {
+        purchaseNumber =
+            await _purchaseInvoices.fetchPurchaseNumber(
+              latest.sourceInvoiceId,
+            ) ??
+            '';
+      } catch (_) {
+        // Historical or inaccessible source documents must never expose their
+        // internal Firestore IDs in the interface.
+      }
+    }
+    if (purchaseNumber.isNotEmpty) {
+      return editing
+          ? 'آخر سعر محفوظ من الفاتورة $purchaseNumber.'
+          : 'اقتراح من الفاتورة $purchaseNumber.';
+    }
+    return editing
+        ? 'آخر سعر محفوظ من فاتورة سابقة.'
+        : 'اقتراح من فاتورة سابقة.';
+  }
+
   Future<void> _openCatalogOrExplain() async {
     if (_branchId == null || _brandId.trim().isEmpty) {
       _message(
@@ -667,6 +703,8 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
     if (!mounted || selection == null) return;
     final latest = await _latestPrice(selection.product, selection.unit);
     if (!mounted) return;
+    final priceHelperText = await _priceSuggestionText(latest, editing: false);
+    if (!mounted) return;
     final draft = await showDialog<PurchaseItemEditorResult>(
       context: context,
       builder: (_) => PurchaseItemEditorDialog.catalog(
@@ -675,11 +713,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         catalogUnits: selection.product.units,
         initialCatalogUnitId: selection.unit.id,
         initialProvisionalPrice: latest?.price,
-        priceHelperText: latest == null
-            ? 'لا يوجد سعر محفوظ لهذه المادة والوحدة.'
-            : latest.sourceType == 'catalog_manual'
-            ? 'اقتراح من تسعير دليل المواد.'
-            : 'اقتراح من فاتورة سابقة: ${latest.sourceInvoiceId}',
+        priceHelperText: priceHelperText,
         confirmLabel: 'إضافة',
       ),
     );
@@ -786,6 +820,8 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
     if (!item.isUnmatched && item.product != null && item.catalogUnit != null) {
       final latest = await _latestPrice(item.product!, item.catalogUnit!);
       if (!mounted) return;
+      final priceHelperText = await _priceSuggestionText(latest, editing: true);
+      if (!mounted) return;
       final result = await showDialog<PurchaseItemEditorResult>(
         context: context,
         builder: (_) => PurchaseItemEditorDialog.catalog(
@@ -796,11 +832,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
           initialQuantity: item.quantity,
           initialProvisionalPrice: item.provisionalPrice ?? latest?.price,
           initialLineNotes: item.lineNotes,
-          priceHelperText: latest == null
-              ? null
-              : latest.sourceType == 'catalog_manual'
-              ? 'آخر سعر محفوظ من تسعير دليل المواد.'
-              : 'آخر سعر محفوظ: ${latest.sourceInvoiceId}',
+          priceHelperText: priceHelperText,
         ),
       );
       if (!mounted || result == null) return;

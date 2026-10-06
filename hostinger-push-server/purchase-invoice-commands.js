@@ -1114,7 +1114,8 @@ async function confirmReceipt({firestore, actorUid, invoiceId, payload, idempote
             locked: false,
           });
           writePriceMemory(
-              transaction, memory, latestSnapshots, invoice.currency, invoiceId, initialPricer, timestamp,
+              transaction, memory, latestSnapshots, invoice.currency, invoiceId,
+              invoice.purchase_number, initialPricer, timestamp,
           );
           eventAction = "purchase_initial_prices_confirmed";
           eventMessage = "Initial purchase prices were confirmed using received quantities.";
@@ -1266,7 +1267,7 @@ function priceMemoryEntries(firestore, invoiceId, items, currency) {
       });
 }
 
-function writePriceMemory(transaction, entries, latestSnapshots, currency, invoiceId, actor, timestamp) {
+function writePriceMemory(transaction, entries, latestSnapshots, currency, invoiceId, purchaseNumber, actor, timestamp) {
   entries.forEach((entry, index) => {
     const previous = latestSnapshots[index].data();
     const version = (Number.isSafeInteger(previous?.version) ? previous.version : 0) + 1;
@@ -1279,6 +1280,7 @@ function writePriceMemory(transaction, entries, latestSnapshots, currency, invoi
       price: entry.item.unit_price,
       source_type: PRICE_SOURCE.purchaseInvoice,
       source_invoice_id: invoiceId,
+      source_invoice_number: purchaseNumber,
       changed_by: actor.uid,
       changed_by_name: actor.name,
       changed_by_role: actor.role,
@@ -1498,7 +1500,10 @@ async function confirmPrices({firestore, actorUid, invoiceId, payload, idempoten
         throw new PurchaseCommandError("internal", 500, "The protected price schema is invalid.");
       }
       transaction.set(priceRef, protectedDocument);
-      writePriceMemory(transaction, memory, latestSnapshots, invoice.currency, invoiceId, actor, timestamp);
+      writePriceMemory(
+          transaction, memory, latestSnapshots, invoice.currency, invoiceId,
+          invoice.purchase_number, actor, timestamp,
+      );
       const event = eventData(
           "purchase_prices_confirmed",
           "أكد المدير العام أسعار فاتورة المشتريات.",
@@ -2037,7 +2042,7 @@ async function reviewProductTask({
         };
         writePriceMemory(
             transaction, lateMemory, lateLatestSnapshots, invoice.currency,
-            invoice.id, priceActor, timestamp,
+            invoice.id, invoice.purchase_number, priceActor, timestamp,
         );
       }
       const publicEventDetails = payload.action === "request_clarification" ? {

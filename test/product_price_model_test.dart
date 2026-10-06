@@ -21,6 +21,7 @@ void main() {
         'currency': 'SAR',
         'price': 42.5,
         'source_invoice_id': 'invoice-9',
+        'source_invoice_number': 'BR009',
         'changed_by': 'collector-1',
         'changed_by_name': 'المدير العام',
         'changed_by_role': 'collector',
@@ -30,6 +31,7 @@ void main() {
       expect(latest.price, 42.5);
       expect(latest.unitId, 'unit_2');
       expect(latest.sourceInvoiceId, 'invoice-9');
+      expect(latest.sourceInvoiceNumber, 'BR009');
       expect(latest.historyEventId, 'history-2');
       expect(latest.version, 2);
     },
