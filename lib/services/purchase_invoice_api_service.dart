@@ -603,6 +603,8 @@ class PurchaseInvoiceApiService {
       'تم استخدام مفتاح الإرسال لطلب مختلف. أعد فتح الفاتورة وحاول مجددًا.',
     'active-amendment-exists' =>
       'يوجد تعديل معلّق لهذه الفاتورة. اعتمده أو ارفضه قبل متابعة الإجراء.',
+    'receipt-quantity-difference-requires-amendment' =>
+      'فرق كمية الاستلام لا يغيّر الفاتورة مباشرة. أرسل تعديل الفاتورة لاعتماد الأطراف أولاً.',
     'posted-invoice-amendment-blocked' =>
       'الفاتورة المرحلة لا تُعدّل مباشرة؛ أنشئ مستند تصحيح أو عكس محاسبي.',
     'duplicate-amendment-approval' => 'تم تسجيل اعتمادك لهذا التعديل مسبقاً.',

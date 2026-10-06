@@ -409,17 +409,27 @@ async function resolveAmendmentItems({
   const storedById = new Map(invoiceItems.map((item) => [item.item_id, item]));
   const requested = itemChanges.map((change) => {
     const stored = storedById.get(change.item_id);
-    if (!stored || stored.source_type !== "catalog" ||
-        stored.review_status !== REVIEW_STATUS.notRequired) {
+    if (!stored) {
       throw new PurchaseCommandError(
           "item-amendment-invalid",
           409,
-          "Only canonical catalog lines may be amended.",
+          "The purchase item is invalid.",
+      );
+    }
+    const changesCatalogSelection = change.product_id !== undefined || change.unit_id !== undefined;
+    if ((stored.source_type !== "catalog" ||
+        stored.review_status !== REVIEW_STATUS.notRequired) && changesCatalogSelection) {
+      throw new PurchaseCommandError(
+          "item-amendment-invalid",
+          409,
+          "A pending catalog-review line cannot change its catalog selection.",
       );
     }
     return {change, stored};
   });
-  const productIds = [...new Set(requested.map(({change, stored}) =>
+  const catalogRequested = requested.filter(({stored}) =>
+    stored.source_type === "catalog" && stored.review_status === REVIEW_STATUS.notRequired);
+  const productIds = [...new Set(catalogRequested.map(({change, stored}) =>
     change.product_id || stored.canonical_product_id))];
   const productSnapshots = await Promise.all(productIds.map((id) => transaction.get(
       firestore.collection(COLLECTIONS.products).doc(id),
@@ -437,6 +447,31 @@ async function resolveAmendmentItems({
   ]));
 
   return requested.map(({change, stored}) => {
+    if (stored.source_type !== "catalog" || stored.review_status !== REVIEW_STATUS.notRequired) {
+      const afterItem = compact({
+        ...stored,
+        ordered_quantity: change.ordered_quantity ?? stored.ordered_quantity,
+        line_notes: Object.prototype.hasOwnProperty.call(change, "line_notes") ?
+          change.line_notes : (stored.line_notes || ""),
+      });
+      const before = amendmentItemView(stored);
+      const after = amendmentItemView(afterItem);
+      if (sameAmendmentItemView(before, after)) {
+        throw new PurchaseCommandError(
+            "amendment-no-changes", 400, "An amendment item does not change the invoice.",
+        );
+      }
+      return {
+        id: stored.item_id,
+        amendment_id: amendmentRef.id,
+        invoice_id: invoice.id,
+        receiving_branch_id: invoice.receiving_branch_id,
+        item_id: stored.item_id,
+        line_number: stored.line_number,
+        before,
+        after,
+      };
+    }
     const productId = change.product_id || stored.canonical_product_id;
     const product = products.get(productId);
     const unitId = change.unit_id || stored.canonical_unit_id;
@@ -484,6 +519,15 @@ function itemWithApprovedAmendment(stored, amendmentItem, nextRevision) {
     );
   }
   const after = amendmentItem.after;
+  if (stored.source_type !== "catalog" ||
+      stored.review_status !== REVIEW_STATUS.notRequired) {
+    return compact({
+      ...stored,
+      invoice_revision: nextRevision,
+      ordered_quantity: after.ordered_quantity,
+      line_notes: after.line_notes || undefined,
+    });
+  }
   const next = compact({
     ...stored,
     invoice_revision: nextRevision,
@@ -1002,6 +1046,15 @@ function receiptItems(storedItems, receivedItems, revision) {
     const received = byId.get(stored.item_id);
     if (!received) {
       throw new PurchaseCommandError("items-mismatch", 409, "Receipt items do not match.");
+    }
+    // A receiving count is evidence, not authority to rewrite the purchase
+    // quantity. Any variance first requires the audited amendment workflow.
+    if (!approximatelyEqual(stored.ordered_quantity, received.received_quantity)) {
+      throw new PurchaseCommandError(
+          "receipt-quantity-difference-requires-amendment",
+          409,
+          "A receipt variance requires an approved amendment.",
+      );
     }
     const maximumMissing = Math.max(stored.ordered_quantity - received.received_quantity, 0);
     if (received.missing_quantity > maximumMissing) {
@@ -2325,10 +2378,17 @@ async function createPurchaseAmendment({
         );
       }
       const requiredApprovers = amendmentParticipants(invoice);
-      if (!requiredApprovers.some((entry) => entry.uid === actor.uid)) {
+      const receivingManagerMayRequest = actor.role === "manager" &&
+        actor.branchId === invoice.receiving_branch_id;
+      if (!requiredApprovers.some((entry) => entry.uid === actor.uid) &&
+          !receivingManagerMayRequest) {
         throw new PurchaseCommandError(
             "forbidden", 403, "Only a recorded participant may edit this invoice.",
         );
+      }
+      if (receivingManagerMayRequest &&
+          !requiredApprovers.some((entry) => entry.uid === actor.uid)) {
+        requiredApprovers.push(publicActor(actor));
       }
       const storedItems = await readItems(transaction, invoiceRef, invoice);
       const amendmentItems = await resolveAmendmentItems({

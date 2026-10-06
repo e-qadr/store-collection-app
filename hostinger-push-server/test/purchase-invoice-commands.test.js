@@ -572,9 +572,9 @@ test("new fully priced purchase confirms protected prices and bypasses the colle
       expected_revision: 1,
       items: [{
         item_id: item.item_id,
-        received_quantity: 4,
+        received_quantity: 5,
         damaged_quantity: 0,
-        missing_quantity: 1,
+        missing_quantity: 0,
       }],
     },
     idempotencyKey: "initial-price-receipt-1",
@@ -584,13 +584,86 @@ test("new fully priced purchase confirms protected prices and bypasses the colle
   assert.equal(receipt.responseData.status, "pendingAccountingEntry");
   assert.equal(firestore.document(COLLECTIONS.invoices, invoiceId).status, "pendingAccountingEntry");
   assert.equal(price.pricing_state, "confirmed");
-  assert.equal(price.items[0].received_quantity, 4);
-  assert.equal(price.items[0].line_total, 36);
+  assert.equal(price.items[0].received_quantity, 5);
+  assert.equal(price.items[0].line_total, 45);
   assert.equal(price.confirmed_by_role, "collector");
   assert.doesNotMatch(
       JSON.stringify(firestore.document(COLLECTIONS.invoices, invoiceId)),
       /unit_price|line_total|invoice_total/,
   );
+});
+
+test("receipt variance remains immutable until the receiving manager and creator approve an amendment", async () => {
+  const firestore = new FakeFirestore(seed());
+  const payload = createPayload();
+  payload.items = [payload.items[0]];
+  const created = await createPurchaseInvoice({
+    firestore,
+    actorUid: "collector",
+    payload,
+    idempotencyKey: "receipt-variance-create-1",
+    timestamp: now,
+    randomUUID: uuidFactory(),
+  });
+  const invoiceId = created.responseData.invoice_id;
+  const [item] = publicItems(firestore, invoiceId);
+  await assert.rejects(() => confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      items: [{item_id: item.item_id, received_quantity: 2}],
+    },
+    idempotencyKey: "receipt-variance-rejected-1",
+    timestamp: now,
+  }), (error) =>
+    error?.code === "receipt-quantity-difference-requires-amendment");
+  assert.equal(publicItems(firestore, invoiceId)[0].ordered_quantity, 5);
+  assert.equal(publicItems(firestore, invoiceId)[0].received_quantity, undefined);
+
+  const amendment = await createPurchaseAmendment({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      reason: "الكمية الفعلية المستلمة أقل من الكمية المطلوبة.",
+      changes: {},
+      item_changes: [{item_id: item.item_id, ordered_quantity: 2}],
+    },
+    idempotencyKey: "receipt-variance-amendment-1",
+    timestamp: now,
+  });
+  const amendmentId = amendment.responseData.amendment_id;
+  const storedAmendment = firestore.document(COLLECTIONS.amendments, amendmentId);
+  assert.deepEqual(
+      new Set(storedAmendment.required_approvers.map((entry) => entry.uid)),
+      new Set(["collector", "manager-r"]),
+  );
+  await decidePurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    amendmentId,
+    payload: {expected_revision: 1, decision: "approve"},
+    idempotencyKey: "receipt-variance-creator-approve-1",
+    timestamp: now,
+  });
+  assert.equal(publicItems(firestore, invoiceId)[0].ordered_quantity, 2);
+  assert.equal(firestore.document(COLLECTIONS.invoices, invoiceId).revision, 2);
+  await confirmReceipt({
+    firestore,
+    actorUid: "manager-r",
+    invoiceId,
+    payload: {
+      expected_revision: 2,
+      items: [{item_id: item.item_id, received_quantity: 2}],
+    },
+    idempotencyKey: "receipt-variance-confirmed-1",
+    timestamp: now,
+  });
+  assert.equal(publicItems(firestore, invoiceId)[0].received_quantity, 2);
 });
 
 test("a fully approved protected price amendment keeps an accounting-ready invoice confirmed", async () => {
@@ -615,9 +688,9 @@ test("a fully approved protected price amendment keeps an accounting-ready invoi
       expected_revision: 1,
       items: [{
         item_id: item.item_id,
-        received_quantity: 4,
+        received_quantity: 5,
         damaged_quantity: 0,
-        missing_quantity: 1,
+        missing_quantity: 0,
       }],
     },
     idempotencyKey: "confirmed-amendment-receipt-1",
@@ -651,8 +724,8 @@ test("a fully approved protected price amendment keeps an accounting-ready invoi
   assert.equal(invoice.revision, 3);
   assert.equal(price.pricing_state, "confirmed");
   assert.equal(price.items[0].unit_price, 12);
-  assert.equal(price.items[0].line_total, 48);
-  assert.equal(price.invoice_total, 48);
+  assert.equal(price.items[0].line_total, 60);
+  assert.equal(price.invoice_total, 60);
   assert.doesNotMatch(JSON.stringify(invoice), /unit_price|line_total|invoice_total/);
 });
 

@@ -903,7 +903,7 @@ class _PurchaseInvoiceDetailsScreenState
     if (hasAction) {
       return switch (invoice.status) {
         PurchaseInvoiceStatus.pendingReceiverReview =>
-          'راجع الكميات الفعلية ثم أكد الاستلام أو سجّل الفروقات.',
+          'أكد الاستلام عند تطابق الكميات. عند وجود فرق استخدم تعديل الفاتورة ليُعتمد أولاً.',
         PurchaseInvoiceStatus.pendingPriceEntry =>
           'أدخل سعر كل مادة واعتمده لتنتقل الفاتورة إلى المحاسب.',
         PurchaseInvoiceStatus.pendingAccountingEntry =>
@@ -1054,6 +1054,7 @@ class _PurchaseInvoiceDetailsScreenState
       return;
     }
     final inputs = <PurchaseReceiptInput>[];
+    var hasQuantityDifference = false;
     for (final item in invoice.items) {
       final received = double.tryParse(
         quantityControllers[item.id]!.text.trim(),
@@ -1062,6 +1063,7 @@ class _PurchaseInvoiceDetailsScreenState
         _message('تحقق من الكميات المستلمة.');
         return;
       }
+      if (received != item.orderedQuantity) hasQuantityDifference = true;
       inputs.add(
         PurchaseReceiptInput(
           itemId: item.id,
@@ -1072,6 +1074,19 @@ class _PurchaseInvoiceDetailsScreenState
           discrepancyNotes: noteControllers[item.id]!.text,
         ),
       );
+    }
+    if (hasQuantityDifference) {
+      for (final controller in [
+        ...quantityControllers.values,
+        ...noteControllers.values,
+        receiverNotes,
+      ]) {
+        controller.dispose();
+      }
+      _message(
+        'فرق الكمية لا يغيّر الفاتورة مباشرة. استخدم «تعديل الفاتورة» ليُرسل التعديل لاعتماد جميع الأطراف.',
+      );
+      return;
     }
     await _run(
       () => _api.confirmReceipt(
@@ -1336,6 +1351,10 @@ class _PurchaseInvoiceDetailsScreenState
       return false;
     }
     final uid = _currentUid;
+    if (widget.role == UserRole.manager &&
+        widget.branchId == invoice.receivingBranchId) {
+      return true;
+    }
     if (uid.isNotEmpty) return invoice.amendmentParticipantUids.contains(uid);
     // Fixtures and offline previews do not have an authenticated user. Keep
     // the role-only fallback there; the server remains the authority.
@@ -1537,10 +1556,6 @@ class _PurchaseInvoiceDetailsScreenState
     final itemDrafts =
         invoice.status != PurchaseInvoiceStatus.postedToAccounting
         ? invoice.items
-              .where(
-                (item) =>
-                    !item.isUnmatched && item.canonicalProductId.isNotEmpty,
-              )
               .map(_PurchaseAmendmentItemDraft.new)
               .toList(growable: false)
         : const <_PurchaseAmendmentItemDraft>[];
@@ -1783,33 +1798,49 @@ class _PurchaseInvoiceDetailsScreenState
                                                   fontWeight: FontWeight.w700,
                                                 ),
                                               ),
-                                              Align(
-                                                alignment: AlignmentDirectional
-                                                    .centerStart,
-                                                child: TextButton.icon(
-                                                  onPressed: () async {
-                                                    final selection =
-                                                        await showPurchaseCatalogPicker(
-                                                          dialogContext,
-                                                          brandId: invoice
-                                                              .receivingBrandId,
-                                                          service: _catalog,
+                                              if (!draft.original.isUnmatched)
+                                                Align(
+                                                  alignment:
+                                                      AlignmentDirectional
+                                                          .centerStart,
+                                                  child: TextButton.icon(
+                                                    onPressed: () async {
+                                                      final selection =
+                                                          await showPurchaseCatalogPicker(
+                                                            dialogContext,
+                                                            brandId: invoice
+                                                                .receivingBrandId,
+                                                            service: _catalog,
+                                                          );
+                                                      if (selection != null) {
+                                                        setDialogState(
+                                                          () =>
+                                                              draft.selection =
+                                                                  selection,
                                                         );
-                                                    if (selection != null) {
-                                                      setDialogState(
-                                                        () => draft.selection =
-                                                            selection,
-                                                      );
-                                                    }
-                                                  },
-                                                  icon: const Icon(
-                                                    Icons.swap_horiz_rounded,
+                                                      }
+                                                    },
+                                                    icon: const Icon(
+                                                      Icons.swap_horiz_rounded,
+                                                    ),
+                                                    label: const Text(
+                                                      'اختيار مادة أو وحدة أخرى',
+                                                    ),
                                                   ),
-                                                  label: const Text(
-                                                    'اختيار مادة أو وحدة أخرى',
+                                                )
+                                              else
+                                                const Padding(
+                                                  padding: EdgeInsets.only(
+                                                    bottom: 8,
+                                                  ),
+                                                  child: Text(
+                                                    'هذه المادة بانتظار مراجعة الكتالوج؛ يمكن تعديل الكمية والملاحظة فقط.',
+                                                    style: TextStyle(
+                                                      color: AppTheme.textHint,
+                                                      fontSize: 12,
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
                                               TextField(
                                                 controller: draft.quantity,
                                                 keyboardType:
