@@ -423,6 +423,7 @@ class PurchaseInvoiceApiService {
                 'unit_id': unit.id,
                 'display_value': unit.displayValue,
                 'raw_value': unit.rawValue,
+                'base_unit_factor': unit.baseUnitFactor,
               },
             )
             .toList(),

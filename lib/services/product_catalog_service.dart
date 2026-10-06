@@ -1011,16 +1011,16 @@ class ProductCatalogService {
   void _validateUnits(List<CatalogUnit> units, String primaryUnitId) {
     if (units.isEmpty) throw ArgumentError('At least one unit is required.');
     if (units.length > maxCatalogUnits) {
-      throw ArgumentError(
-        'A product can have at most $maxCatalogUnits independent units.',
-      );
+      throw ArgumentError('A product can have at most $maxCatalogUnits units.');
     }
     final ids = <String>{};
     for (final unit in units) {
       final id = unit.id.trim();
       if (id.isEmpty ||
           unit.displayValue.trim().isEmpty ||
-          unit.rawValue.trim().isEmpty) {
+          unit.rawValue.trim().isEmpty ||
+          !unit.baseUnitFactor.isFinite ||
+          unit.baseUnitFactor <= 0) {
         throw ArgumentError(
           'Every unit requires an ID, display value, and raw value.',
         );
@@ -1031,6 +1031,10 @@ class ProductCatalogService {
       throw ArgumentError(
         'The primary unit ID must reference a supplied unit.',
       );
+    }
+    final primary = units.firstWhere((unit) => unit.id.trim() == primaryUnitId);
+    if (primary.baseUnitFactor != 1) {
+      throw ArgumentError('The primary unit conversion factor must be 1.');
     }
   }
 

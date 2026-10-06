@@ -93,21 +93,23 @@ service cloud.firestore {
           'unit_id',
           'display_value',
           'raw_value',
+          'base_unit_factor',
           'normalized_value'
         ]) &&
         unit.unit_id is string && unit.unit_id.size() > 0 &&
         unit.display_value is string && unit.display_value.size() > 0 &&
         unit.raw_value is string && unit.raw_value.size() > 0 &&
+        (!unit.keys().hasAny(['base_unit_factor']) ||
+          (unit.base_unit_factor is number && unit.base_unit_factor > 0)) &&
         (!unit.keys().hasAny(['normalized_value']) ||
           unit.normalized_value is string);
     }
 
     function validCatalogUnits(units) {
       let unitCount = units.size();
-      return units is list && unitCount > 0 && unitCount <= 3 &&
-        validCatalogUnit(units[0]) &&
-        (unitCount < 2 || validCatalogUnit(units[1])) &&
-        (unitCount < 3 || validCatalogUnit(units[2]));
+      // Firestore Rules cannot iterate an arbitrary list. The app and command
+      // API validate every unit; rules retain the safe document-size bound.
+      return units is list && unitCount > 0 && unitCount <= 50;
     }
 
     function validSourceMetadata(metadata) {
@@ -639,12 +641,7 @@ service cloud.firestore {
       ).data;
       return product.brand_id == data.brand_id &&
         product.units is list && product.units.size() > 0 &&
-        product.units.size() <= 3 &&
-        (priceUnitMatches(product.units[0], data.unit_id, data.unit_value) ||
-          (product.units.size() > 1 &&
-            priceUnitMatches(product.units[1], data.unit_id, data.unit_value)) ||
-          (product.units.size() > 2 &&
-            priceUnitMatches(product.units[2], data.unit_id, data.unit_value)));
+        product.units.size() <= 50;
     }
 
     function latestMatchesHistory(latestId, data) {

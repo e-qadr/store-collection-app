@@ -454,11 +454,23 @@ class _ProductCatalogManagementContentState
     if (_mutating) return;
     final brandId = _selectedBrandId;
     if (brandId == null) return;
-    if (groups.where((group) => group.active).isEmpty) {
-      _message('أضف مجموعة نشطة قبل إضافة المنتج.', isError: true);
-      return;
-    }
-    final draft = await showCatalogProductEditor(context, groups: groups);
+    final draft = await showCatalogProductEditor(
+      context,
+      groups: groups,
+      onCreateGroup: (name) async {
+        final id = await _service.createGroup(
+          actor: await _currentActor(),
+          brandId: brandId,
+          name: name,
+        );
+        return ProductGroupModel(
+          id: id,
+          brandId: brandId,
+          name: name,
+          normalizedName: '',
+        );
+      },
+    );
     if (draft == null) return;
     await _performMutation(
       operation: () async => _service.createProduct(
@@ -484,6 +496,19 @@ class _ProductCatalogManagementContentState
       context,
       product: product,
       groups: groups,
+      onCreateGroup: (name) async {
+        final id = await _service.createGroup(
+          actor: await _currentActor(),
+          brandId: product.brandId,
+          name: name,
+        );
+        return ProductGroupModel(
+          id: id,
+          brandId: product.brandId,
+          name: name,
+          normalizedName: '',
+        );
+      },
     );
     if (draft == null) return;
     await _performMutation(

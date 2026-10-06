@@ -1,11 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:store_collection_app/utils/catalog_normalization.dart';
 
-/// A bounded dynamic limit replaces the three fixed columns of the legacy
-/// spreadsheet format. The three-unit limit is retained because every catalog
-/// write is audit-linked and Firestore Rules have no list iteration: evaluating
-/// a fourth unit exceeds the platform expression limit for these transactions.
-const maxCatalogUnits = 3;
+/// Units are entered dynamically. This is a safety limit for one Firestore
+/// document rather than a legacy three-column business limit.
+const maxCatalogUnits = 50;
 
 class ProductCatalogCollections {
   ProductCatalogCollections._();
@@ -126,6 +124,10 @@ class CatalogUnit {
   final String displayValue;
   final String rawValue;
 
+  /// How many primary units this unit represents. The primary unit is always
+  /// 1; for example a carton containing 12 pieces has a factor of 12.
+  final double baseUnitFactor;
+
   /// Present only after an accountant explicitly approves a normalized value.
   final String? normalizedValue;
 
@@ -133,6 +135,7 @@ class CatalogUnit {
     required this.id,
     required this.displayValue,
     required this.rawValue,
+    this.baseUnitFactor = 1,
     this.normalizedValue,
   });
 
@@ -145,6 +148,7 @@ class CatalogUnit {
           data['display_value']?.toString() ??
           '',
       normalizedValue: _nonEmptyString(data['normalized_value']),
+      baseUnitFactor: (data['base_unit_factor'] as num?)?.toDouble() ?? 1,
     );
   }
 
@@ -153,6 +157,7 @@ class CatalogUnit {
       'unit_id': id,
       'display_value': displayValue,
       'raw_value': rawValue,
+      'base_unit_factor': baseUnitFactor,
       if (normalizedValue != null && normalizedValue!.trim().isNotEmpty)
         'normalized_value': normalizedValue!.trim(),
     };

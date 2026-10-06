@@ -758,16 +758,6 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       _message('إضافة مادة جديدة متاحة للمدير العام والمحاسب فقط.');
       return null;
     }
-    final groups = await _catalog
-        .watchGroups(brandId: _brandId, activeOnly: true)
-        .first;
-    if (!mounted) return null;
-    if (groups.isEmpty) {
-      _message('أضف مجموعة مواد نشطة من إدارة المواد أولاً.');
-      return null;
-    }
-    final draft = await showCatalogProductEditor(context, groups: groups);
-    if (!mounted || draft == null) return null;
     final actor = CatalogActor(
       uid: user.uid,
       name: data['name']?.toString().trim().isNotEmpty == true
@@ -776,6 +766,28 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       role: role!,
       active: data['isActive'] != false,
     );
+    final groups = await _catalog
+        .watchGroups(brandId: _brandId, activeOnly: true)
+        .first;
+    if (!mounted) return null;
+    final draft = await showCatalogProductEditor(
+      context,
+      groups: groups,
+      onCreateGroup: (name) async {
+        final id = await _catalog.createGroup(
+          actor: actor,
+          brandId: _brandId,
+          name: name,
+        );
+        return ProductGroupModel(
+          id: id,
+          brandId: _brandId,
+          name: name,
+          normalizedName: '',
+        );
+      },
+    );
+    if (!mounted || draft == null) return null;
     final productId = await _catalog.createProduct(
       actor: actor,
       brandId: _brandId,

@@ -14,7 +14,12 @@ void main() {
         'last_audit_event_id': 'audit-1',
         'units': [
           {'unit_id': 'primary', 'display_value': 'حبه', 'raw_value': 'حبه'},
-          {'unit_id': 'unit_2', 'display_value': 'علبه', 'raw_value': 'علبه'},
+          {
+            'unit_id': 'unit_2',
+            'display_value': 'علبه',
+            'raw_value': 'علبه',
+            'base_unit_factor': 12,
+          },
           {'unit_id': 'unit_3', 'display_value': 'اوقيه', 'raw_value': 'اوقيه'},
         ],
       });
@@ -26,6 +31,7 @@ void main() {
         'unit_3',
       ]);
       expect(product.unitById('unit_2')?.rawValue, 'علبه');
+      expect(product.unitById('unit_2')?.baseUnitFactor, 12);
       expect(product.unitById('unit_2')?.normalizedValue, isNull);
       expect(product.lastAuditEventId, 'audit-1');
     });

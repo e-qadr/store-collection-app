@@ -1,4 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
@@ -543,15 +546,12 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
   Future<void> _create(ProductReviewTask task) async {
     final groups = await _catalog.watchGroups(brandId: task.brandId).first;
     if (!mounted) return;
-    if (groups.where((group) => group.active).isEmpty) {
-      _message('لا توجد مجموعة مواد نشطة لهذه العلامة. أضف المجموعة أولاً.');
-      return;
-    }
     final draft = await showCatalogProductEditor(
       context,
       groups: groups,
       initialName: task.materialName,
       initialPrimaryUnit: task.unitText,
+      onCreateGroup: (name) => _createGroupForTask(task, name),
     );
     if (!mounted || draft == null) return;
     final invoiceRevision = await _invoiceRevision(task);
@@ -570,6 +570,42 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
         primaryUnitId: draft.primaryUnitId,
         idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
       ),
+    );
+  }
+
+  Future<ProductGroupModel?> _createGroupForTask(
+    ProductReviewTask task,
+    String name,
+  ) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw StateError('انتهت جلسة الدخول. سجل الدخول مجدداً.');
+    final profile = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    final data = profile.data();
+    final role = data?['role']?.toString() ?? '';
+    if (data == null ||
+        (role != 'collector' && role != 'accountant') ||
+        data['isActive'] == false) {
+      throw StateError('إنشاء مجموعة متاح للمدير العام والمحاسب فقط.');
+    }
+    final id = await _catalog.createGroup(
+      actor: CatalogActor(
+        uid: user.uid,
+        name: data['name']?.toString().trim().isNotEmpty == true
+            ? data['name'].toString().trim()
+            : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
+        role: role,
+      ),
+      brandId: task.brandId,
+      name: name,
+    );
+    return ProductGroupModel(
+      id: id,
+      brandId: task.brandId,
+      name: name,
+      normalizedName: '',
     );
   }
 

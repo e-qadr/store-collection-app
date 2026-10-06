@@ -214,6 +214,7 @@ test("review product validation supports the bounded dynamic catalog unit limit"
     unit_id: index === 0 ? "primary" : `unit_${index + 1}`,
     display_value: `Unit ${index + 1}`,
     raw_value: `Unit ${index + 1}`,
+    base_unit_factor: index === 0 ? 1 : 12,
   }));
   assert.equal(validateReviewPayload({
     expected_revision: 1,

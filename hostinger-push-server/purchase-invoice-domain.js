@@ -16,11 +16,8 @@ const MAX_REFERENCE_BYTES = 200;
 const MAX_ACCOUNTING_REFERENCE_BYTES = 200;
 const MAX_PRICE = 1_000_000_000_000_000;
 const MAX_QUANTITY = 1_000_000_000_000_000;
-// Catalog data is no longer constrained by the three unit columns used by
-// the legacy spreadsheet export. The three-unit limit is retained because the
-// audit-linked Firestore Rules have no list iteration and a fourth unit
-// exceeds their platform expression limit.
-const MAX_CATALOG_UNITS = 3;
+// This is an operational safety ceiling, not a legacy three-column limit.
+const MAX_CATALOG_UNITS = 50;
 const DOCUMENT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -525,7 +522,9 @@ function validateReviewPayload(body) {
     }
     const units = input.units.map((raw, index) => {
       const unit = object(raw, `units[${index}]`);
-      onlyKeys(unit, new Set(["unit_id", "display_value", "raw_value"]), `units[${index}]`);
+      onlyKeys(unit, new Set([
+        "unit_id", "display_value", "raw_value", "base_unit_factor",
+      ]), `units[${index}]`);
       return {
         unit_id: documentId(unit.unit_id, `units[${index}].unit_id`, MAX_UNIT_ID_BYTES),
         display_value: requiredString(
@@ -534,11 +533,16 @@ function validateReviewPayload(body) {
             MAX_UNIT_BYTES,
         ),
         raw_value: requiredString(unit.raw_value, `units[${index}].raw_value`, MAX_UNIT_BYTES),
+        base_unit_factor: number(
+            unit.base_unit_factor === undefined ? 1 : unit.base_unit_factor,
+            `units[${index}].base_unit_factor`, {minimum: Number.EPSILON},
+        ),
       };
     });
     if (units.length < 1 || units.length > MAX_CATALOG_UNITS ||
         new Set(units.map((unit) => unit.unit_id)).size !== units.length ||
-        !units.some((unit) => unit.unit_id === result.primary_unit_id)) {
+        !units.some((unit) => unit.unit_id === result.primary_unit_id) ||
+        units.find((unit) => unit.unit_id === result.primary_unit_id).base_unit_factor !== 1) {
       throw new PurchaseCommandError("invalid-argument", 400, "Product units are invalid.");
     }
     result.units = units;
