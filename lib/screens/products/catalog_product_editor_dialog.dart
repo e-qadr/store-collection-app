@@ -30,6 +30,7 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
   required List<ProductGroupModel> groups,
   String initialName = '',
   String initialPrimaryUnit = '',
+  List<CatalogUnit> initialUnits = const [],
   CatalogGroupCreator? onCreateGroup,
 }) async {
   final activeGroups = groups.where((group) => group.active).toList();
@@ -43,7 +44,7 @@ Future<CatalogProductDraft?> showCatalogProductEditor(
   );
   final codeController = TextEditingController(text: product?.legacyCode ?? '');
   final originalUnits = product == null
-      ? const <CatalogUnit>[]
+      ? initialUnits
       : [
           if (product.unitById(product.primaryUnitId) != null)
             product.unitById(product.primaryUnitId)!,

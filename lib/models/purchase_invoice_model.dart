@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:store_collection_app/models/product_catalog_model.dart';
 
 enum PurchaseInvoiceStatus {
   pendingReceiverReview,
@@ -608,6 +609,7 @@ class ProductReviewTask {
   final String originalMaterialName;
   final String originalGroupText;
   final String originalUnitText;
+  final List<CatalogUnit> suggestedUnits;
   final String reviewedMaterialName;
   final String reviewedGroupText;
   final String reviewedUnitText;
@@ -628,6 +630,7 @@ class ProductReviewTask {
     required this.originalMaterialName,
     required this.originalGroupText,
     required this.originalUnitText,
+    this.suggestedUnits = const [],
     this.reviewedMaterialName = '',
     this.reviewedGroupText = '',
     this.reviewedUnitText = '',
@@ -650,6 +653,7 @@ class ProductReviewTask {
         originalMaterialName: data['original_material_name']?.toString() ?? '',
         originalGroupText: data['original_group_text']?.toString() ?? '',
         originalUnitText: data['original_unit_text']?.toString() ?? '',
+        suggestedUnits: _catalogUnits(data['suggested_units']),
         reviewedMaterialName: data['reviewed_material_name']?.toString() ?? '',
         reviewedGroupText: data['reviewed_group_text']?.toString() ?? '',
         reviewedUnitText: data['reviewed_unit_text']?.toString() ?? '',
@@ -668,6 +672,14 @@ class ProductReviewTask {
 
   String get unitText =>
       reviewedUnitText.trim().isEmpty ? originalUnitText : reviewedUnitText;
+}
+
+List<CatalogUnit> _catalogUnits(dynamic value) {
+  if (value is! Iterable) return const [];
+  return value
+      .whereType<Map>()
+      .map((unit) => CatalogUnit.fromMap(Map<String, dynamic>.from(unit)))
+      .toList(growable: false);
 }
 
 DateTime? _date(dynamic value) {

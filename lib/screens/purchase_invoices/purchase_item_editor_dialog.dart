@@ -10,6 +10,7 @@ class PurchaseItemEditorResult {
   final String materialName;
   final String groupText;
   final String unitText;
+  final List<CatalogUnit> proposedUnits;
   final String? catalogUnitId;
   final String lineNotes;
 
@@ -21,12 +22,14 @@ class PurchaseItemEditorResult {
   }) : isUnmatched = false,
        materialName = '',
        groupText = '',
-       unitText = '';
+       unitText = '',
+       proposedUnits = const [];
 
   const PurchaseItemEditorResult.unmatched({
     required this.materialName,
     required this.groupText,
     required this.unitText,
+    this.proposedUnits = const [],
     required this.quantity,
     this.provisionalPrice,
     this.lineNotes = '',
@@ -44,6 +47,7 @@ class PurchaseItemEditorDialog extends StatefulWidget {
   final String initialMaterialName;
   final String initialGroupText;
   final String initialUnitText;
+  final List<CatalogUnit> initialProposedUnits;
   final String initialLineNotes;
   final String? priceHelperText;
   final bool showPricing;
@@ -65,13 +69,15 @@ class PurchaseItemEditorDialog extends StatefulWidget {
        title = '$productName — $unitValue',
        initialMaterialName = '',
        initialGroupText = '',
-       initialUnitText = '';
+       initialUnitText = '',
+       initialProposedUnits = const [];
 
   const PurchaseItemEditorDialog.unmatched({
     super.key,
     this.initialMaterialName = '',
     this.initialGroupText = '',
     this.initialUnitText = '',
+    this.initialProposedUnits = const [],
     this.initialQuantity = 1,
     this.initialProvisionalPrice,
     this.initialLineNotes = '',
@@ -97,6 +103,8 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
   late final TextEditingController _notesController;
   String? _catalogUnitId;
   String? _validationError;
+  late List<_UnmatchedUnitDraft> _proposedUnits;
+  int _invoiceUnitIndex = 0;
 
   @override
   void initState() {
@@ -104,6 +112,24 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     _nameController = TextEditingController(text: widget.initialMaterialName);
     _groupController = TextEditingController(text: widget.initialGroupText);
     _unitController = TextEditingController(text: widget.initialUnitText);
+    _proposedUnits = widget.isUnmatched
+        ? (widget.initialProposedUnits.isEmpty
+              ? [
+                  _UnmatchedUnitDraft.primary(
+                    widget.initialUnitText.trim().isEmpty
+                        ? ''
+                        : widget.initialUnitText.trim(),
+                  ),
+                ]
+              : widget.initialProposedUnits
+                    .map(_UnmatchedUnitDraft.fromUnit)
+                    .toList(growable: true))
+        : const [];
+    final initialInvoiceUnit = widget.initialUnitText.trim();
+    final selected = _proposedUnits.indexWhere(
+      (unit) => unit.nameController.text.trim() == initialInvoiceUnit,
+    );
+    _invoiceUnitIndex = selected < 0 ? 0 : selected;
     _quantityController = TextEditingController(
       text: _number(widget.initialQuantity),
     );
@@ -125,6 +151,9 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     _nameController.dispose();
     _groupController.dispose();
     _unitController.dispose();
+    for (final unit in _proposedUnits) {
+      unit.dispose();
+    }
     _quantityController.dispose();
     _provisionalPriceController.dispose();
     _notesController.dispose();
@@ -136,7 +165,14 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     final priceText = _provisionalPriceController.text.trim();
     final price = priceText.isEmpty ? null : double.tryParse(priceText);
     final materialName = _nameController.text.trim();
-    final unitText = _unitController.text.trim();
+    final proposedUnits = widget.isUnmatched
+        ? _proposedUnits
+        : const <_UnmatchedUnitDraft>[];
+    final unitText = widget.isUnmatched
+        ? (_invoiceUnitIndex >= 0 && _invoiceUnitIndex < proposedUnits.length
+              ? proposedUnits[_invoiceUnitIndex].nameController.text.trim()
+              : '')
+        : _unitController.text.trim();
     final validCatalogUnit =
         widget.isUnmatched ||
         widget.catalogUnits.isEmpty ||
@@ -153,11 +189,38 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
       });
       return;
     }
+    if (widget.isUnmatched) {
+      final invalidUnit = proposedUnits.any((unit) {
+        final factor = double.tryParse(unit.factorController.text.trim());
+        return unit.nameController.text.trim().isEmpty ||
+            factor == null ||
+            !factor.isFinite ||
+            factor <= 0;
+      });
+      if (invalidUnit) {
+        setState(() {
+          _validationError = 'أدخل اسم كل وحدة ومعامل تحويل موجباً.';
+        });
+        return;
+      }
+    }
     final result = widget.isUnmatched
         ? PurchaseItemEditorResult.unmatched(
             materialName: materialName,
             groupText: _groupController.text.trim(),
             unitText: unitText,
+            proposedUnits: proposedUnits
+                .map(
+                  (unit) => CatalogUnit(
+                    id: unit.id,
+                    displayValue: unit.nameController.text.trim(),
+                    rawValue: unit.nameController.text.trim(),
+                    baseUnitFactor: unit == proposedUnits.first
+                        ? 1
+                        : double.parse(unit.factorController.text.trim()),
+                  ),
+                )
+                .toList(growable: false),
             quantity: quantity,
             provisionalPrice: price,
             lineNotes: _notesController.text.trim(),
@@ -206,7 +269,7 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                       Expanded(
                         child: Text(
                           widget.isUnmatched
-                              ? 'هذه المادة غير موجودة في الكتالوج. ستُضاف للفاتورة فقط ثم تُرسل للمراجعة؛ لن تدخل الكتالوج تلقائياً.'
+                              ? 'سجّل وحدات المادة وتحويلاتها الآن. ستبقى مع طلب المراجعة حتى يعتمدها المحاسب في الكتالوج.'
                               : 'هذه مادة موجودة في الكتالوج. اختر الوحدة والكمية المطلوبة للفاتورة.',
                           style: const TextStyle(height: 1.35),
                         ),
@@ -232,11 +295,113 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  TextField(
-                    key: const Key('purchase-item-unit'),
-                    controller: _unitController,
-                    decoration: const InputDecoration(
-                      labelText: 'الوحدة كما وردت *',
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'وحدات المادة',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ..._proposedUnits.indexed.expand((entry) {
+                    final index = entry.$1;
+                    final unit = entry.$2;
+                    return [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: index == 0
+                              ? Colors.green.withValues(alpha: .06)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black12),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                IconButton(
+                                  tooltip: 'استخدم كوحدة الفاتورة',
+                                  onPressed: () =>
+                                      setState(() => _invoiceUnitIndex = index),
+                                  icon: Icon(
+                                    _invoiceUnitIndex == index
+                                        ? Icons.radio_button_checked_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    color: _invoiceUnitIndex == index
+                                        ? Colors.green.shade700
+                                        : null,
+                                  ),
+                                ),
+                                const Expanded(
+                                  child: Text('وحدة هذه الفاتورة'),
+                                ),
+                                if (index > 0)
+                                  IconButton(
+                                    tooltip: 'حذف الوحدة',
+                                    icon: const Icon(
+                                      Icons.remove_circle_outline,
+                                    ),
+                                    onPressed: () => setState(() {
+                                      _proposedUnits.removeAt(index).dispose();
+                                      if (_invoiceUnitIndex >=
+                                          _proposedUnits.length) {
+                                        _invoiceUnitIndex = 0;
+                                      }
+                                    }),
+                                  ),
+                              ],
+                            ),
+                            TextField(
+                              key: index == 0
+                                  ? const Key('purchase-item-unit')
+                                  : null,
+                              controller: unit.nameController,
+                              decoration: InputDecoration(
+                                labelText: index == 0
+                                    ? 'الوحدة الأساسية *'
+                                    : 'اسم الوحدة الإضافية *',
+                                helperText: index == 0
+                                    ? 'تمثل وحدة واحدة دائماً.'
+                                    : 'مثل كرتون أو صندوق.',
+                              ),
+                            ),
+                            if (index > 0) ...[
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: unit.factorController,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                decoration: const InputDecoration(
+                                  labelText: 'تعادل كم وحدة أساسية؟ *',
+                                  helperText:
+                                      'مثال: كرتون فيه 12 حبة، اكتب 12.',
+                                  prefixIcon: Icon(Icons.swap_horiz_rounded),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ];
+                  }),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: _proposedUnits.length >= maxCatalogUnits
+                          ? null
+                          : () => setState(() {
+                              _proposedUnits.add(
+                                _UnmatchedUnitDraft.additional(
+                                  _proposedUnits.length,
+                                ),
+                              );
+                            }),
+                      icon: const Icon(Icons.add_rounded),
+                      label: const Text('إضافة وحدة أخرى'),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -329,3 +494,38 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
 String _number(double value) => value == value.roundToDouble()
     ? value.toInt().toString()
     : value.toString();
+
+class _UnmatchedUnitDraft {
+  final String id;
+  final TextEditingController nameController;
+  final TextEditingController factorController;
+
+  _UnmatchedUnitDraft._({
+    required this.id,
+    required String name,
+    required double factor,
+  }) : nameController = TextEditingController(text: name),
+       factorController = TextEditingController(
+         text: factor == factor.roundToDouble()
+             ? factor.toInt().toString()
+             : factor.toString(),
+       );
+
+  factory _UnmatchedUnitDraft.primary(String name) =>
+      _UnmatchedUnitDraft._(id: 'primary', name: name, factor: 1);
+
+  factory _UnmatchedUnitDraft.additional(int index) =>
+      _UnmatchedUnitDraft._(id: 'unit_${index + 1}', name: '', factor: 1);
+
+  factory _UnmatchedUnitDraft.fromUnit(CatalogUnit unit) =>
+      _UnmatchedUnitDraft._(
+        id: unit.id,
+        name: unit.rawValue,
+        factor: unit.baseUnitFactor,
+      );
+
+  void dispose() {
+    nameController.dispose();
+    factorController.dispose();
+  }
+}

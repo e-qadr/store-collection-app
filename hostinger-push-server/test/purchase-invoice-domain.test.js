@@ -75,6 +75,39 @@ test("purchase creation accepts catalog, unmatched, optional supplier fields, an
   assert.equal(result.items[0].provisional_unit_price, 10);
 });
 
+test("unmatched materials retain dynamic unit conversions for catalog review", () => {
+  const result = validateCreatePayload({
+    receiving_branch_id: "branch-r",
+    currency: "YER",
+    items: [{
+      source_type: "unmatched",
+      material_name: "مادة جديدة",
+      group_text: "عطور",
+      unit_text: "كرتون",
+      suggested_units: [
+        {unit_id: "primary", display_value: "حبة", raw_value: "حبة", base_unit_factor: 1},
+        {unit_id: "unit_2", display_value: "كرتون", raw_value: "كرتون", base_unit_factor: 12},
+      ],
+      ordered_quantity: 2,
+    }],
+  });
+  assert.equal(result.items[0].suggested_units[1].base_unit_factor, 12);
+  assert.throws(() => validateCreatePayload({
+    receiving_branch_id: "branch-r",
+    currency: "YER",
+    items: [{
+      source_type: "unmatched",
+      material_name: "مادة جديدة",
+      unit_text: "كرتون",
+      suggested_units: [
+        {unit_id: "primary", display_value: "حبة", raw_value: "حبة", base_unit_factor: 2},
+      ],
+      ordered_quantity: 1,
+    }],
+  }), (error) => error instanceof PurchaseCommandError &&
+    error.code === "purchase-unmatched-units-invalid");
+});
+
 test("purchase creation validates closed source-specific schemas and duplicate selections", () => {
   assert.throws(() => validateCreatePayload({
     receiving_branch_id: "branch-r",

@@ -819,6 +819,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
           name: draft.materialName,
           group: draft.groupText,
           unit: draft.unitText,
+          proposedUnits: draft.proposedUnits,
           quantity: draft.quantity,
           provisionalPrice: draft.provisionalPrice,
           lineNotes: draft.lineNotes,
@@ -868,6 +869,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         initialMaterialName: item.name,
         initialGroupText: item.group,
         initialUnitText: item.unit,
+        initialProposedUnits: item.proposedUnits,
         initialQuantity: item.quantity,
         initialProvisionalPrice: item.provisionalPrice,
         initialLineNotes: item.lineNotes,
@@ -879,6 +881,7 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         name: result.materialName,
         group: result.groupText,
         unit: result.unitText,
+        proposedUnits: result.proposedUnits,
         quantity: result.quantity,
         provisionalPrice: result.provisionalPrice,
         lineNotes: result.lineNotes,
@@ -952,6 +955,7 @@ class _PurchaseDraftItem {
   final String name;
   final String group;
   final String unit;
+  final List<CatalogUnit> proposedUnits;
   final double quantity;
   final double? provisionalPrice;
   final String lineNotes;
@@ -966,12 +970,14 @@ class _PurchaseDraftItem {
        catalogUnit = unit,
        name = product.name,
        group = '',
-       unit = unit.displayValue;
+       unit = unit.displayValue,
+       proposedUnits = const [];
 
   const _PurchaseDraftItem.unmatched({
     required this.name,
     required this.group,
     required this.unit,
+    required this.proposedUnits,
     required this.quantity,
     this.provisionalPrice,
     this.lineNotes = '',
@@ -993,6 +999,7 @@ class _PurchaseDraftItem {
     name: name,
     group: group,
     unit: catalogUnit?.displayValue ?? unit ?? this.unit,
+    proposedUnits: const [],
     quantity: quantity ?? this.quantity,
     provisionalPrice: clearPrice
         ? null
@@ -1006,6 +1013,7 @@ class _PurchaseDraftItem {
     required this.name,
     required this.group,
     required this.unit,
+    this.proposedUnits = const [],
     required this.quantity,
     required this.provisionalPrice,
     required this.lineNotes,
@@ -1016,6 +1024,7 @@ class _PurchaseDraftItem {
           materialName: name,
           groupText: group,
           unitText: unit,
+          suggestedUnits: proposedUnits,
           orderedQuantity: quantity,
           provisionalUnitPrice: provisionalPrice,
           lineNotes: lineNotes,

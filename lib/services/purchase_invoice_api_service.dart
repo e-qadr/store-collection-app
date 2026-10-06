@@ -85,6 +85,7 @@ class PurchaseInvoiceCreateItem {
   final String materialName;
   final String groupText;
   final String unitText;
+  final List<CatalogUnit> suggestedUnits;
   final double orderedQuantity;
   final String lineNotes;
   final double? provisionalUnitPrice;
@@ -98,13 +99,15 @@ class PurchaseInvoiceCreateItem {
   }) : sourceType = 'catalog',
        materialName = '',
        groupText = '',
-       unitText = '';
+       unitText = '',
+       suggestedUnits = const [];
 
   const PurchaseInvoiceCreateItem.unmatched({
     required this.materialName,
     required this.unitText,
     required this.orderedQuantity,
     this.groupText = '',
+    this.suggestedUnits = const [],
     this.lineNotes = '',
     this.provisionalUnitPrice,
   }) : sourceType = 'unmatched',
@@ -120,6 +123,8 @@ class PurchaseInvoiceCreateItem {
       'material_name': materialName,
       'group_text': groupText,
       'unit_text': unitText,
+      if (suggestedUnits.isNotEmpty)
+        'suggested_units': suggestedUnits.map((unit) => unit.toMap()).toList(),
     },
     'ordered_quantity': orderedQuantity,
     if (lineNotes.trim().isNotEmpty) 'line_notes': lineNotes.trim(),

@@ -551,6 +551,7 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
       groups: groups,
       initialName: task.materialName,
       initialPrimaryUnit: task.unitText,
+      initialUnits: task.suggestedUnits,
       onCreateGroup: (name) => _createGroupForTask(task, name),
     );
     if (!mounted || draft == null) return;

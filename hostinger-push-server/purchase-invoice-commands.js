@@ -938,6 +938,7 @@ async function createPurchaseInvoice({
           original_material_name: input.material_name,
           original_group_text: input.group_text,
           original_unit_text: input.unit_text,
+          suggested_units: input.suggested_units,
           original_snapshot_locked: true,
           created_by: actor.uid,
           created_by_name: actor.name,

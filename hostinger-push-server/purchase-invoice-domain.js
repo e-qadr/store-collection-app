@@ -148,6 +148,39 @@ function purchaseCreateField(code, validate) {
   }
 }
 
+function validateSuggestedUnits(value, field, invoiceUnitText) {
+  const units = value === undefined ? [{
+    unit_id: "primary",
+    display_value: invoiceUnitText,
+    raw_value: invoiceUnitText,
+    base_unit_factor: 1,
+  }] : value;
+  if (!Array.isArray(units) || units.length < 1 || units.length > MAX_CATALOG_UNITS) {
+    throw new PurchaseCommandError("invalid-argument", 400, `${field} is invalid.`);
+  }
+  const parsed = units.map((raw, index) => {
+    const unit = object(raw, `${field}[${index}]`);
+    onlyKeys(unit, new Set([
+      "unit_id", "display_value", "raw_value", "base_unit_factor",
+    ]), `${field}[${index}]`);
+    return {
+      unit_id: documentId(unit.unit_id, `${field}[${index}].unit_id`, MAX_UNIT_ID_BYTES),
+      display_value: requiredString(unit.display_value, `${field}[${index}].display_value`, MAX_UNIT_BYTES),
+      raw_value: requiredString(unit.raw_value, `${field}[${index}].raw_value`, MAX_UNIT_BYTES),
+      base_unit_factor: number(
+          unit.base_unit_factor === undefined ? 1 : unit.base_unit_factor,
+          `${field}[${index}].base_unit_factor`, {minimum: Number.EPSILON},
+      ),
+    };
+  });
+  if (parsed[0].base_unit_factor !== 1 ||
+      new Set(parsed.map((unit) => unit.unit_id)).size !== parsed.length ||
+      !parsed.some((unit) => unit.raw_value === invoiceUnitText)) {
+    throw new PurchaseCommandError("invalid-argument", 400, `${field} is invalid.`);
+  }
+  return parsed;
+}
+
 function validateCreatePayload(body) {
   const input = object(body);
   onlyKeys(input, new Set([
@@ -158,7 +191,7 @@ function validateCreatePayload(body) {
     const item = object(raw, `items[${index}]`);
     onlyKeys(item, new Set([
       "source_type", "product_id", "unit_id", "material_name", "group_text",
-      "unit_text", "ordered_quantity", "line_notes", "provisional_unit_price",
+      "unit_text", "suggested_units", "ordered_quantity", "line_notes", "provisional_unit_price",
     ]), `items[${index}]`);
     const sourceType = purchaseCreateField("purchase-item-source-invalid", () =>
       requiredString(item.source_type, `items[${index}].source_type`, 16));
@@ -184,7 +217,7 @@ function validateCreatePayload(body) {
     };
     if (sourceType === "catalog") {
       if (item.material_name !== undefined || item.group_text !== undefined ||
-          item.unit_text !== undefined) {
+          item.unit_text !== undefined || item.suggested_units !== undefined) {
         throw new PurchaseCommandError("invalid-argument", 400, "Catalog item fields are invalid.");
       }
       return compact({
@@ -198,6 +231,8 @@ function validateCreatePayload(body) {
     if (item.product_id !== undefined || item.unit_id !== undefined) {
       throw new PurchaseCommandError("invalid-argument", 400, "Unmatched item fields are invalid.");
     }
+    const unitText = purchaseCreateField("purchase-unmatched-unit-invalid", () =>
+      requiredString(item.unit_text, `items[${index}].unit_text`, MAX_UNIT_BYTES));
     return compact({
       ...common,
       material_name: purchaseCreateField("purchase-unmatched-material-invalid", () => requiredString(
@@ -211,8 +246,9 @@ function validateCreatePayload(body) {
           MAX_GROUP_BYTES,
           {preserveEmpty: true},
       ) ?? "",
-      unit_text: purchaseCreateField("purchase-unmatched-unit-invalid", () =>
-        requiredString(item.unit_text, `items[${index}].unit_text`, MAX_UNIT_BYTES)),
+      unit_text: unitText,
+      suggested_units: purchaseCreateField("purchase-unmatched-units-invalid", () =>
+        validateSuggestedUnits(item.suggested_units, `items[${index}].suggested_units`, unitText)),
     });
   });
   const selections = new Set();
