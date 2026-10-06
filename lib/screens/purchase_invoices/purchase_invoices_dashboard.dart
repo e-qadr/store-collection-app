@@ -734,7 +734,11 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
   Future<void> _createInvoice() async {
     final invoiceId = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (_) => const NewPurchaseInvoiceScreen()),
+      MaterialPageRoute(
+        builder: (_) => NewPurchaseInvoiceScreen(
+          initialReceivingBranchId: widget.branchId,
+        ),
+      ),
     );
     if (!mounted || invoiceId == null || invoiceId.isEmpty) return;
     await Navigator.push<void>(

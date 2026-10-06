@@ -11,6 +11,9 @@ class CompanyBranchSelector extends StatefulWidget {
   final String intro;
   final Color color;
   final IconData branchIcon;
+  final String? actionLabel;
+  final IconData? actionIcon;
+  final void Function(BuildContext context)? onActionPressed;
   final void Function(BuildContext context, QueryDocumentSnapshot branch)
   onBranchSelected;
 
@@ -21,6 +24,9 @@ class CompanyBranchSelector extends StatefulWidget {
     required this.color,
     required this.branchIcon,
     required this.onBranchSelected,
+    this.actionLabel,
+    this.actionIcon,
+    this.onActionPressed,
   });
 
   @override
@@ -134,6 +140,23 @@ class _CompanyBranchSelectorState extends State<CompanyBranchSelector> {
                         textAlign: TextAlign.center,
                       ),
                     ),
+                    if (widget.onActionPressed != null &&
+                        widget.actionLabel?.trim().isNotEmpty == true)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            key: const Key('company-branch-selector-action'),
+                            onPressed: () =>
+                                widget.onActionPressed?.call(context),
+                            icon: Icon(
+                              widget.actionIcon ?? Icons.task_alt_rounded,
+                            ),
+                            label: Text(widget.actionLabel!),
+                          ),
+                        ),
+                      ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
                       child: Container(

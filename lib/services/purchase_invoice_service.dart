@@ -152,6 +152,37 @@ class PurchaseInvoiceService {
         });
   }
 
+  /// Returns only amendments where the signed-in user still has a decision to
+  /// make. The amendment record is public operational data; protected prices
+  /// remain in its separate, restricted document.
+  Stream<List<PurchaseInvoiceAmendment>> watchMyPendingAmendments(
+    String userId,
+  ) {
+    final cleanUserId = userId.trim();
+    if (cleanUserId.isEmpty) return Stream.value(const []);
+    return _firestore
+        .collection(PurchaseInvoiceCollections.amendments)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map(
+                (document) => PurchaseInvoiceAmendment.fromMap(
+                  document.id,
+                  document.data(),
+                ),
+              )
+              .where(
+                (amendment) =>
+                    amendment.requiredApprovers.any(
+                      (actor) => actor.uid == cleanUserId,
+                    ) &&
+                    !amendment.approvedBy(cleanUserId),
+              )
+              .toList(growable: false),
+        );
+  }
+
   Stream<List<PurchaseInvoiceAmendmentItem>> watchAmendmentItems(
     String amendmentId,
   ) {

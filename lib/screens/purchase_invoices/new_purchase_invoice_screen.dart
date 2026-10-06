@@ -17,7 +17,12 @@ bool isEligiblePurchaseReceivingBranch(Map<String, dynamic> branch) =>
     isActiveOperationalBranch(branch);
 
 class NewPurchaseInvoiceScreen extends StatefulWidget {
-  const NewPurchaseInvoiceScreen({super.key});
+  /// The branch currently selected in the purchases workspace.  It is only an
+  /// initial choice: the creator can still choose any eligible receiving
+  /// branch from the form.
+  final String? initialReceivingBranchId;
+
+  const NewPurchaseInvoiceScreen({super.key, this.initialReceivingBranchId});
 
   @override
   State<NewPurchaseInvoiceScreen> createState() =>
@@ -55,6 +60,9 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
   void initState() {
     super.initState();
     _supplierDate = DateTime.now();
+    _branchId = widget.initialReceivingBranchId?.trim().isNotEmpty == true
+        ? widget.initialReceivingBranchId!.trim()
+        : null;
   }
 
   @override
@@ -569,6 +577,22 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
         final branches = (snapshot.data?.docs ?? const [])
             .where((doc) => isEligiblePurchaseReceivingBranch(doc.data()))
             .toList(growable: false);
+        final initialBranch = _branchId == null
+            ? null
+            : branches.where((branch) => branch.id == _branchId).firstOrNull;
+        // The selector can render the initial branch immediately.  Resolve
+        // its brand after this stream has loaded so material actions use the
+        // correct catalog without mutating state while building.
+        if (_brandId.isEmpty && initialBranch != null) {
+          final initialBrandId =
+              initialBranch.data()['brand_id']?.toString().trim() ?? '';
+          if (initialBrandId.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || _brandId.isNotEmpty) return;
+              setState(() => _brandId = initialBrandId);
+            });
+          }
+        }
         return DropdownButtonFormField<String>(
           key: const Key('purchase-receiving-branch'),
           initialValue: _branchId,

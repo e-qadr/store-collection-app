@@ -112,6 +112,7 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
   late final TextEditingController _notesController;
   String? _catalogUnitId;
   String? _validationError;
+  late List<ProductGroupModel> _groupSuggestions;
   late List<_UnmatchedUnitDraft> _proposedUnits;
   int _invoiceUnitIndex = 0;
 
@@ -121,6 +122,7 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     _nameController = TextEditingController(text: widget.initialMaterialName);
     _groupController = TextEditingController(text: widget.initialGroupText);
     _unitController = TextEditingController(text: widget.initialUnitText);
+    _groupSuggestions = List<ProductGroupModel>.of(widget.groupSuggestions);
     _proposedUnits = widget.isUnmatched
         ? (widget.initialProposedUnits.isEmpty
               ? [
@@ -542,8 +544,8 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
 
   List<ProductGroupModel> get _matchingGroups {
     final query = normalizeCatalogText(_groupController.text);
-    if (query.isEmpty) return widget.groupSuggestions.take(5).toList();
-    return widget.groupSuggestions
+    if (query.isEmpty) return _groupSuggestions.take(5).toList();
+    return _groupSuggestions
         .where((group) => normalizeCatalogText(group.name).contains(query))
         .take(5)
         .toList(growable: false);
@@ -553,7 +555,7 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     final query = _groupController.text.trim();
     return widget.onCreateGroup != null &&
         query.isNotEmpty &&
-        !widget.groupSuggestions.any(
+        !_groupSuggestions.any(
           (group) =>
               normalizeCatalogText(group.name) == normalizeCatalogText(query),
         );
@@ -565,7 +567,15 @@ class _PurchaseItemEditorDialogState extends State<PurchaseItemEditorDialog> {
     try {
       final group = await widget.onCreateGroup?.call(name);
       if (!mounted || group == null) return;
-      setState(() => _groupController.text = group.name);
+      setState(() {
+        if (!_groupSuggestions.any((entry) => entry.id == group.id)) {
+          _groupSuggestions.add(group);
+          _groupSuggestions.sort(
+            (left, right) => left.name.compareTo(right.name),
+          );
+        }
+        _groupController.text = group.name;
+      });
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(

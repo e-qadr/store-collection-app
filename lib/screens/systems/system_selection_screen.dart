@@ -13,6 +13,7 @@ import 'package:store_collection_app/screens/consumables/consumable_requests_das
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoices_dashboard.dart';
 import 'package:store_collection_app/screens/products/product_catalog_management_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoices_dashboard.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_action_inbox_screen.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
@@ -273,6 +274,14 @@ class SystemSelectionScreen extends StatelessWidget {
             intro: 'اختر الفرع لعرض عملياته وسجل فواتير مشترياته.',
             color: _roleColor(role),
             branchIcon: Icons.shopping_cart_checkout_rounded,
+            actionLabel: 'مهامي في فواتير المشتريات',
+            actionIcon: Icons.assignment_rounded,
+            onActionPressed: (selectorContext) => Navigator.push(
+              selectorContext,
+              MaterialPageRoute(
+                builder: (_) => PurchaseInvoiceActionInboxScreen(role: role),
+              ),
+            ),
             onBranchSelected: (selectorContext, branch) {
               final data = branch.data() as Map<String, dynamic>;
               Navigator.push(
