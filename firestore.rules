@@ -3172,8 +3172,14 @@ service cloud.firestore {
     }
 
     function mayReadPurchaseAmendment(data) {
-      return data.invoice_id is string &&
-        validPurchaseAmendment(data.id, data) &&
+      // Amendments are written only by the command backend.  Their public
+      // shape has evolved (notably when currency and dynamic item changes
+      // were added), so using the latest closed schema as a read gate makes
+      // a valid historical amendment unreadable.  Keep the authorization
+      // boundary on its parent invoice instead; protected prices are stored
+      // in the separate restricted collection below.
+      return data is map && data.keys().hasAll(['invoice_id']) &&
+        data.invoice_id is string && data.invoice_id.size() > 0 &&
         knownPurchaseUser() &&
         mayReadPurchaseBranch(get(
           /databases/$(database)/documents/purchase_invoices/$(data.invoice_id)

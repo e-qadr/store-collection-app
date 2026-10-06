@@ -47,7 +47,10 @@ class _PurchaseInvoiceActionInboxScreenState
                 stream: _service.watchDashboard(role: widget.role),
                 builder: (context, workflowSnapshot) =>
                     StreamBuilder<List<PurchaseInvoiceAmendment>>(
-                      stream: _service.watchMyPendingAmendments(uid),
+                      stream: _service.watchMyPendingAmendments(
+                        uid,
+                        role: widget.role,
+                      ),
                       builder: (context, amendmentSnapshot) {
                         if (workflowSnapshot.connectionState ==
                                 ConnectionState.waiting ||

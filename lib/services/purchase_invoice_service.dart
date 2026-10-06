@@ -153,34 +153,65 @@ class PurchaseInvoiceService {
   }
 
   /// Returns only amendments where the signed-in user still has a decision to
-  /// make. The amendment record is public operational data; protected prices
-  /// remain in its separate, restricted document.
+  /// make.
+  ///
+  /// Do not query the amendment collection directly here. A cross-branch
+  /// amendment query cannot be proven safe by Firestore rules (and legacy
+  /// amendment documents may have a different public shape). Instead, first
+  /// query the invoice headers the current role is already entitled to read,
+  /// then read the exact open amendment for each of those invoices. This keeps
+  /// the inbox both branch-safe and compatible with older invoices.
   Stream<List<PurchaseInvoiceAmendment>> watchMyPendingAmendments(
-    String userId,
-  ) {
+    String userId, {
+    required UserRole role,
+    String? branchId,
+  }) {
     final cleanUserId = userId.trim();
     if (cleanUserId.isEmpty) return Stream.value(const []);
-    return _firestore
-        .collection(PurchaseInvoiceCollections.amendments)
-        .where('status', isEqualTo: 'pending')
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(
-                (document) => PurchaseInvoiceAmendment.fromMap(
-                  document.id,
-                  document.data(),
-                ),
-              )
-              .where(
-                (amendment) =>
-                    amendment.requiredApprovers.any(
-                      (actor) => actor.uid == cleanUserId,
-                    ) &&
-                    !amendment.approvedBy(cleanUserId),
-              )
-              .toList(growable: false),
-        );
+    final cleanBranchId = branchId?.trim() ?? '';
+    if (role == UserRole.manager && cleanBranchId.isEmpty) {
+      return Stream.value(const []);
+    }
+    Query<Map<String, dynamic>> query = _invoices.where(
+      'open_amendment_status',
+      isEqualTo: 'pending',
+    );
+    if (role == UserRole.manager) {
+      query = query.where('receiving_branch_id', isEqualTo: cleanBranchId);
+    } else if (role != UserRole.collector &&
+        role != UserRole.accountant &&
+        role != UserRole.admin) {
+      return Stream.value(const []);
+    }
+    return query.limit(100).snapshots().asyncMap((snapshot) async {
+      final amendments = await Future.wait(
+        snapshot.docs.map((invoiceDocument) async {
+          final amendmentId =
+              invoiceDocument.data()['open_amendment_id']?.toString().trim() ??
+              '';
+          if (amendmentId.isEmpty) return null;
+          final amendmentDocument = await _firestore
+              .collection(PurchaseInvoiceCollections.amendments)
+              .doc(amendmentId)
+              .get();
+          final data = amendmentDocument.data();
+          return data == null
+              ? null
+              : PurchaseInvoiceAmendment.fromMap(amendmentDocument.id, data);
+        }),
+      );
+      return amendments
+          .whereType<PurchaseInvoiceAmendment>()
+          .where(
+            (amendment) =>
+                amendment.status == 'pending' &&
+                amendment.requiredApprovers.any(
+                  (actor) => actor.uid == cleanUserId,
+                ) &&
+                !amendment.approvedBy(cleanUserId),
+          )
+          .toList(growable: false);
+    });
   }
 
   Stream<List<PurchaseInvoiceAmendmentItem>> watchAmendmentItems(

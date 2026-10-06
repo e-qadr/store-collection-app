@@ -230,6 +230,10 @@ test('public amendment requests are branch-visible while protected amendment pri
       reason: 'Operational correction',
       changes: {
         supplier_invoice_number: {before: 'S-100', after: 'S-101'},
+        // Currency is a public amendment field. Its protected price effects
+        // stay in the companion prices document, which branch managers cannot
+        // read.
+        currency: {before: 'YER', after: 'SAR'},
       },
       includes_protected_price_changes: true,
       required_approvers: [
@@ -292,6 +296,22 @@ test('public amendment requests are branch-visible while protected amendment pri
   )));
   await assertFails(getDoc(doc(
     db('manager-x'), 'purchase_invoice_amendments', 'amendment-1',
+  )));
+  // Old amendment records predate newer optional public fields. They must
+  // remain visible to the right branch while keeping other branches out.
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(
+      context.firestore(), 'purchase_invoice_amendments', 'legacy-amendment-1',
+    ), {
+      invoice_id: 'purchase-1',
+      legacy_note: 'created before the current amendment schema',
+    });
+  });
+  await assertSucceeds(getDoc(doc(
+    db('manager-r'), 'purchase_invoice_amendments', 'legacy-amendment-1',
+  )));
+  await assertFails(getDoc(doc(
+    db('manager-x'), 'purchase_invoice_amendments', 'legacy-amendment-1',
   )));
   await assertSucceeds(getDoc(doc(
     db('manager-r'), 'purchase_invoice_amendments', 'amendment-1', 'items', 'item-1',
