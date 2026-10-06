@@ -3129,7 +3129,8 @@ service cloud.firestore {
           'supplier_name',
           'supplier_invoice_number',
           'supplier_invoice_date',
-          'general_manager_notes'
+          'general_manager_notes',
+          'currency'
         ]) &&
         (data.changes.size() > 0 ||
           data.get('has_item_changes', false) == true ||
@@ -3142,6 +3143,11 @@ service cloud.firestore {
           validPurchaseAmendmentChange(data.changes.supplier_invoice_date)) &&
         (!data.changes.keys().hasAny(['general_manager_notes']) ||
           validPurchaseAmendmentChange(data.changes.general_manager_notes)) &&
+        (!data.changes.keys().hasAny(['currency']) ||
+          (validPurchaseAmendmentChange(data.changes.currency) &&
+            validCurrency(data.changes.currency.after) &&
+            (data.changes.currency.before == null ||
+              validCurrency(data.changes.currency.before)))) &&
         (!data.keys().hasAny(['has_item_changes']) ||
           data.has_item_changes is bool) &&
         (!data.keys().hasAny(['item_change_count']) ||

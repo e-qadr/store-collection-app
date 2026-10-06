@@ -797,28 +797,7 @@ class _PurchaseInvoiceDetailsScreenState
     PurchaseInvoicePriceSnapshot? prices,
   ) {
     if (invoice.hasPendingAmendment) {
-      return SafeArea(
-        top: false,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-          decoration: const BoxDecoration(
-            color: AppTheme.cardColor,
-            border: Border(top: BorderSide(color: AppTheme.dividerColor)),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.pending_actions_rounded, color: AppTheme.warningColor),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'يوجد تعديل معلّق. اعتمده أو ارفضه من بطاقة التعديل قبل متابعة الفاتورة.',
-                  style: TextStyle(color: AppTheme.textHint, height: 1.35),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _pendingAmendmentFooter(invoice);
     }
     final action = _action(invoice, prices);
     final hasAction = action is! SizedBox;
@@ -898,6 +877,67 @@ class _PurchaseInvoiceDetailsScreenState
       ),
     );
   }
+
+  Widget _pendingAmendmentFooter(
+    PurchaseInvoiceRead invoice,
+  ) => StreamBuilder<PurchaseInvoiceAmendment?>(
+    stream: _service.watchAmendment(invoice.openAmendmentId),
+    builder: (context, snapshot) {
+      final amendment = snapshot.data;
+      final hasError = snapshot.hasError;
+      final mustDecide = amendment != null && _mayDecideAmendment(amendment);
+      final message = hasError
+          ? 'تعذر تحميل تفاصيل التعديل. أعد فتح الفاتورة بعد تحديث الصلاحيات.'
+          : amendment == null
+          ? 'جارٍ تحميل تفاصيل التعديل…'
+          : _amendmentAudienceMessage(amendment);
+      final color = hasError
+          ? AppTheme.errorColor
+          : mustDecide
+          ? AppTheme.warningColor
+          : AppTheme.primaryOlive;
+      final icon = hasError
+          ? Icons.error_outline_rounded
+          : mustDecide
+          ? Icons.pending_actions_rounded
+          : Icons.info_outline_rounded;
+      return SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          decoration: const BoxDecoration(
+            color: AppTheme.cardColor,
+            border: Border(top: BorderSide(color: AppTheme.dividerColor)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(icon, color: color),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      message,
+                      style: const TextStyle(
+                        color: AppTheme.textHint,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (mustDecide) ...[
+                const SizedBox(height: 10),
+                _amendmentDecisionButtons(invoice, amendment),
+              ],
+            ],
+          ),
+        ),
+      );
+    },
+  );
 
   String _actionPrompt(PurchaseInvoiceRead invoice, bool hasAction) {
     if (hasAction) {
@@ -1329,6 +1369,17 @@ class _PurchaseInvoiceDetailsScreenState
       stream: _service.watchAmendment(invoice.openAmendmentId),
       builder: (context, snapshot) {
         final amendment = snapshot.data;
+        if (snapshot.hasError) {
+          return const Card(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Text(
+                'تعذر تحميل بطاقة التعديل. أعد فتح الفاتورة بعد تحديث الصلاحيات.',
+                style: TextStyle(color: AppTheme.errorColor),
+              ),
+            ),
+          );
+        }
         if (amendment == null) {
           return const Card(
             child: Padding(
@@ -1368,10 +1419,7 @@ class _PurchaseInvoiceDetailsScreenState
     PurchaseInvoiceAmendment amendment,
   ) {
     final currentUid = _currentUid;
-    final mayDecide =
-        amendment.status == 'pending' &&
-        amendment.requiredApprovers.any((actor) => actor.uid == currentUid) &&
-        !amendment.approvedBy(currentUid);
+    final mayDecide = _mayDecideAmendment(amendment);
     final mayApplyImmediately =
         amendment.status == 'pending' &&
         currentUid.isNotEmpty &&
@@ -1419,35 +1467,21 @@ class _PurchaseInvoiceDetailsScreenState
               'بانتظار: '
               '${amendment.pendingApprovers.map((actor) => actor.name).where((name) => name.isNotEmpty).join('، ')}',
             ),
+            const SizedBox(height: 4),
+            Text(
+              'حالة دورك: ${_amendmentAudienceMessage(amendment)}',
+              style: TextStyle(
+                color: mayDecide ? AppTheme.warningColor : AppTheme.textHint,
+                height: 1.3,
+              ),
+            ),
             if (amendment.rejectionReason.isNotEmpty)
               Text('سبب الرفض: ${amendment.rejectionReason}'),
             if (_mayReadPrices && amendment.includesProtectedPriceChanges)
               _protectedAmendmentPrices(amendment),
             if (mayDecide) ...[
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                children: [
-                  FilledButton(
-                    key: const Key('approve-purchase-amendment'),
-                    onPressed: _submitting
-                        ? null
-                        : () => _decideAmendment(
-                            invoice,
-                            amendment,
-                            decision: 'approve',
-                          ),
-                    child: const Text('موافقة'),
-                  ),
-                  OutlinedButton(
-                    key: const Key('reject-purchase-amendment'),
-                    onPressed: _submitting
-                        ? null
-                        : () => _rejectAmendment(invoice, amendment),
-                    child: const Text('رفض'),
-                  ),
-                ],
-              ),
+              _amendmentDecisionButtons(invoice, amendment),
             ],
             if (mayApplyImmediately) ...[
               const SizedBox(height: 10),
@@ -1468,6 +1502,56 @@ class _PurchaseInvoiceDetailsScreenState
       ),
     );
   }
+
+  bool _mayDecideAmendment(PurchaseInvoiceAmendment amendment) {
+    final currentUid = _currentUid;
+    return amendment.status == 'pending' &&
+        currentUid.isNotEmpty &&
+        amendment.requiredApprovers.any((actor) => actor.uid == currentUid) &&
+        !amendment.approvedBy(currentUid);
+  }
+
+  String _amendmentAudienceMessage(PurchaseInvoiceAmendment amendment) {
+    final currentUid = _currentUid;
+    final waitingNames = amendment.pendingApprovers
+        .map((actor) => actor.name.trim())
+        .where((name) => name.isNotEmpty)
+        .join('، ');
+    if (_mayDecideAmendment(amendment)) {
+      return 'هذا التعديل ينتظر قرارك. راجعه ثم وافق عليه أو ارفضه.';
+    }
+    if (currentUid.isNotEmpty && amendment.approvedBy(currentUid)) {
+      return waitingNames.isEmpty
+          ? 'تم تسجيل موافقتك، ويجري تطبيق التعديل.'
+          : 'تم تسجيل موافقتك. بانتظار: $waitingNames.';
+    }
+    return waitingNames.isEmpty
+        ? 'اكتملت الموافقات ويجري تطبيق التعديل.'
+        : 'لا يتطلب التعديل إجراء منك الآن. بانتظار: $waitingNames.';
+  }
+
+  Widget _amendmentDecisionButtons(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoiceAmendment amendment,
+  ) => Wrap(
+    spacing: 8,
+    children: [
+      FilledButton(
+        key: const Key('approve-purchase-amendment'),
+        onPressed: _submitting
+            ? null
+            : () => _decideAmendment(invoice, amendment, decision: 'approve'),
+        child: const Text('موافقة على التعديل'),
+      ),
+      OutlinedButton(
+        key: const Key('reject-purchase-amendment'),
+        onPressed: _submitting
+            ? null
+            : () => _rejectAmendment(invoice, amendment),
+        child: const Text('رفض التعديل'),
+      ),
+    ],
+  );
 
   Widget _protectedAmendmentPrices(PurchaseInvoiceAmendment amendment) =>
       StreamBuilder<PurchaseInvoiceAmendmentPrice?>(
