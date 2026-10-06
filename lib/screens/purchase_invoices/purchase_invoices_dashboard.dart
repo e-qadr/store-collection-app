@@ -552,7 +552,7 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
               width: 10,
               height: 42,
               decoration: BoxDecoration(
-                color: invoice.status.color,
+                color: invoice.workflowColor,
                 borderRadius: BorderRadius.circular(20),
               ),
             ),
@@ -567,8 +567,11 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    '${invoice.status.label} • ${invoice.itemCount} مواد',
-                    style: TextStyle(color: invoice.status.color, fontSize: 12),
+                    '${invoice.workflowLabel} • ${invoice.itemCount} مواد',
+                    style: TextStyle(
+                      color: invoice.workflowColor,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -607,12 +610,12 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
             height: 46,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: invoice.status.color.withValues(alpha: 0.1),
+              color: invoice.workflowColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
               Icons.receipt_long_outlined,
-              color: invoice.status.color,
+              color: invoice.workflowColor,
               size: 23,
             ),
           ),
@@ -627,8 +630,8 @@ class _PurchaseInvoicesDashboardState extends State<PurchaseInvoicesDashboard> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${invoice.status.label} • ${invoice.itemCount} مواد',
-                  style: TextStyle(color: invoice.status.color, fontSize: 12),
+                  '${invoice.workflowLabel} • ${invoice.itemCount} مواد',
+                  style: TextStyle(color: invoice.workflowColor, fontSize: 12),
                 ),
               ],
             ),

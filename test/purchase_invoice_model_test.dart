@@ -207,4 +207,20 @@ void main() {
       isFalse,
     );
   });
+
+  test('a pending amendment supersedes the displayed workflow step', () {
+    final invoice = PurchaseInvoiceRead(
+      id: 'purchase-1',
+      data: {
+        'status': 'pendingAccountingEntry',
+        'open_amendment_id': 'amendment-1',
+        'open_amendment_status': 'pending',
+      },
+    );
+
+    expect(invoice.status, PurchaseInvoiceStatus.pendingAccountingEntry);
+    expect(invoice.hasPendingAmendment, isTrue);
+    expect(invoice.workflowLabel, 'تعديل بانتظار الاعتماد');
+    expect(invoice.currentResponsibleParty, 'اعتماد التعديل أولاً');
+  });
 }

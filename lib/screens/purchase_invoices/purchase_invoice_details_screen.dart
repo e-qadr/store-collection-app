@@ -285,10 +285,10 @@ class _PurchaseInvoiceDetailsScreenState
               margin: EdgeInsets.zero,
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: invoice.status.color.withValues(alpha: 0.07),
+                color: invoice.workflowColor.withValues(alpha: 0.07),
                 border: Border(
                   bottom: BorderSide(
-                    color: invoice.status.color.withValues(alpha: 0.18),
+                    color: invoice.workflowColor.withValues(alpha: 0.18),
                   ),
                 ),
               ),
@@ -297,12 +297,12 @@ class _PurchaseInvoiceDetailsScreenState
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: invoice.status.color.withValues(alpha: 0.14),
+                      color: invoice.workflowColor.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
                       Icons.receipt_long_rounded,
-                      color: invoice.status.color,
+                      color: invoice.workflowColor,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -614,16 +614,16 @@ class _PurchaseInvoiceDetailsScreenState
     constraints: const BoxConstraints(maxWidth: 128),
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
     decoration: BoxDecoration(
-      color: invoice.status.color.withValues(alpha: 0.12),
+      color: invoice.workflowColor.withValues(alpha: 0.12),
       borderRadius: BorderRadius.circular(20),
     ),
     child: Text(
-      invoice.status.label,
+      invoice.workflowLabel,
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: invoice.status.color,
+        color: invoice.workflowColor,
         fontSize: 11,
         fontWeight: FontWeight.bold,
       ),

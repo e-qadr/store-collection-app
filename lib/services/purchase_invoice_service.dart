@@ -44,7 +44,11 @@ class PurchaseInvoiceService {
               .map((doc) => PurchaseInvoiceRead(id: doc.id, data: doc.data()))
               .where(
                 (invoice) =>
-                    actionStatus == null || invoice.status == actionStatus,
+                    // A pending controlled amendment freezes pricing and
+                    // accounting actions.  Keep it out of those task queues
+                    // until every recorded participant decides the edit.
+                    !invoice.hasPendingAmendment &&
+                    (actionStatus == null || invoice.status == actionStatus),
               )
               .toList(growable: false),
         );

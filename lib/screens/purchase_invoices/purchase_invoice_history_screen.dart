@@ -578,7 +578,7 @@ class _PurchaseInvoiceHistoryScreenState
                 invoice.supplierInvoiceNumber,
                 invoice.receivingBranchName,
                 invoice.currency,
-                invoice.status.label,
+                invoice.workflowLabel,
                 invoice.currentResponsibleParty,
               ].any((value) => value.toLowerCase().contains(query));
           final hasSupplierDocument =
@@ -757,12 +757,12 @@ class _PurchaseInvoiceHistoryScreenState
                 width: 46,
                 height: 46,
                 decoration: BoxDecoration(
-                  color: invoice.status.color.withValues(alpha: .12),
+                  color: invoice.workflowColor.withValues(alpha: .12),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Icon(
                   Icons.receipt_long_rounded,
-                  color: invoice.status.color,
+                  color: invoice.workflowColor,
                 ),
               ),
               const SizedBox(width: 11),
@@ -809,7 +809,7 @@ class _PurchaseInvoiceHistoryScreenState
                       spacing: 7,
                       runSpacing: 6,
                       children: [
-                        _statusPill(invoice.status),
+                        _statusPill(invoice),
                         _factPill(Icons.calendar_today_rounded, visibleDate),
                         _factPill(
                           Icons.inventory_2_outlined,
@@ -859,16 +859,16 @@ class _PurchaseInvoiceHistoryScreenState
     );
   }
 
-  Widget _statusPill(PurchaseInvoiceStatus status) => Container(
+  Widget _statusPill(PurchaseInvoiceRead invoice) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
     decoration: BoxDecoration(
-      color: status.color.withValues(alpha: .12),
+      color: invoice.workflowColor.withValues(alpha: .12),
       borderRadius: BorderRadius.circular(20),
     ),
     child: Text(
-      status.label,
+      invoice.workflowLabel,
       style: TextStyle(
-        color: status.color,
+        color: invoice.workflowColor,
         fontSize: 11,
         fontWeight: FontWeight.w800,
       ),

@@ -99,7 +99,22 @@ class PurchaseInvoiceRead {
   DateTime? get postedAt => _date(data['posted_at']);
   DateTime? get lastUpdated => _date(data['last_updated']);
   String get openAmendmentId => data['open_amendment_id']?.toString() ?? '';
-  bool get hasPendingAmendment => openAmendmentId.isNotEmpty;
+  String get openAmendmentStatus =>
+      data['open_amendment_status']?.toString().trim() ?? '';
+
+  /// The saved [status] remains the canonical workflow state so the server can
+  /// resume it once the controlled edit is applied or rejected.  While an
+  /// amendment is open, however, it is the only allowed next step and must be
+  /// the status shown to people using the app.
+  bool get hasPendingAmendment =>
+      openAmendmentId.isNotEmpty &&
+      !const {'applied', 'rejected'}.contains(openAmendmentStatus);
+
+  String get workflowLabel =>
+      hasPendingAmendment ? 'تعديل بانتظار الاعتماد' : status.label;
+
+  Color get workflowColor =>
+      hasPendingAmendment ? const Color(0xFFF57C00) : status.color;
   String get createdBy => data['created_by']?.toString() ?? '';
   String get receiptConfirmedBy =>
       data['receipt_confirmed_by']?.toString() ?? '';
@@ -112,13 +127,16 @@ class PurchaseInvoiceRead {
     ...history.map((event) => event.actorId).where((id) => id.isNotEmpty),
   };
 
-  String get currentResponsibleParty => switch (status) {
-    PurchaseInvoiceStatus.pendingReceiverReview => 'مدير الفرع المستلم',
-    PurchaseInvoiceStatus.pendingPriceEntry => 'المدير العام',
-    PurchaseInvoiceStatus.pendingAccountingEntry => 'المحاسب',
-    PurchaseInvoiceStatus.postedToAccounting => 'مكتملة',
-    PurchaseInvoiceStatus.unknown => 'غير محدد',
-  };
+  String get currentResponsibleParty {
+    if (hasPendingAmendment) return 'اعتماد التعديل أولاً';
+    return switch (status) {
+      PurchaseInvoiceStatus.pendingReceiverReview => 'مدير الفرع المستلم',
+      PurchaseInvoiceStatus.pendingPriceEntry => 'المدير العام',
+      PurchaseInvoiceStatus.pendingAccountingEntry => 'المحاسب',
+      PurchaseInvoiceStatus.postedToAccounting => 'مكتملة',
+      PurchaseInvoiceStatus.unknown => 'غير محدد',
+    };
+  }
 
   List<PurchaseInvoiceItem> get items {
     final documents = itemDocuments;
