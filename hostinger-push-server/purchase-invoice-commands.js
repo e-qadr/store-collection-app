@@ -378,6 +378,7 @@ function amendmentItemView(item) {
 
 function amendmentItemDigest(items) {
   const stable = items.map((item) => ({
+    operation: item.operation || "update",
     item_id: item.item_id,
     line_number: item.line_number,
     before: item.before,
@@ -407,13 +408,21 @@ async function resolveAmendmentItems({
     );
   }
   const storedById = new Map(invoiceItems.map((item) => [item.item_id, item]));
-  const requested = itemChanges.map((change) => {
+  const requested = itemChanges.map((change, index) => {
+    if (change.operation === "add") return {change, stored: null, index};
     const stored = storedById.get(change.item_id);
     if (!stored) {
       throw new PurchaseCommandError(
           "item-amendment-invalid",
           409,
           "The purchase item is invalid.",
+      );
+    }
+    if (change.operation === "remove" && stored.source_type !== "catalog") {
+      throw new PurchaseCommandError(
+          "item-amendment-invalid",
+          409,
+          "A material awaiting catalog review cannot be removed.",
       );
     }
     const changesCatalogSelection = change.product_id !== undefined || change.unit_id !== undefined;
@@ -425,10 +434,11 @@ async function resolveAmendmentItems({
           "A pending catalog-review line cannot change its catalog selection.",
       );
     }
-    return {change, stored};
+    return {change, stored, index};
   });
-  const catalogRequested = requested.filter(({stored}) =>
-    stored.source_type === "catalog" && stored.review_status === REVIEW_STATUS.notRequired);
+  const catalogRequested = requested.filter(({change, stored}) =>
+    change.operation === "add" ||
+    (stored?.source_type === "catalog" && stored.review_status === REVIEW_STATUS.notRequired));
   const productIds = [...new Set(catalogRequested.map(({change, stored}) =>
     change.product_id || stored.canonical_product_id))];
   const productSnapshots = await Promise.all(productIds.map((id) => transaction.get(
@@ -446,7 +456,48 @@ async function resolveAmendmentItems({
     groupIds[index], snapshot.data(),
   ]));
 
-  return requested.map(({change, stored}) => {
+  return requested.map(({change, stored, index}) => {
+    if (change.operation === "add") {
+      const product = products.get(change.product_id);
+      const unit = catalogUnit(product, change.unit_id);
+      const canonical = catalogSnapshot(
+          product,
+          groups.get(String(product?.group_id || "")),
+          unit,
+          invoice.receiving_brand_id,
+      );
+      const itemId = deterministicDocumentId(
+          "purchase-amendment-added-item", amendmentRef.id, String(index),
+      );
+      return {
+        id: itemId,
+        operation: "add",
+        amendment_id: amendmentRef.id,
+        invoice_id: invoice.id,
+        receiving_branch_id: invoice.receiving_branch_id,
+        item_id: itemId,
+        line_number: invoiceItems.length + index + 1,
+        before: null,
+        after: amendmentItemView({
+          ...canonical,
+          ordered_quantity: change.ordered_quantity,
+          line_notes: change.line_notes || "",
+        }),
+      };
+    }
+    if (change.operation === "remove") {
+      return {
+        id: stored.item_id,
+        operation: "remove",
+        amendment_id: amendmentRef.id,
+        invoice_id: invoice.id,
+        receiving_branch_id: invoice.receiving_branch_id,
+        item_id: stored.item_id,
+        line_number: stored.line_number,
+        before: amendmentItemView(stored),
+        after: null,
+      };
+    }
     if (stored.source_type !== "catalog" || stored.review_status !== REVIEW_STATUS.notRequired) {
       const afterItem = compact({
         ...stored,
@@ -463,6 +514,7 @@ async function resolveAmendmentItems({
       }
       return {
         id: stored.item_id,
+        operation: "update",
         amendment_id: amendmentRef.id,
         invoice_id: invoice.id,
         receiving_branch_id: invoice.receiving_branch_id,
@@ -501,6 +553,7 @@ async function resolveAmendmentItems({
     }
     return {
       id: stored.item_id,
+      operation: "update",
       amendment_id: amendmentRef.id,
       invoice_id: invoice.id,
       receiving_branch_id: invoice.receiving_branch_id,
@@ -550,10 +603,44 @@ function itemWithApprovedAmendment(stored, amendmentItem, nextRevision) {
   return next;
 }
 
+function itemAddedByApprovedAmendment(invoice, amendmentItem, nextRevision) {
+  const after = amendmentItem.after;
+  return compact({
+    id: amendmentItem.item_id,
+    invoice_id: invoice.id,
+    schema_version: 1,
+    workflow_version: 1,
+    workflow_identity: "purchase_invoice_v1",
+    invoice_revision: nextRevision,
+    branch_ids: [invoice.receiving_branch_id],
+    receiving_branch_id: invoice.receiving_branch_id,
+    receiving_brand_id: invoice.receiving_brand_id,
+    line_number: amendmentItem.line_number,
+    item_id: amendmentItem.item_id,
+    source_type: "catalog",
+    original_material_name: after.product_name,
+    original_group_text: after.group_name,
+    original_unit_text: after.unit_raw_value,
+    canonical_product_id: after.product_id,
+    canonical_product_version: after.product_version,
+    canonical_product_name: after.product_name,
+    canonical_product_legacy_code: after.product_legacy_code,
+    canonical_group_id: after.group_id,
+    canonical_group_name: after.group_name,
+    canonical_group_legacy_code: after.group_legacy_code,
+    canonical_unit_id: after.unit_id,
+    canonical_unit_value: after.unit_value,
+    canonical_unit_raw_value: after.unit_raw_value,
+    ordered_quantity: after.ordered_quantity,
+    line_notes: after.line_notes || undefined,
+    review_status: REVIEW_STATUS.notRequired,
+  });
+}
+
 function assertAmendmentItemDocument(item, amendment, invoice) {
   const keys = new Set([
     "id", "amendment_id", "invoice_id", "receiving_branch_id", "item_id",
-    "line_number", "before", "after",
+    "line_number", "operation", "before", "after",
   ]);
   const viewKeys = new Set([
     "product_id", "product_version", "product_name", "product_legacy_code",
@@ -578,8 +665,13 @@ function assertAmendmentItemDocument(item, amendment, invoice) {
       item.amendment_id !== amendment.id || item.invoice_id !== invoice.id ||
       item.receiving_branch_id !== invoice.receiving_branch_id ||
       !Number.isSafeInteger(item.line_number) || item.line_number < 1 ||
-      !validView(item.before) || !validView(item.after) ||
-      sameAmendmentItemView(item.before, item.after) ||
+      !["update", "remove", "add"].includes(item.operation || "update") ||
+      ((item.operation || "update") === "add" ?
+        (item.before !== null || !validView(item.after)) :
+        (item.operation === "remove" ?
+          (!validView(item.before) || item.after !== null) :
+          (!validView(item.before) || !validView(item.after) ||
+            sameAmendmentItemView(item.before, item.after)))) ||
       /unit_price|line_total|invoice_total|accounting_reference|accountant_notes/.test(
           JSON.stringify(item).toLowerCase(),
       )) {
@@ -755,7 +847,14 @@ async function readPurchaseAmendmentView({firestore, actorUid, invoiceId, amendm
       !amendmentSnapshot.exists || amendment?.invoice_id !== invoiceId) {
     throw new PurchaseCommandError("not-found", 404, "The amendment is unavailable.");
   }
-  return publicAmendmentView(amendment, invoice);
+  const view = publicAmendmentView(amendment, invoice);
+  if (view.has_item_changes) {
+    const itemSnapshot = await amendmentItemsCollection(
+        firestore.collection(COLLECTIONS.amendments).doc(amendmentId),
+    ).orderBy("line_number", "asc").get();
+    view.item_changes = itemSnapshot.docs.map((document) => publicJsonValue(document.data()));
+  }
+  return view;
 }
 
 async function listMyPendingPurchaseAmendments({firestore, actorUid}) {
@@ -2477,7 +2576,7 @@ function amendmentResponse(invoice, amendmentId, status = "pending", amendment) 
 }
 
 function amendmentPriceDocument({
-  amendmentRef, invoice, actor, priceItems, price, timestamp,
+  amendmentRef, invoice, actor, priceItems, price, timestamp, currency,
 }) {
   const existing = new Map(
       (Array.isArray(price?.provisional_items) ? price.provisional_items : [])
@@ -2490,7 +2589,7 @@ function amendmentPriceDocument({
     amendment_id: amendmentRef.id,
     invoice_id: invoice.id,
     invoice_revision: invoice.revision,
-    currency: invoice.currency,
+    currency: currency || invoice.currency,
     price_items: priceItems.map((entry) => ({
       item_id: entry.item_id,
       old_unit_price: existing.get(entry.item_id) ?? null,
@@ -2571,7 +2670,13 @@ async function createPurchaseAmendment({
         if (price.pricing_state === "confirmed") {
           assertProtectedPrice(invoice, storedItems, price);
         }
-        const itemIds = new Set(storedItems.map((item) => item.item_id));
+        const removedIds = new Set(amendmentItems
+            .filter((item) => item.operation === "remove")
+            .map((item) => item.item_id));
+        const itemIds = new Set([
+          ...storedItems.filter((item) => !removedIds.has(item.item_id)),
+          ...amendmentItems.filter((item) => item.operation === "add"),
+        ].map((item) => item.item_id));
         if (payload.price_items.some((entry) => !itemIds.has(entry.item_id))) {
           throw new PurchaseCommandError(
               "items-mismatch", 409, "A protected price item is invalid.",
@@ -2629,6 +2734,7 @@ async function createPurchaseAmendment({
       if (payload.price_items) {
         transaction.set(amendmentPriceRef, amendmentPriceDocument({
           amendmentRef, invoice, actor, priceItems: payload.price_items, price, timestamp,
+          currency: payload.changes.currency || invoice.currency,
         }));
       }
       transaction.update(invoiceRef, {
@@ -2775,13 +2881,26 @@ async function decidePurchaseAmendment({
           amendmentItems.map((item) => [item.item_id, item]),
       );
       const nextRevision = invoice.revision + 1;
-      const nextItems = invoiceItems.map((item) => {
+      const removedItemIds = new Set(amendmentItems
+          .filter((item) => item.operation === "remove")
+          .map((item) => item.item_id));
+      const updatedItems = invoiceItems.filter((item) => !removedItemIds.has(item.item_id)).map((item) => {
         const amendmentItem = amendmentItemsById.get(item.item_id);
-        return amendmentItem ?
+        return amendmentItem && amendmentItem.operation === "update" ?
           itemWithApprovedAmendment(item, amendmentItem, nextRevision) : item;
       });
-      const nextItemDigest = amendmentItems.length > 0 ?
-        purchaseItemDigest(nextItems) : invoice.item_digest;
+      const addedItems = amendmentItems
+          .filter((item) => item.operation === "add")
+          .map((item) => itemAddedByApprovedAmendment(invoice, item, nextRevision));
+      const nextItems = [...updatedItems, ...addedItems].map((item, index) => ({
+        ...item,
+        invoice_revision: nextRevision,
+        line_number: index + 1,
+      }));
+      if (nextItems.length < 1 || nextItems.length > 50) {
+        throw new PurchaseCommandError("item-amendment-invalid", 409, "An invoice must retain between 1 and 50 items.");
+      }
+      const nextItemDigest = purchaseItemDigest(nextItems);
       const oldKeyId = supplierUniqueKey(invoice);
       const proposedSupplier = {
         supplier_name: publicChanges.supplier_name?.after ?? invoice.supplier_name,
@@ -2825,7 +2944,8 @@ async function decidePurchaseAmendment({
         history: historyWithEvent(invoice, event),
         open_amendment_id: "",
         open_amendment_status: "applied",
-        ...(amendmentItems.length > 0 ? {item_digest: nextItemDigest} : {}),
+        item_count: nextItems.length,
+        item_digest: nextItemDigest,
       };
       Object.entries(publicChanges).forEach(([field, change]) => {
         invoiceUpdate[field] = change.after;
@@ -2840,10 +2960,29 @@ async function decidePurchaseAmendment({
         );
       }
       if (currencyChanged) {
-        // A numeric price cannot be copied into a different currency. Keep
-        // the previous currency's price history intact, but reset this
-        // invoice's protected snapshot so an authorized user enters and
-        // confirms prices in the newly approved currency.
+        // A numeric price cannot be copied into another currency. Values
+        // explicitly entered in the amendment are values in the *new*
+        // currency, so retain them as a provisional draft; anything omitted
+        // must still be entered and confirmed by an authorized user.
+        const amendmentPrice = amendmentPriceSnapshot?.data();
+        if (amendment.includes_protected_price_changes &&
+            (!amendmentPrice || amendmentPrice.currency !== nextCurrency ||
+              !Array.isArray(amendmentPrice.price_items))) {
+          throw new PurchaseCommandError(
+              "amendment-price-invalid", 409, "The protected amendment data is invalid.");
+        }
+        const nextIds = new Set(nextItems.map((item) => item.item_id));
+        const replacement = new Map((amendmentPrice?.price_items || []).map((entry) =>
+          [entry.item_id, entry.new_unit_price]));
+        if (replacement.size !== (amendmentPrice?.price_items || []).length ||
+            [...replacement.keys()].some((id) => !nextIds.has(id)) ||
+            [...replacement.values()].some((value) =>
+              typeof value !== "number" || !Number.isFinite(value) || value < 0)) {
+          throw new PurchaseCommandError(
+              "amendment-price-invalid", 409, "The protected amendment data is invalid.");
+        }
+        const provisionalItems = nextItems.filter((item) => replacement.has(item.item_id))
+            .map((item) => ({item_id: item.item_id, unit_price: replacement.get(item.item_id)}));
         transaction.set(priceRef, compact({
           id: price.id,
           invoice_id: invoiceId,
@@ -2854,7 +2993,7 @@ async function decidePurchaseAmendment({
           item_count: nextItems.length,
           item_digest: nextItemDigest,
           currency: nextCurrency,
-          provisional_items: [],
+          provisional_items: provisionalItems,
           locked: false,
         }));
       } else if (needsPriceUpdate) {
@@ -2869,7 +3008,7 @@ async function decidePurchaseAmendment({
         }
         const confirmedPrice = price?.pricing_state === "confirmed";
         if (confirmedPrice) assertProtectedPrice(invoice, invoiceItems, price);
-        const validItemIds = new Set(invoiceItems.map((item) => item.item_id));
+        const validItemIds = new Set(nextItems.map((item) => item.item_id));
         const amendmentPriceItems = amendment.includes_protected_price_changes ?
           amendmentPrice.price_items : [];
         const replacement = new Map(amendmentPriceItems.map((entry) =>
@@ -2900,6 +3039,19 @@ async function decidePurchaseAmendment({
           const confirmedByItemId = new Map(price.items.map((entry) => [
             entry.item_id, entry.unit_price,
           ]));
+          const missingAddedPrice = amendmentItems.some((item) =>
+            item.operation === "add" && !replacement.has(item.item_id));
+          if (missingAddedPrice) {
+            transaction.update(priceRef, {
+              invoice_revision: nextRevision,
+              item_count: nextItems.length,
+              item_digest: nextItemDigest,
+              provisional_items: provisionalItems,
+              pricing_state: "provisional",
+              items: [],
+              invoice_total: 0,
+            });
+          } else {
           const finalInputs = nextItems.map((item) => {
             const unitPrice = replacement.has(item.item_id) ?
               replacement.get(item.item_id) : confirmedByItemId.get(item.item_id);
@@ -2933,15 +3085,18 @@ async function decidePurchaseAmendment({
           );
           transaction.update(priceRef, {
             invoice_revision: nextRevision,
+            item_count: nextItems.length,
             item_digest: nextItemDigest,
             provisional_items: finalInputs,
             items: confirmedItems,
             invoice_total: invoiceTotal,
             pricing_state: "confirmed",
           });
+          }
         } else {
           transaction.update(priceRef, {
             invoice_revision: nextRevision,
+            item_count: nextItems.length,
             item_digest: nextItemDigest,
             provisional_items: provisionalItems,
             pricing_state: provisionalItems.length === nextItems.length ? "initial" : "provisional",
@@ -2953,11 +3108,17 @@ async function decidePurchaseAmendment({
           item_digest: nextItemDigest,
         });
       }
-      amendmentItems.forEach((item) => {
-        const nextItem = nextItems.find((candidate) => candidate.item_id === item.item_id);
-        assertPublicItem({...invoice, revision: nextRevision, item_digest: nextItemDigest}, nextItem, nextItem.item_id);
+      const nextInvoiceForItems = {
+        ...invoice,
+        revision: nextRevision,
+        item_count: nextItems.length,
+        item_digest: nextItemDigest,
+      };
+      nextItems.forEach((nextItem) => {
+        assertPublicItem(nextInvoiceForItems, nextItem, nextItem.item_id);
         transaction.set(itemsCollection(invoiceRef).doc(nextItem.item_id), nextItem);
       });
+      removedItemIds.forEach((itemId) => transaction.delete(itemsCollection(invoiceRef).doc(itemId)));
       transaction.update(invoiceRef, invoiceUpdate);
       transaction.update(amendmentRef, {
         status: "applied",

@@ -61,6 +61,7 @@ class _PurchaseAmendmentItemDraft {
   final TextEditingController quantity;
   final TextEditingController notes;
   CatalogSelection? selection;
+  bool remove = false;
 
   _PurchaseAmendmentItemDraft(this.original)
     : quantity = TextEditingController(
@@ -76,6 +77,12 @@ class _PurchaseAmendmentItemDraft {
       selection?.unit.displayValue ?? original.displayUnit;
 
   PurchaseAmendmentItemChangeInput? toInput() {
+    if (remove) {
+      return PurchaseAmendmentItemChangeInput(
+        itemId: original.id,
+        operation: 'remove',
+      );
+    }
     final nextQuantity = double.tryParse(quantity.text.trim());
     if (nextQuantity == null || !nextQuantity.isFinite || nextQuantity <= 0) {
       throw const FormatException();
@@ -106,6 +113,33 @@ class _PurchaseAmendmentItemDraft {
   }
 }
 
+class _PurchaseAmendmentAddedDraft {
+  final CatalogSelection selection;
+  final TextEditingController quantity = TextEditingController(text: '1');
+  final TextEditingController notes = TextEditingController();
+
+  _PurchaseAmendmentAddedDraft(this.selection);
+
+  PurchaseAmendmentItemChangeInput toInput() {
+    final value = double.tryParse(quantity.text.trim());
+    if (value == null || !value.isFinite || value <= 0) {
+      throw const FormatException();
+    }
+    return PurchaseAmendmentItemChangeInput(
+      operation: 'add',
+      productId: selection.product.id,
+      unitId: selection.unit.id,
+      orderedQuantity: value,
+      lineNotes: notes.text.trim().isEmpty ? null : notes.text.trim(),
+    );
+  }
+
+  void dispose() {
+    quantity.dispose();
+    notes.dispose();
+  }
+}
+
 class _PurchaseEventPresentation {
   final IconData icon;
   final Color color;
@@ -126,9 +160,11 @@ class _PurchaseInvoiceDetailsScreenState
   String? _loadedInvoiceKey;
   Future<PurchaseInvoiceRead>? _invoiceFuture;
   bool _submitting = false;
+  int _refreshGeneration = 0;
 
   Future<PurchaseInvoiceRead> _itemsFor(PurchaseInvoiceRead header) {
-    final key = '${header.id}-${header.revision}-${header.itemDigest}';
+    final key =
+        '${header.id}-${header.revision}-${header.itemDigest}-$_refreshGeneration';
     if (_loadedInvoiceKey != key || _invoiceFuture == null) {
       _loadedInvoiceKey = key;
       _invoiceFuture = _service.loadInvoiceWithItems(header.documentId);
@@ -136,11 +172,24 @@ class _PurchaseInvoiceDetailsScreenState
     return _invoiceFuture!;
   }
 
-  bool get _mayReadPrices => const {
-    UserRole.collector,
-    UserRole.accountant,
-    UserRole.admin,
-  }.contains(widget.role);
+  /// Only the receiving branch manager is intentionally shielded from the
+  /// financial values. The general manager (collector), accountant and system
+  /// administrator must see the same protected price view and invoice total.
+  bool get _mayReadPrices => widget.role != UserRole.manager;
+
+  Future<void> _refreshInvoice() async {
+    if (widget.fixtureInvoice != null) return;
+    // Force a fresh authenticated read as well as allowing the active
+    // Firestore stream to update the header. This is important after a command
+    // was applied by another role before the local listener received it.
+    try {
+      await _service.loadInvoiceWithItems(widget.invoiceId);
+    } catch (_) {
+      // The next rebuild retains the live-stream fallback and its proper UI
+      // error message. Pull-to-refresh itself should never crash the page.
+    }
+    if (mounted) setState(() => _refreshGeneration++);
+  }
 
   String get _currentUid {
     try {
@@ -250,24 +299,28 @@ class _PurchaseInvoiceDetailsScreenState
           invoice,
           verifiedPrices ?? verifiedDraft,
         ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 142),
-          children: [
-            _headerCard(invoice),
-            const SizedBox(height: 12),
-            _sectionTitle(
-              icon: Icons.inventory_2_outlined,
-              title: 'مواد الفاتورة',
-              trailing: '${invoice.items.length} مواد',
-            ),
-            const SizedBox(height: 8),
-            _itemsTable(invoice, verifiedPrices),
-            const SizedBox(height: 8),
-            _invoiceSummaryCard(invoice, verifiedPrices),
-            _amendmentSection(invoice, verifiedPrices ?? verifiedDraft),
-            const SizedBox(height: 16),
-            _timeline(invoice),
-          ],
+        body: RefreshIndicator(
+          onRefresh: _refreshInvoice,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 142),
+            children: [
+              _headerCard(invoice),
+              const SizedBox(height: 12),
+              _sectionTitle(
+                icon: Icons.inventory_2_outlined,
+                title: 'مواد الفاتورة',
+                trailing: '${invoice.items.length} مواد',
+              ),
+              const SizedBox(height: 8),
+              _itemsTable(invoice, verifiedPrices),
+              const SizedBox(height: 8),
+              _invoiceSummaryCard(invoice, verifiedPrices),
+              _amendmentSection(invoice, verifiedPrices ?? verifiedDraft),
+              const SizedBox(height: 16),
+              _timeline(invoice),
+            ],
+          ),
         ),
       ),
     );
@@ -1119,6 +1172,34 @@ class _PurchaseInvoiceDetailsScreenState
       );
     }
     if (hasQuantityDifference) {
+      final changes = <PurchaseAmendmentItemChangeInput>[
+        for (final item in invoice.items)
+          if (double.tryParse(quantityControllers[item.id]!.text.trim()) !=
+              item.orderedQuantity)
+            PurchaseAmendmentItemChangeInput(
+              itemId: item.id,
+              orderedQuantity: double.parse(
+                quantityControllers[item.id]!.text.trim(),
+              ),
+              lineNotes: noteControllers[item.id]!.text.trim().isEmpty
+                  ? null
+                  : noteControllers[item.id]!.text.trim(),
+            ),
+      ];
+      await _run(
+        () => _api.createAmendment(
+          invoiceId: invoice.id,
+          expectedRevision: invoice.revision,
+          reason:
+              'فرق في الكميات عند تأكيد استلام الفرع'
+              '${receiverNotes.text.trim().isEmpty ? '' : ': ${receiverNotes.text.trim()}'}',
+          itemChanges: changes,
+          idempotencyKey: PurchaseInvoiceApiService.generateIdempotencyKey(),
+        ),
+      );
+      if (mounted) {
+        _message('تم تحويل فرق الكميات إلى طلب تعديل بانتظار الاعتمادات.');
+      }
       for (final controller in [
         ...quantityControllers.values,
         ...noteControllers.values,
@@ -1126,9 +1207,6 @@ class _PurchaseInvoiceDetailsScreenState
       ]) {
         controller.dispose();
       }
-      _message(
-        'فرق الكمية لا يغيّر الفاتورة مباشرة. استخدم «تعديل الفاتورة» ليُرسل التعديل لاعتماد جميع الأطراف.',
-      );
       return;
     }
     await _run(
@@ -1463,7 +1541,7 @@ class _PurchaseInvoiceDetailsScreenState
                 '${entry.value['before'] ?? '-'} ← ${entry.value['after'] ?? '-'}',
               ),
             ),
-            if (amendment.hasItemChanges) _amendmentItems(amendment),
+            if (amendment.hasItemChanges) _amendmentItems(invoice, amendment),
             const SizedBox(height: 8),
             Text(
               'تمت الموافقة: '
@@ -1608,7 +1686,7 @@ class _PurchaseInvoiceDetailsScreenState
                     ),
                   ),
                   if (amendment.hasItemChanges)
-                    _amendmentReviewItems(amendment),
+                    _amendmentReviewItems(invoice, amendment),
                   if (amendment.includesProtectedPriceChanges)
                     const Padding(
                       padding: EdgeInsets.only(top: 10),
@@ -1663,9 +1741,10 @@ class _PurchaseInvoiceDetailsScreenState
   );
 
   Widget _amendmentReviewItems(
+    PurchaseInvoiceRead invoice,
     PurchaseInvoiceAmendment amendment,
   ) => StreamBuilder<List<PurchaseInvoiceAmendmentItem>>(
-    stream: _service.watchAmendmentItems(amendment.id),
+    stream: _service.watchAmendmentItems(amendment.id, invoiceId: invoice.id),
     builder: (context, snapshot) {
       final items = snapshot.data ?? const [];
       if (items.isEmpty) {
@@ -1688,13 +1767,13 @@ class _PurchaseInvoiceDetailsScreenState
           ),
           ...items.map(
             (item) => _amendmentReviewRow(
-              label: item.before.productName.isEmpty
-                  ? 'المادة ${item.lineNumber}'
-                  : item.before.productName,
-              before:
-                  '${item.before.unitValue} — ${_number(item.before.orderedQuantity)}',
-              after:
-                  '${item.after.productName} — ${item.after.unitValue} — ${_number(item.after.orderedQuantity)}',
+              label: _amendmentItemLabel(item),
+              before: item.operation == 'add'
+                  ? 'مادة جديدة'
+                  : '${item.before.productName} — ${item.before.unitValue} — ${_number(item.before.orderedQuantity)}',
+              after: item.operation == 'remove'
+                  ? 'إزالة المادة من الفاتورة'
+                  : '${item.after.productName} — ${item.after.unitValue} — ${_number(item.after.orderedQuantity)}',
             ),
           ),
         ],
@@ -1725,42 +1804,50 @@ class _PurchaseInvoiceDetailsScreenState
         },
       );
 
-  Widget _amendmentItems(PurchaseInvoiceAmendment amendment) =>
-      StreamBuilder<List<PurchaseInvoiceAmendmentItem>>(
-        stream: _service.watchAmendmentItems(amendment.id),
-        builder: (context, snapshot) {
-          final items = snapshot.data ?? const [];
-          if (items.isEmpty) {
-            return const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('يتضمن الطلب تعديلات تشغيلية على المواد.'),
-            );
-          }
-          return Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'تعديلات المواد المقترحة',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                ...items.map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      '${item.before.productName} (${item.before.unitValue}، '
-                      '${_number(item.before.orderedQuantity)}) ← '
-                      '${item.after.productName} (${item.after.unitValue}، '
-                      '${_number(item.after.orderedQuantity)})',
-                    ),
-                  ),
-                ),
-              ],
+  Widget _amendmentItems(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoiceAmendment amendment,
+  ) => StreamBuilder<List<PurchaseInvoiceAmendmentItem>>(
+    stream: _service.watchAmendmentItems(amendment.id, invoiceId: invoice.id),
+    builder: (context, snapshot) {
+      final items = snapshot.data ?? const [];
+      if (items.isEmpty) {
+        return const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('يتضمن الطلب تعديلات تشغيلية على المواد.'),
+        );
+      }
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'تعديلات المواد المقترحة',
+              style: TextStyle(fontWeight: FontWeight.bold),
             ),
-          );
-        },
+            ...items.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  item.operation == 'add'
+                      ? 'إضافة: ${item.after.productName} '
+                            '(${item.after.unitValue}، ${_number(item.after.orderedQuantity)})'
+                      : item.operation == 'remove'
+                      ? 'إزالة: ${item.before.productName} '
+                            '(${item.before.unitValue}، ${_number(item.before.orderedQuantity)})'
+                      : '${item.before.productName} (${item.before.unitValue}، '
+                            '${_number(item.before.orderedQuantity)}) ← '
+                            '${item.after.productName} (${item.after.unitValue}، '
+                            '${_number(item.after.orderedQuantity)})',
+                ),
+              ),
+            ),
+          ],
+        ),
       );
+    },
+  );
 
   String _amendmentFieldLabel(String field) => switch (field) {
     'supplier_name' => 'المورد',
@@ -1770,6 +1857,16 @@ class _PurchaseInvoiceDetailsScreenState
     'currency' => 'عملة الفاتورة',
     _ => field,
   };
+
+  String _amendmentItemLabel(PurchaseInvoiceAmendmentItem item) =>
+      switch (item.operation) {
+        'add' => 'إضافة مادة جديدة',
+        'remove' => 'إزالة مادة',
+        _ =>
+          item.before.productName.isEmpty
+              ? 'المادة ${item.lineNumber}'
+              : item.before.productName,
+      };
 
   Future<void> _requestAmendment(
     PurchaseInvoiceRead invoice,
@@ -1792,8 +1889,9 @@ class _PurchaseInvoiceDetailsScreenState
         invoice.status != PurchaseInvoiceStatus.postedToAccounting
         ? invoice.items
               .map(_PurchaseAmendmentItemDraft.new)
-              .toList(growable: false)
+              .toList(growable: true)
         : const <_PurchaseAmendmentItemDraft>[];
+    final addedItemDrafts = <_PurchaseAmendmentAddedDraft>[];
     final priceControllers = <String, TextEditingController>{
       if (_mayReadPrices)
         for (final item in invoice.items)
@@ -1813,6 +1911,9 @@ class _PurchaseInvoiceDetailsScreenState
         controller.dispose();
       }
       for (final draft in itemDrafts) {
+        draft.dispose();
+      }
+      for (final draft in addedItemDrafts) {
         draft.dispose();
       }
     }
@@ -1959,10 +2060,20 @@ class _PurchaseInvoiceDetailsScreenState
                                         ),
                                       )
                                       .toList(growable: false),
-                                  onChanged: (value) => setDialogState(
-                                    () => selectedCurrency =
-                                        value ?? invoice.currency,
-                                  ),
+                                  onChanged: (value) => setDialogState(() {
+                                    final next = value ?? invoice.currency;
+                                    if (next != selectedCurrency) {
+                                      // Values cannot be carried between
+                                      // currencies. Keep the price editor
+                                      // visible, but require deliberate new
+                                      // values in the selected currency.
+                                      for (final controller
+                                          in priceControllers.values) {
+                                        controller.clear();
+                                      }
+                                    }
+                                    selectedCurrency = next;
+                                  }),
                                 ),
                                 const SizedBox(height: 10),
                                 TextField(
@@ -2022,7 +2133,7 @@ class _PurchaseInvoiceDetailsScreenState
                                     ),
                                   ),
                                   subtitle: const Text(
-                                    'غيّر المادة أو الوحدة أو الكمية عند الحاجة',
+                                    'بدّل أو أزل مادة، أو أضف مادة من الكتالوج',
                                     style: TextStyle(fontSize: 11),
                                   ),
                                   childrenPadding: const EdgeInsets.fromLTRB(
@@ -2031,32 +2142,107 @@ class _PurchaseInvoiceDetailsScreenState
                                     12,
                                     14,
                                   ),
-                                  children: itemDrafts
-                                      .map(
-                                        (draft) => Container(
-                                          margin: const EdgeInsets.only(
-                                            top: 10,
-                                          ),
-                                          padding: const EdgeInsets.all(12),
-                                          decoration: BoxDecoration(
-                                            color: AppTheme.cardColor,
-                                            borderRadius: BorderRadius.circular(
-                                              16,
-                                            ),
-                                            border: Border.all(
-                                              color: AppTheme.dividerColor,
-                                            ),
-                                          ),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.stretch,
-                                            children: [
-                                              Text(
-                                                '${draft.displayName} — ${draft.displayUnit}',
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.w700,
+                                  children: [
+                                    Align(
+                                      alignment:
+                                          AlignmentDirectional.centerStart,
+                                      child: TextButton.icon(
+                                        onPressed: () async {
+                                          final selection =
+                                              await showPurchaseCatalogPicker(
+                                                dialogContext,
+                                                brandId:
+                                                    invoice.receivingBrandId,
+                                                service: _catalog,
+                                              );
+                                          if (selection != null) {
+                                            setDialogState(
+                                              () => addedItemDrafts.add(
+                                                _PurchaseAmendmentAddedDraft(
+                                                  selection,
                                                 ),
                                               ),
+                                            );
+                                          }
+                                        },
+                                        icon: const Icon(
+                                          Icons.add_circle_outline_rounded,
+                                        ),
+                                        label: const Text(
+                                          'إضافة مادة من الكتالوج',
+                                        ),
+                                      ),
+                                    ),
+                                    ...itemDrafts.map(
+                                      (draft) => Container(
+                                        margin: const EdgeInsets.only(top: 10),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.cardColor,
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                          border: Border.all(
+                                            color: AppTheme.dividerColor,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    '${draft.displayName} — ${draft.displayUnit}',
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      decoration: draft.remove
+                                                          ? TextDecoration
+                                                                .lineThrough
+                                                          : null,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (!draft.original.isUnmatched)
+                                                  IconButton(
+                                                    tooltip: draft.remove
+                                                        ? 'إبقاء المادة'
+                                                        : 'إزالة المادة',
+                                                    onPressed: () =>
+                                                        setDialogState(
+                                                          () => draft.remove =
+                                                              !draft.remove,
+                                                        ),
+                                                    icon: Icon(
+                                                      draft.remove
+                                                          ? Icons
+                                                                .restore_from_trash_rounded
+                                                          : Icons
+                                                                .delete_outline_rounded,
+                                                      color: draft.remove
+                                                          ? AppTheme
+                                                                .primaryOlive
+                                                          : AppTheme.errorColor,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                            if (draft.remove)
+                                              const Padding(
+                                                padding: EdgeInsets.only(
+                                                  top: 6,
+                                                ),
+                                                child: Text(
+                                                  'ستُحذف هذه المادة بعد اعتماد كل الأطراف.',
+                                                  style: TextStyle(
+                                                    color: AppTheme.errorColor,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              )
+                                            else ...[
                                               if (!draft.original.isUnmatched)
                                                 Align(
                                                   alignment:
@@ -2121,16 +2307,84 @@ class _PurchaseInvoiceDetailsScreenState
                                                 ),
                                               ),
                                             ],
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    ...addedItemDrafts.map(
+                                      (draft) => Container(
+                                        margin: const EdgeInsets.only(top: 10),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.oliveSurface,
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                          border: Border.all(
+                                            color: AppTheme.dividerColor,
                                           ),
                                         ),
-                                      )
-                                      .toList(growable: false),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    '${draft.selection.product.name} — ${draft.selection.unit.displayValue}',
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  tooltip: 'إلغاء إضافة المادة',
+                                                  onPressed: () =>
+                                                      setDialogState(() {
+                                                        addedItemDrafts.remove(
+                                                          draft,
+                                                        );
+                                                        draft.dispose();
+                                                      }),
+                                                  icon: const Icon(
+                                                    Icons.close_rounded,
+                                                    color: AppTheme.errorColor,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 8),
+                                            TextField(
+                                              controller: draft.quantity,
+                                              keyboardType:
+                                                  const TextInputType.numberWithOptions(
+                                                    decimal: true,
+                                                  ),
+                                              decoration: const InputDecoration(
+                                                labelText: 'الكمية',
+                                              ),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            TextField(
+                                              controller: draft.notes,
+                                              maxLines: 2,
+                                              decoration: const InputDecoration(
+                                                labelText:
+                                                    'ملاحظة البند (اختيارية)',
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
                           ],
-                          if (_mayReadPrices &&
-                              selectedCurrency == invoice.currency) ...[
+                          if (_mayReadPrices) ...[
                             const SizedBox(height: 8),
                             Theme(
                               data: Theme.of(
@@ -2155,9 +2409,11 @@ class _PurchaseInvoiceDetailsScreenState
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
-                                  subtitle: const Text(
-                                    'اختياري — اترك الحقول كما هي إن لم تتغير الأسعار',
-                                    style: TextStyle(fontSize: 11),
+                                  subtitle: Text(
+                                    selectedCurrency == invoice.currency
+                                        ? 'اختياري — اترك الحقول كما هي إن لم تتغير الأسعار'
+                                        : 'أدخل الأسعار الجديدة بعملة $selectedCurrency قبل حفظ التعديل',
+                                    style: const TextStyle(fontSize: 11),
                                   ),
                                   childrenPadding: const EdgeInsets.fromLTRB(
                                     12,
@@ -2180,7 +2436,7 @@ class _PurchaseInvoiceDetailsScreenState
                                                 ),
                                             decoration: InputDecoration(
                                               labelText:
-                                                  'سعر ${item.displayName} (${item.displayUnit})',
+                                                  'سعر ${item.displayName} (${item.displayUnit}) — $selectedCurrency',
                                               prefixIcon: const Icon(
                                                 Icons.payments_outlined,
                                               ),
@@ -2190,15 +2446,6 @@ class _PurchaseInvoiceDetailsScreenState
                                       )
                                       .toList(growable: false),
                                 ),
-                              ),
-                            ),
-                          ] else if (selectedCurrency != invoice.currency) ...[
-                            const SizedBox(height: 10),
-                            const Text(
-                              'ستُدخل الأسعار وتُعتمد لاحقاً بالعملة الجديدة بعد اكتمال الموافقات.',
-                              style: TextStyle(
-                                color: AppTheme.textHint,
-                                fontSize: 12,
                               ),
                             ),
                           ],
@@ -2237,13 +2484,13 @@ class _PurchaseInvoiceDetailsScreenState
       final priceItems = <PurchaseAmendmentPriceInput>[];
       for (final item in invoice.items) {
         final controller = priceControllers[item.id];
-        if (selectedCurrency != invoice.currency ||
-            controller == null ||
-            controller.text.trim().isEmpty) {
+        if (controller == null || controller.text.trim().isEmpty) {
           continue;
         }
         final value = double.tryParse(controller.text.trim());
-        final original = prices?.provisionalPrices[item.id];
+        final original = selectedCurrency == invoice.currency
+            ? prices?.provisionalPrices[item.id]
+            : null;
         if (value == null || value < 0) {
           _message('تحقق من قيمة السعر المحمي.');
           disposeDraftControllers();
@@ -2266,6 +2513,9 @@ class _PurchaseInvoiceDetailsScreenState
         for (final draft in itemDrafts) {
           final change = draft.toInput();
           if (change != null) itemChanges.add(change);
+        }
+        for (final draft in addedItemDrafts) {
+          itemChanges.add(draft.toInput());
         }
       } on FormatException {
         _message('تحقق من الكمية المقترحة لكل مادة.');
@@ -2604,6 +2854,7 @@ class _PurchaseInvoiceDetailsScreenState
     setState(() => _submitting = true);
     try {
       await operation();
+      await _refreshInvoice();
       if (mounted) _message('تم حفظ الإجراء بنجاح.');
     } catch (error) {
       if (mounted) _message(_operationErrorText(error));

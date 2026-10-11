@@ -504,6 +504,7 @@ class PurchaseInvoiceAmendment {
 
 class PurchaseInvoiceAmendmentItem {
   final String id;
+  final String operation;
   final String itemId;
   final int lineNumber;
   final PurchaseInvoiceAmendmentItemValues before;
@@ -511,6 +512,7 @@ class PurchaseInvoiceAmendmentItem {
 
   const PurchaseInvoiceAmendmentItem({
     required this.id,
+    this.operation = 'update',
     required this.itemId,
     required this.lineNumber,
     required this.before,
@@ -522,6 +524,7 @@ class PurchaseInvoiceAmendmentItem {
     Map<String, dynamic> data,
   ) => PurchaseInvoiceAmendmentItem(
     id: data['id']?.toString() ?? id,
+    operation: data['operation']?.toString() ?? 'update',
     itemId: data['item_id']?.toString() ?? '',
     lineNumber: (data['line_number'] as num?)?.toInt() ?? 0,
     before: PurchaseInvoiceAmendmentItemValues.fromMap(

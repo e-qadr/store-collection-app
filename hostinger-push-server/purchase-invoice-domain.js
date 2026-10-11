@@ -365,13 +365,29 @@ function amendmentItemChange(raw, index) {
   const field = `item_changes[${index}]`;
   const item = object(raw, field);
   onlyKeys(item, new Set([
-    "item_id", "product_id", "unit_id", "ordered_quantity", "line_notes",
+    "operation", "item_id", "product_id", "unit_id", "ordered_quantity", "line_notes",
   ]), field);
+  const operation = item.operation === undefined ? "update" :
+    requiredString(item.operation, `${field}.operation`, 16);
+  if (!["update", "remove", "add"].includes(operation)) {
+    throw new PurchaseCommandError("invalid-argument", 400, `${field}.operation is invalid.`);
+  }
+  if (operation === "remove") {
+    if (!hasOwn(item, "item_id") || Object.keys(item).some((key) =>
+      key !== "operation" && key !== "item_id")) {
+      throw new PurchaseCommandError("invalid-argument", 400, `${field} is invalid.`);
+    }
+    return {operation, item_id: documentId(item.item_id, `${field}.item_id`, MAX_ITEM_ID_BYTES)};
+  }
   const hasProduct = hasOwn(item, "product_id");
   const hasUnit = hasOwn(item, "unit_id");
   const hasQuantity = hasOwn(item, "ordered_quantity");
   const hasNotes = hasOwn(item, "line_notes");
-  if (!hasProduct && !hasUnit && !hasQuantity && !hasNotes) {
+  if (operation === "add") {
+    if (hasOwn(item, "item_id") || !hasProduct || !hasUnit || !hasQuantity || hasNotes && item.line_notes === null) {
+      throw new PurchaseCommandError("invalid-argument", 400, `${field} is invalid.`);
+    }
+  } else if (!hasOwn(item, "item_id") || (!hasProduct && !hasUnit && !hasQuantity && !hasNotes)) {
     throw new PurchaseCommandError(
         "amendment-no-changes", 400, "An amendment item must include a change.",
     );
@@ -398,7 +414,9 @@ function amendmentItemChange(raw, index) {
     );
   }
   return compact({
-    item_id: documentId(item.item_id, `${field}.item_id`, MAX_ITEM_ID_BYTES),
+    operation: operation === "update" ? undefined : operation,
+    item_id: operation === "add" ? undefined :
+      documentId(item.item_id, `${field}.item_id`, MAX_ITEM_ID_BYTES),
     product_id: hasProduct ? documentId(item.product_id, `${field}.product_id`) : undefined,
     unit_id: hasUnit ? documentId(item.unit_id, `${field}.unit_id`, MAX_UNIT_ID_BYTES) : undefined,
     ordered_quantity: quantity,
@@ -612,7 +630,10 @@ function validateBranchAccountingSyncPayload(body) {
 }
 
 function ensureUniqueItemIds(items) {
-  if (new Set(items.map((item) => item.item_id)).size !== items.length) {
+  const suppliedIds = items
+      .map((item) => item.item_id)
+      .filter((itemId) => typeof itemId === "string" && itemId);
+  if (new Set(suppliedIds).size !== suppliedIds.length) {
     throw new PurchaseCommandError("duplicate-item", 400, "Each item_id must appear once.");
   }
 }

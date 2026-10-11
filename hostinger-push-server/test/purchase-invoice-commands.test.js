@@ -1537,6 +1537,58 @@ test("pre-receipt amendment atomically replaces a canonical purchase line withou
   );
 });
 
+test("approved amendment can remove and add catalog materials atomically", async () => {
+  const firestore = new FakeFirestore(seed());
+  const {result} = await createInvoice(firestore, "create-item-add-remove-0001");
+  const invoiceId = result.responseData.invoice_id;
+  const original = publicItems(firestore, invoiceId)[0];
+  const created = await createPurchaseAmendment({
+    firestore,
+    actorUid: "collector",
+    invoiceId,
+    payload: {
+      expected_revision: 1,
+      reason: "Replace the ordered material.",
+      changes: {},
+      item_changes: [
+        {operation: "remove", item_id: original.item_id},
+        {
+          operation: "add",
+          product_id: "product-r-2",
+          unit_id: "box",
+          ordered_quantity: 4,
+          line_notes: "Added by approved amendment",
+        },
+      ],
+    },
+    idempotencyKey: "amend-item-add-remove-0001",
+    timestamp: now,
+  });
+  const amendmentId = created.responseData.amendment_id;
+  const amendmentItems = firestore.documents(
+      `${COLLECTIONS.amendments}/${amendmentId}/items`,
+  );
+  assert.equal(amendmentItems.length, 2);
+  assert.ok(amendmentItems.some((item) => item.operation === "remove" && item.after === null));
+  assert.ok(amendmentItems.some((item) => item.operation === "add" && item.before === null));
+
+  await decidePurchaseAmendment({
+    firestore, actorUid: "collector", invoiceId, amendmentId,
+    payload: {expected_revision: 1, decision: "apply"},
+    idempotencyKey: "amend-item-add-remove-apply-0001", timestamp: now,
+  });
+  const invoice = firestore.document(COLLECTIONS.invoices, invoiceId);
+  const items = publicItems(firestore, invoiceId);
+  const added = items.find((item) => item.canonical_product_id === "product-r-2");
+  assert.equal(invoice.item_count, 2);
+  assert.equal(items.length, 2);
+  assert.equal(items.some((item) => item.item_id === original.item_id), false);
+  assert.equal(added?.canonical_unit_id, "box");
+  assert.equal(added?.ordered_quantity, 4);
+  assert.equal(added?.line_notes, "Added by approved amendment");
+  assert.equal(firestore.document(COLLECTIONS.prices, invoiceId).item_count, 2);
+});
+
 test("header-only amendments remain available through every pre-final purchase state", async () => {
   for (const status of ["pendingReceiverReview", "pendingPriceEntry", "pendingAccountingEntry"]) {
     const firestore = new FakeFirestore(seed());

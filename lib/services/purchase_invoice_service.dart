@@ -62,21 +62,31 @@ class PurchaseInvoiceService {
       return;
     }
     final api = PurchaseInvoiceApiService();
+    // The authenticated API is the best source for the initial, complete
+    // view.  Do not end the stream after that read though: an amendment,
+    // receipt or approval can be applied by another participant at any time.
+    // Keeping the public header snapshot alive makes every open invoice react
+    // to its new revision; the details screen then re-reads its items through
+    // the API before displaying them.
     if (api.isConfigured) {
       try {
         yield await api.fetchInvoiceDetail(cleanInvoiceId);
-        return;
       } catch (_) {
-        // Fall back to Firestore for installations temporarily unable to
-        // contact the command service. The API is preferred because it is the
-        // authoritative role-and-branch authorization boundary.
+        // A legacy rule or a brief server outage must not prevent the normal
+        // Firestore live read below from recovering the screen.
       }
     }
-    await for (final snapshot in _invoices.doc(cleanInvoiceId).snapshots()) {
-      final data = snapshot.data();
-      yield data == null
-          ? null
-          : PurchaseInvoiceRead(id: snapshot.id, data: data);
+    try {
+      await for (final snapshot in _invoices.doc(cleanInvoiceId).snapshots()) {
+        final data = snapshot.data();
+        yield data == null
+            ? null
+            : PurchaseInvoiceRead(id: snapshot.id, data: data);
+      }
+    } on FirebaseException {
+      // Some historical documents are readable only through the authenticated
+      // command service. Preserve the initial API view instead of replacing it
+      // with a misleading access failure.
     }
   }
 
@@ -279,9 +289,20 @@ class PurchaseInvoiceService {
   }
 
   Stream<List<PurchaseInvoiceAmendmentItem>> watchAmendmentItems(
-    String amendmentId,
-  ) {
+    String amendmentId, {
+    String? invoiceId,
+  }) {
     if (amendmentId.trim().isEmpty) return Stream.value(const []);
+    final cleanInvoiceId = invoiceId?.trim() ?? '';
+    final api = PurchaseInvoiceApiService();
+    if (cleanInvoiceId.isNotEmpty && api.isConfigured) {
+      return Stream.fromFuture(
+        api.fetchAmendmentItems(
+          invoiceId: cleanInvoiceId,
+          amendmentId: amendmentId.trim(),
+        ),
+      );
+    }
     return _firestore
         .collection(PurchaseInvoiceCollections.amendments)
         .doc(amendmentId.trim())

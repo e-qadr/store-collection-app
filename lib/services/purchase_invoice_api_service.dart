@@ -182,6 +182,9 @@ class PurchaseAmendmentPriceInput {
 /// A public operational line change. Monetary changes stay in the separate
 /// protected amendment-price document and never travel in this payload type.
 class PurchaseAmendmentItemChangeInput {
+  /// `update` changes an existing line, `remove` removes an existing catalog
+  /// line after all approvers agree, and `add` adds a selected catalog line.
+  final String operation;
   final String itemId;
   final String? productId;
   final String? unitId;
@@ -189,7 +192,8 @@ class PurchaseAmendmentItemChangeInput {
   final String? lineNotes;
 
   const PurchaseAmendmentItemChangeInput({
-    required this.itemId,
+    this.itemId = '',
+    this.operation = 'update',
     this.productId,
     this.unitId,
     this.orderedQuantity,
@@ -197,7 +201,8 @@ class PurchaseAmendmentItemChangeInput {
   });
 
   Map<String, dynamic> toJson() => {
-    'item_id': itemId,
+    'operation': operation,
+    if (itemId.trim().isNotEmpty) 'item_id': itemId,
     if (productId != null) 'product_id': productId,
     if (unitId != null) 'unit_id': unitId,
     if (orderedQuantity != null) 'ordered_quantity': orderedQuantity,
@@ -289,6 +294,34 @@ class PurchaseInvoiceApiService {
       raw['id']?.toString() ?? amendmentId,
       Map<String, dynamic>.from(raw),
     );
+  }
+
+  Future<List<PurchaseInvoiceAmendmentItem>> fetchAmendmentItems({
+    required String invoiceId,
+    required String amendmentId,
+  }) async {
+    final response = await _read(
+      '/v1/purchase-invoices/${Uri.encodeComponent(invoiceId)}/amendments/'
+      '${Uri.encodeComponent(amendmentId)}',
+    );
+    final rawAmendment = response['amendment'];
+    if (rawAmendment is! Map) {
+      throw const PurchaseInvoiceApiException(
+        'invalid-response',
+        'تعذر تحميل تعديلات المواد من الخادم.',
+      );
+    }
+    final rawItems = rawAmendment['item_changes'];
+    if (rawItems is! List) return const [];
+    return rawItems
+        .whereType<Map>()
+        .map(
+          (entry) => PurchaseInvoiceAmendmentItem.fromMap(
+            entry['id']?.toString() ?? '',
+            Map<String, dynamic>.from(entry),
+          ),
+        )
+        .toList(growable: false);
   }
 
   /// Returns only amendments that still need a decision from the signed-in
