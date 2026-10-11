@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:store_collection_app/firebase_web_options.dart';
 import 'package:store_collection_app/screens/auth/auth_gate.dart';
 import 'package:store_collection_app/services/app_navigation_service.dart';
 import 'package:store_collection_app/services/device_notification_service.dart';
@@ -51,7 +53,16 @@ class _AppBootstrapState extends State<_AppBootstrap> {
   }
 
   Future<void> _initializeServices() async {
-    await Firebase.initializeApp().timeout(const Duration(seconds: 20));
+    await (kIsWeb
+            ? Firebase.initializeApp(options: firebaseWebOptions)
+            : Firebase.initializeApp())
+        .timeout(const Duration(seconds: 20));
+    if (kIsWeb) {
+      // Firebase keeps the authenticated session in browser-managed persistent
+      // storage. This is safer than maintaining our own login cookie and lets
+      // the user reopen this site on the same browser without signing in again.
+      await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+    }
     if (!kIsWeb) {
       unawaited(LocalNotificationService.initialize());
     }

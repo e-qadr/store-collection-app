@@ -35,6 +35,8 @@ void main() {
       mainFile.indexOf('runApp(const MyApp())'),
       lessThan(mainFile.indexOf('Firebase.initializeApp()')),
     );
-    expect(mainFile, contains('Firebase.initializeApp().timeout'));
+    expect(mainFile, contains('Firebase.initializeApp(options: firebaseWebOptions)'));
+    expect(mainFile, contains('Firebase.initializeApp())'));
+    expect(mainFile, contains('setPersistence(Persistence.LOCAL)'));
   });
 }

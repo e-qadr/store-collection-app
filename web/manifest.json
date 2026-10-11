@@ -1,12 +1,12 @@
 {
-    "name": "تحصيل الكاشير",
-    "short_name": "تحصيل الكاشير",
+    "name": "إدارة الأصالة",
+    "short_name": "الأصالة",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#FFFFFF",
     "theme_color": "#4527A0",
     "description": "نظام إدارة تحصيل الكاشير وسندات الفروع",
-    "orientation": "portrait-primary",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

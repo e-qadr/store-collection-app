@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "store-collection-app"
+  },
+  "targets": {
+    "store-collection-app": {
+      "hosting": {
+        "web": [
+          "app-alasalh"
+        ]
+      }
+    }
+  }
+}

@@ -46,6 +46,10 @@ enum DeviceNotificationPermissionState {
 }
 
 class DeviceNotificationService {
+  /// Firebase's Web Push certificate is public and may be supplied at web
+  /// build time. Keeping it optional preserves login and normal web use while
+  /// notification setup is completed in Firebase Console.
+  static const _webVapidKey = String.fromEnvironment('WEB_PUSH_VAPID_KEY');
   static StreamSubscription<String>? _tokenSubscription;
   static StreamSubscription<RemoteMessage>? _foregroundMessageSubscription;
   static StreamSubscription<RemoteMessage>? _messageOpenedSubscription;
@@ -179,7 +183,9 @@ class DeviceNotificationService {
       return;
     }
     try {
-      final token = await FirebaseMessaging.instance.getToken();
+      final token = await FirebaseMessaging.instance.getToken(
+        vapidKey: kIsWeb && _webVapidKey.isNotEmpty ? _webVapidKey : null,
+      );
       if (token != null && token.isNotEmpty) await _saveToken(token);
     } catch (_) {
       // يحتاج الويب إلى إعداد VAPID قبل إمكانية تسجيل رمز Push.
