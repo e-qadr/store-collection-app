@@ -55,13 +55,29 @@ class PurchaseInvoiceService {
         );
   }
 
-  Stream<PurchaseInvoiceRead?> watchInvoice(String invoiceId) {
-    return _invoices.doc(invoiceId).snapshots().map((snapshot) {
+  Stream<PurchaseInvoiceRead?> watchInvoice(String invoiceId) async* {
+    final cleanInvoiceId = invoiceId.trim();
+    if (cleanInvoiceId.isEmpty) {
+      yield null;
+      return;
+    }
+    final api = PurchaseInvoiceApiService();
+    if (api.isConfigured) {
+      try {
+        yield await api.fetchInvoiceDetail(cleanInvoiceId);
+        return;
+      } catch (_) {
+        // Fall back to Firestore for installations temporarily unable to
+        // contact the command service. The API is preferred because it is the
+        // authoritative role-and-branch authorization boundary.
+      }
+    }
+    await for (final snapshot in _invoices.doc(cleanInvoiceId).snapshots()) {
       final data = snapshot.data();
-      return data == null
+      yield data == null
           ? null
           : PurchaseInvoiceRead(id: snapshot.id, data: data);
-    });
+    }
   }
 
   /// Resolves the public number for a protected-price source. Price memory
@@ -107,16 +123,26 @@ class PurchaseInvoiceService {
   }
 
   Future<PurchaseInvoiceRead> loadInvoiceWithItems(String invoiceId) async {
-    final invoiceSnapshot = await _invoices.doc(invoiceId).get();
+    final cleanInvoiceId = invoiceId.trim();
+    final api = PurchaseInvoiceApiService();
+    if (cleanInvoiceId.isNotEmpty && api.isConfigured) {
+      try {
+        return await api.fetchInvoiceDetail(cleanInvoiceId);
+      } catch (_) {
+        // See [watchInvoice]: preserve a direct-read fallback while old
+        // installations migrate to the authenticated command service.
+      }
+    }
+    final invoiceSnapshot = await _invoices.doc(cleanInvoiceId).get();
     final data = invoiceSnapshot.data();
     if (data == null) throw StateError('فاتورة المشتريات غير موجودة.');
     final itemSnapshot = await _invoices
-        .doc(invoiceId)
+        .doc(cleanInvoiceId)
         .collection(PurchaseInvoiceCollections.items)
         .orderBy('line_number')
         .get();
     return PurchaseInvoiceRead(
-      id: invoiceId,
+      id: cleanInvoiceId,
       data: data,
       itemDocuments: itemSnapshot.docs.map((doc) => doc.data()).toList(),
     );

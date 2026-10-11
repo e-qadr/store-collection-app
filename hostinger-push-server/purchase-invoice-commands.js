@@ -677,6 +677,47 @@ function publicIsoTimestamp(value) {
     : null;
 }
 
+// Command responses cross an HTTP boundary, so Firestore Timestamp instances
+// must be normalized.  Only callers of publicInvoiceDocument choose the
+// whitelisted fields; this helper never serializes an entire stored document.
+function publicJsonValue(value) {
+  const timestamp = publicIsoTimestamp(value);
+  if (timestamp) return timestamp;
+  if (Array.isArray(value)) return value.map(publicJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+        Object.entries(value).map(([key, child]) => [key, publicJsonValue(child)]),
+    );
+  }
+  return value;
+}
+
+function publicInvoiceDocument(data, fields) {
+  const view = {};
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(data, field)) {
+      view[field] = publicJsonValue(data[field]);
+    }
+  }
+  return view;
+}
+
+async function readPurchaseInvoiceView({firestore, actorUid, invoiceId}) {
+  const actor = await readOperationalActor(firestore, actorUid);
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const invoiceSnapshot = await invoiceRef.get();
+  const invoice = invoiceSnapshot.data();
+  if (!invoiceSnapshot.exists || !mayReadPurchaseInvoice(actor, invoice)) {
+    throw new PurchaseCommandError("not-found", 404, "The purchase invoice is unavailable.");
+  }
+  const itemSnapshot = await itemsCollection(invoiceRef).orderBy("line_number", "asc").get();
+  return {
+    invoice: publicInvoiceDocument(invoice, HEADER_KEYS),
+    items: itemSnapshot.docs.map((document) =>
+      publicInvoiceDocument(document.data(), ITEM_KEYS)),
+  };
+}
+
 // The amendment is intentionally projected field-by-field. The companion
 // amendment-price document remains the only source of financial values.
 function publicAmendmentView(data, invoice = {}) {
@@ -3195,6 +3236,13 @@ function createPurchaseInvoiceCommandRouter({
       }),
     };
   }));
+  router.get("/purchase-invoices/:invoiceId", readRoute(async (request) => ({
+    ...await readPurchaseInvoiceView({
+      firestore,
+      actorUid: request.purchaseAuth.uid,
+      invoiceId: documentId(request.params.invoiceId, "invoice_id"),
+    }),
+  })));
   router.post("/purchase-invoices", commandRoute({
     firestore, admin, now, randomUUID, validator: validateCreatePayload,
     execute: createPurchaseInvoice,
@@ -3250,6 +3298,7 @@ module.exports = {
   isOperationalProfile,
   listMyPendingPurchaseAmendments,
   postToAccounting,
+  readPurchaseInvoiceView,
   readPurchaseAmendmentView,
   reviewProductTask,
   syncProductBranchAccounting,

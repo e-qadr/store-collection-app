@@ -236,6 +236,38 @@ class PurchaseInvoiceApiService {
 
   bool get isConfigured => _baseUrl.isNotEmpty;
 
+  /// Reads the safe operational invoice view from the command service. Prices
+  /// are deliberately absent; the server authorizes the caller by role and
+  /// receiving branch before returning its header and materials.
+  Future<PurchaseInvoiceRead> fetchInvoiceDetail(String invoiceId) async {
+    final cleanInvoiceId = invoiceId.trim();
+    if (cleanInvoiceId.isEmpty) {
+      throw const PurchaseInvoiceApiException(
+        'invalid-invoice-id',
+        'معرّف فاتورة المشتريات غير صالح.',
+      );
+    }
+    final response = await _read(
+      '/v1/purchase-invoices/${Uri.encodeComponent(cleanInvoiceId)}',
+    );
+    final rawInvoice = response['invoice'];
+    final rawItems = response['items'];
+    if (rawInvoice is! Map || rawItems is! List) {
+      throw const PurchaseInvoiceApiException(
+        'invalid-response',
+        'تعذر تحميل تفاصيل الفاتورة من الخادم.',
+      );
+    }
+    return PurchaseInvoiceRead(
+      id: rawInvoice['id']?.toString() ?? cleanInvoiceId,
+      data: Map<String, dynamic>.from(rawInvoice),
+      itemDocuments: rawItems
+          .whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList(growable: false),
+    );
+  }
+
   /// Reads the public operational amendment through the command service.
   /// This is deliberately separate from the protected amendment-price record.
   Future<PurchaseInvoiceAmendment> fetchAmendment({
