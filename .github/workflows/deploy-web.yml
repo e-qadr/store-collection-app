@@ -23,7 +23,8 @@ jobs:
     name: Build and deploy to Firebase Hosting
     runs-on: ubuntu-latest
     # GitHub OIDC exchanges a short-lived identity with Firebase; no deploy
-    # token or service-account key is kept in this repository.
+    # token or service-account key is kept in this repository. The IAM
+    # Credentials and Security Token Service APIs are enabled in the project.
     env:
       AUTH_API_BASE_URL: https://collection-api.alasalh.com
     steps:
