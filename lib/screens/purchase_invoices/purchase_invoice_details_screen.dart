@@ -1546,7 +1546,7 @@ class _PurchaseInvoiceDetailsScreenState
         key: const Key('approve-purchase-amendment'),
         onPressed: _submitting
             ? null
-            : () => _decideAmendment(invoice, amendment, decision: 'approve'),
+            : () => _reviewAndApproveAmendment(invoice, amendment),
         child: const Text('موافقة على التعديل'),
       ),
       OutlinedButton(
@@ -1557,6 +1557,149 @@ class _PurchaseInvoiceDetailsScreenState
         child: const Text('رفض التعديل'),
       ),
     ],
+  );
+
+  /// An approval is consequential: show the complete public change set before
+  /// submitting it, rather than making the reviewer infer it from the small
+  /// summary card behind the footer.
+  Future<void> _reviewAndApproveAmendment(
+    PurchaseInvoiceRead invoice,
+    PurchaseInvoiceAmendment amendment,
+  ) async {
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.fact_check_outlined, color: AppTheme.primaryOlive),
+            SizedBox(width: 8),
+            Expanded(child: Text('مراجعة التعديل قبل الموافقة')),
+          ],
+        ),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الفاتورة: ${invoice.purchaseNumber}',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                Text('سبب التعديل: ${amendment.reason}'),
+                const SizedBox(height: 16),
+                const Text(
+                  'التغييرات المقترحة',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                if (amendment.changes.isEmpty &&
+                    !amendment.hasItemChanges &&
+                    !amendment.includesProtectedPriceChanges)
+                  const Text('لا توجد تفاصيل عامة متاحة لهذا التعديل.')
+                else ...[
+                  ...amendment.changes.entries.map(
+                    (entry) => _amendmentReviewRow(
+                      label: _amendmentFieldLabel(entry.key),
+                      before: entry.value['before']?.toString() ?? '-',
+                      after: entry.value['after']?.toString() ?? '-',
+                    ),
+                  ),
+                  if (amendment.hasItemChanges)
+                    _amendmentReviewItems(amendment),
+                  if (amendment.includesProtectedPriceChanges)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: Text(
+                        'يتضمن الطلب تعديلاً مالياً. تعرض القيم فقط للأدوار المخوّلة.',
+                        style: TextStyle(color: AppTheme.textHint),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('رجوع'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.check_rounded),
+            label: const Text('موافقة نهائية'),
+          ),
+        ],
+      ),
+    );
+    if (approved == true) {
+      await _decideAmendment(invoice, amendment, decision: 'approve');
+    }
+  }
+
+  Widget _amendmentReviewRow({
+    required String label,
+    required String before,
+    required String after,
+  }) => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(top: 8),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: AppTheme.oliveSurface.withValues(alpha: 0.55),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text('$before  ←  $after', style: const TextStyle(height: 1.35)),
+      ],
+    ),
+  );
+
+  Widget _amendmentReviewItems(
+    PurchaseInvoiceAmendment amendment,
+  ) => StreamBuilder<List<PurchaseInvoiceAmendmentItem>>(
+    stream: _service.watchAmendmentItems(amendment.id),
+    builder: (context, snapshot) {
+      final items = snapshot.data ?? const [];
+      if (items.isEmpty) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Text(
+            amendment.itemChangeCount > 0
+                ? 'يشمل الطلب تعديل ${amendment.itemChangeCount} مادة.'
+                : 'يشمل الطلب تعديلات على المواد.',
+          ),
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 12),
+          const Text(
+            'تعديلات المواد',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          ...items.map(
+            (item) => _amendmentReviewRow(
+              label: item.before.productName.isEmpty
+                  ? 'المادة ${item.lineNumber}'
+                  : item.before.productName,
+              before:
+                  '${item.before.unitValue} — ${_number(item.before.orderedQuantity)}',
+              after:
+                  '${item.after.productName} — ${item.after.unitValue} — ${_number(item.after.orderedQuantity)}',
+            ),
+          ),
+        ],
+      );
+    },
   );
 
   Widget _protectedAmendmentPrices(PurchaseInvoiceAmendment amendment) =>

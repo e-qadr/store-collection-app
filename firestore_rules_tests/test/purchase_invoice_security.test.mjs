@@ -218,6 +218,105 @@ test('purchase headers are branch-scoped for managers and allow supervisor histo
   )));
 });
 
+// Regression coverage for TESTING000.  The document was created by an early
+// purchase workflow build and subsequently received an amendment after receipt
+// confirmation.  It must remain readable by the exact receiving-branch
+// manager; a pending amendment must never turn the parent invoice into a
+// permission denial.
+test('historical amended header remains readable by its receiving manager', async () => {
+  const historicalManager = 'testing-manager';
+  const historicalBranch = 'testing-branch';
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const database = context.firestore();
+    const batch = writeBatch(database);
+    batch.set(doc(database, 'users', historicalManager), {
+      name: 'test',
+      role: 'manager',
+      branchId: historicalBranch,
+      isActive: true,
+    });
+    batch.set(doc(database, 'branches', historicalBranch), {
+      id: historicalBranch,
+      name: 'اختبار ١',
+      brand_id: 'brand-r',
+      branch_manager_id: historicalManager,
+    });
+    const historicalTime = Timestamp.fromMillis(1_791_000_000_000);
+    batch.set(doc(database, 'purchase_invoices', 'TESTING000'), {
+      ...header({
+        id: 'TESTING000',
+        status: 'pendingAccountingEntry',
+        extra: {
+          revision: 3,
+          purchase_number: 'TESTING000',
+          receiving_branch_id: historicalBranch,
+          receiving_branch_name: 'اختبار ١',
+          receiving_branch_type: 'branch',
+          branch_ids: [historicalBranch],
+          item_count: 2,
+          currency: 'YER',
+          supplier_name: 'الا',
+          supplier_invoice_date: '2026-10-06',
+          receipt_confirmed_by: historicalManager,
+          receipt_confirmed_by_name: 'test',
+          receipt_confirmed_at: historicalTime,
+          open_amendment_id: 'testing-amendment',
+          open_amendment_status: 'pending',
+          history: [
+            ...history(),
+            {
+              action: 'purchase_initial_prices_confirmed',
+              message: 'Initial purchase prices were confirmed using received quantities.',
+              actor_id: historicalManager,
+              actor_name: 'test',
+              actor_role: 'manager',
+              timestamp: historicalTime,
+            },
+            {
+              action: 'purchase_amendment_requested',
+              message: 'تم حفظ تعديل فاتورة المشتريات بانتظار اعتماد المشاركين.',
+              actor_id: 'collector-user',
+              actor_name: 'Collector',
+              actor_role: 'collector',
+              timestamp: historicalTime,
+            },
+          ],
+        },
+      }),
+    });
+    batch.set(doc(database, 'purchase_invoice_amendments', 'testing-amendment'), {
+      id: 'testing-amendment',
+      invoice_id: 'TESTING000',
+      invoice_revision: 3,
+      status: 'pending',
+      reason: 'تعديل اختبار المدير العام',
+      changes: {supplier_name: {before: 'الا', after: 'الادارة'}},
+      has_item_changes: false,
+      item_change_count: 0,
+      item_change_digest: '',
+      includes_protected_price_changes: false,
+      required_approvers: [
+        {uid: 'collector-user', name: 'Collector', role: 'collector'},
+        {uid: historicalManager, name: 'test', role: 'manager'},
+      ],
+      approvals: [{uid: 'collector-user', name: 'Collector', role: 'collector'}],
+      requested_by: 'collector-user',
+      requested_by_name: 'Collector',
+      requested_by_role: 'collector',
+      requested_at: historicalTime,
+      updated_at: historicalTime,
+    });
+    await batch.commit();
+  });
+
+  await assertSucceeds(getDoc(doc(
+    db(historicalManager), 'purchase_invoices', 'TESTING000',
+  )));
+  await assertSucceeds(getDoc(doc(
+    db(historicalManager), 'purchase_invoice_amendments', 'testing-amendment',
+  )));
+});
+
 test('public amendment requests are branch-visible while protected amendment prices remain financial-only', async () => {
   await seedPurchase();
   await environment.withSecurityRulesDisabled(async (context) => {
