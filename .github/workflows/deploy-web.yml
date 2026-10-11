@@ -43,7 +43,19 @@ jobs:
           service_account: github-firebase-deployer@store-collection-app.iam.gserviceaccount.com
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/cloud-platform
-      - run: >-
-          npx firebase-tools@15.27.0 deploy --only hosting:web
-          --project store-collection-app --non-interactive
-          --token "${{ steps.auth.outputs.access_token }}"
+      - name: Deploy to Firebase Hosting
+        shell: bash
+        run: |
+          set +e
+          deploy_output="$(npx firebase-tools@15.27.0 deploy --only hosting:web --project store-collection-app --non-interactive --token "${{ steps.auth.outputs.access_token }}" 2>&1)"
+          deploy_status=$?
+          if [ "$deploy_status" -ne 0 ]; then
+            {
+              echo '### Firebase deploy diagnostics'
+              echo '```text'
+              printf '%s\n' "$deploy_output" | tail -n 80
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '%s\n' "$deploy_output"
+          exit "$deploy_status"
