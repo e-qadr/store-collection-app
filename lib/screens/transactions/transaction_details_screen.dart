@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/widgets/pdf_print_format_picker.dart';
 
 class TransactionDetailsScreen extends StatefulWidget {
   final Map<String, dynamic> transactionData;
@@ -177,16 +178,20 @@ class _TransactionDetailsScreenState extends State<TransactionDetailsScreen> {
               tooltip: 'خيارات PDF',
               icon: const Icon(Icons.picture_as_pdf_rounded),
               onSelected: (action) async {
+                final format = await showPdfPrintFormatPicker(context);
+                if (format == null) return;
                 if (action == 'print') {
                   await PdfService.printSingleTransaction(
                     data: _transactionData,
                     branchName: _branchName,
+                    format: format,
                   );
                   return;
                 }
                 final path = await PdfService.saveSingleTransaction(
                   data: _transactionData,
                   branchName: _branchName,
+                  format: format,
                 );
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(

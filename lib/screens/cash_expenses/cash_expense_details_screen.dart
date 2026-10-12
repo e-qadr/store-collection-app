@@ -7,6 +7,7 @@ import 'package:store_collection_app/models/cash_expense_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/services/cash_expense_service.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
+import 'package:store_collection_app/widgets/pdf_print_format_picker.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -876,9 +877,12 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
 
   Future<void> _printRequest(CashExpenseRead request) async {
     try {
+      final format = await showPdfPrintFormatPicker(context);
+      if (format == null) return;
       await PdfService.printCashExpenseRequest(
         data: request.data,
         branchName: request.branchName,
+        format: format,
       );
     } catch (e) {
       _showSnack(

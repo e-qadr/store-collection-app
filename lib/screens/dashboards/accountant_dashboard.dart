@@ -4,6 +4,7 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/screens/transactions/branch_transactions_screen.dart';
 import 'package:store_collection_app/screens/transactions/accountant_collection_review_screen.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
+import 'package:store_collection_app/services/pdf_print_format.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
@@ -27,6 +28,7 @@ class AccountantDashboard extends StatelessWidget {
     DateTime endDate = DateTime.now();
     bool isGenerating = false;
     String pdfAction = 'save';
+    PdfPrintFormat printFormat = PdfPrintFormat.a4;
 
     await showDialog(
       context: context,
@@ -132,6 +134,27 @@ class AccountantDashboard extends StatelessWidget {
                       }
                     },
                   ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<PdfPrintFormat>(
+                    initialValue: printFormat,
+                    decoration: const InputDecoration(
+                      labelText: 'قالب التقرير',
+                      prefixIcon: Icon(Icons.receipt_long_rounded),
+                    ),
+                    items: PdfPrintFormat.values
+                        .map(
+                          (format) => DropdownMenuItem(
+                            value: format,
+                            child: Text(format.label),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setDialogState(() => printFormat = value);
+                      }
+                    },
+                  ),
                 ],
               ),
               actions: [
@@ -202,6 +225,7 @@ class AccountantDashboard extends StatelessWidget {
                                 branchName: branchName,
                                 startDate: startDate,
                                 endDate: endDate,
+                                format: printFormat,
                               );
                             } else {
                               await PdfService.printTransactionsReport(
@@ -209,6 +233,7 @@ class AccountantDashboard extends StatelessWidget {
                                 branchName: branchName,
                                 startDate: startDate,
                                 endDate: endDate,
+                                format: printFormat,
                               );
                             }
 

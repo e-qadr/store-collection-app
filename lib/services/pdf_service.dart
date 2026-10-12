@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_price_model.dart';
+import 'package:store_collection_app/services/pdf_print_format.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/transaction_records.dart';
 
@@ -18,6 +19,18 @@ class SecureInterBranchInvoicePdfInput {
   const SecureInterBranchInvoicePdfInput({
     required this.data,
     required this.showPrices,
+  });
+}
+
+class _ReceiptItemLine {
+  final String title;
+  final String detail;
+  final String? amount;
+
+  const _ReceiptItemLine({
+    required this.title,
+    required this.detail,
+    this.amount,
   });
 }
 
@@ -96,6 +109,7 @@ class PdfService {
   static Future<Uint8List> buildSingleTransaction({
     required Map<String, dynamic> data,
     required String branchName,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final pdf = pw.Document();
     final theme = await _theme();
@@ -108,6 +122,31 @@ class PdfService {
         amountMatchStatus == 'unmatched' && cashierAmount != null
         ? (amount - cashierAmount).abs()
         : null;
+    if (format == PdfPrintFormat.receipt80mm) {
+      return _buildReceipt(
+        title: 'سند تحصيل مالي',
+        subtitle: 'رقم السند: $transactionNumber',
+        branchName: branchName,
+        details: [
+          ['الحالة', _status(data['status'])],
+          ['التاريخ', _date(data['timestamp'], withTime: true)],
+          ['الفترة', '${_date(data['dateFrom'])} - ${_date(data['dateTo'])}'],
+        ],
+        lines: [
+          'المبلغ: ${_amount(amount)} $currency',
+          if (cashierAmount != null)
+            'مبلغ الكاشير: ${_amount(cashierAmount)} $currency',
+          if (amountDifference != null)
+            'الفرق: ${_amount(amountDifference)} $currency',
+          'المطابقة: ${_amountMatchLabel(data['amount_matches'])}',
+        ],
+        notes: [
+          data['notes']?.toString(),
+          data['manager_notes']?.toString(),
+          data['accountant_notes']?.toString(),
+        ],
+      );
+    }
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -169,6 +208,7 @@ class PdfService {
     required String branchName,
     required DateTime startDate,
     required DateTime endDate,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) {
     return buildTransactionsReportFromData(
       records: transactions
@@ -177,6 +217,7 @@ class PdfService {
       branchName: branchName,
       startDate: startDate,
       endDate: endDate,
+      format: format,
     );
   }
 
@@ -185,10 +226,32 @@ class PdfService {
     required String branchName,
     required DateTime startDate,
     required DateTime endDate,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final pdf = pw.Document();
     final theme = await _theme();
     final totals = totalsByCurrency(records);
+
+    if (format == PdfPrintFormat.receipt80mm) {
+      return _buildReceipt(
+        title: 'تقرير سندات التحصيل',
+        subtitle:
+            'من ${DateFormat('yyyy/MM/dd').format(startDate)} إلى ${DateFormat('yyyy/MM/dd').format(endDate)}',
+        branchName: branchName,
+        details: [
+          ['عدد السندات', '${records.length}'],
+        ],
+        lines: [
+          ...records.map(
+            (record) =>
+                '${record['transaction_number'] ?? '-'}: ${_amount(record['amount'])} ${record['currency'] ?? ''}',
+          ),
+          ...totals.entries.map(
+            (entry) => 'إجمالي ${entry.key}: ${_amount(entry.value)}',
+          ),
+        ],
+      );
+    }
 
     pdf.addPage(
       pw.MultiPage(
@@ -271,6 +334,7 @@ class PdfService {
   static Future<Uint8List> buildInterBranchInvoice({
     required Map<String, dynamic> data,
     bool showPrices = false,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final pdf = pw.Document();
     final theme = await _theme();
@@ -290,6 +354,40 @@ class PdfService {
               'total_price': data['total_price'],
             },
           ];
+
+    if (format == PdfPrintFormat.receipt80mm) {
+      return _buildReceipt(
+        title: 'فاتورة بين الفروع',
+        subtitle: 'رقم الفاتورة: $invoiceNumber',
+        branchName: data['sending_branch_name']?.toString() ?? '-',
+        details: [
+          ['إلى الفرع', data['receiving_branch_name']?.toString() ?? '-'],
+          ['التاريخ', _date(data['invoice_created_at'], withTime: true)],
+          [
+            'المرجع المحاسبي',
+            data['accounting_reference']?.toString().isEmpty ?? true
+                ? '-'
+                : data['accounting_reference'].toString(),
+          ],
+        ],
+        itemLines: items
+            .map(
+              (item) => _ReceiptItemLine(
+                title:
+                    item['name']?.toString() ??
+                    item['item_name']?.toString() ??
+                    '-',
+                detail:
+                    '${_amount(item['requested_quantity'])} ${item['unit'] ?? ''}'
+                    ' | مستلم: ${_amount(item['received_quantity'] ?? item['approved_quantity'] ?? item['requested_quantity'])}',
+                amount: showPrices && item['total_price'] != null
+                    ? '${_amount(item['total_price'])} $priceCurrency'
+                    : null,
+              ),
+            )
+            .toList(growable: false),
+      );
+    }
 
     pdf.addPage(
       pw.MultiPage(
@@ -392,6 +490,7 @@ class PdfService {
     required UserRole audienceRole,
     InterBranchInvoicePriceSnapshot? priceSnapshot,
     List<Map<String, dynamic>>? itemDocuments,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) {
     final input = prepareSecureInterBranchInvoicePdfInput(
       invoiceId: invoiceId,
@@ -403,6 +502,7 @@ class PdfService {
     return buildInterBranchInvoice(
       data: input.data,
       showPrices: input.showPrices,
+      format: format,
     );
   }
 
@@ -466,6 +566,7 @@ class PdfService {
   static Future<Uint8List> buildCashExpenseRequest({
     required Map<String, dynamic> data,
     required String branchName,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final pdf = pw.Document();
     final theme = await _theme();
@@ -474,6 +575,30 @@ class PdfService {
     final attachment = data['invoice_attachment'];
     final invoice = attachment is Map ? attachment : const {};
     final invoiceName = invoice['name']?.toString() ?? '';
+
+    if (format == PdfPrintFormat.receipt80mm) {
+      return _buildReceipt(
+        title: 'سند صرف نقدي',
+        subtitle: 'رقم السند: $requestNumber',
+        branchName: branchName,
+        details: [
+          ['العنوان', data['title']?.toString() ?? '-'],
+          ['الحالة', _cashExpenseStatus(data['status'])],
+          ['التاريخ', _date(data['created_at'], withTime: true)],
+          ['المرفق', invoiceName.isEmpty ? 'بدون ملف' : invoiceName],
+        ],
+        lines: [
+          'المبلغ المطلوب: ${_amount(data['requested_amount'])} $currency',
+          'المبلغ المعتمد: ${_amount(data['approved_amount'])} $currency',
+        ],
+        notes: [
+          data['description']?.toString(),
+          data['manager_notes']?.toString(),
+          data['general_manager_notes']?.toString(),
+          data['accountant_notes']?.toString(),
+        ],
+      );
+    }
 
     pdf.addPage(
       pw.MultiPage(
@@ -546,6 +671,7 @@ class PdfService {
     required UserRole audienceRole,
     InterBranchInvoicePriceSnapshot? priceSnapshot,
     List<Map<String, dynamic>>? itemDocuments,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildSecureInterBranchInvoice(
       invoiceId: invoiceId,
@@ -553,40 +679,45 @@ class PdfService {
       audienceRole: audienceRole,
       priceSnapshot: priceSnapshot,
       itemDocuments: itemDocuments,
+      format: format,
     );
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,
       name:
-          'فاتورة_فروع_${_safeName(publicData['invoice_number']?.toString() ?? 'جديدة')}.pdf',
+          'فاتورة_فروع_${_safeName(publicData['invoice_number']?.toString() ?? 'جديدة')}_${format.fileSuffix}.pdf',
     );
   }
 
   static Future<void> printInterBranchInvoice({
     required Map<String, dynamic> data,
     bool showPrices = false,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildInterBranchInvoice(
       data: data,
       showPrices: showPrices,
+      format: format,
     );
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,
       name:
-          'فاتورة_فروع_${_safeName(data['invoice_number']?.toString() ?? 'جديدة')}.pdf',
+          'فاتورة_فروع_${_safeName(data['invoice_number']?.toString() ?? 'جديدة')}_${format.fileSuffix}.pdf',
     );
   }
 
   static Future<String?> saveInterBranchInvoice({
     required Map<String, dynamic> data,
     bool showPrices = false,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildInterBranchInvoice(
       data: data,
       showPrices: showPrices,
+      format: format,
     );
     return FileSaver.instance.saveFile(
       name:
-          'فاتورة_فروع_${_safeName(data['invoice_number']?.toString() ?? 'جديدة')}',
+          'فاتورة_فروع_${_safeName(data['invoice_number']?.toString() ?? 'جديدة')}_${format.fileSuffix}',
       bytes: bytes,
       fileExtension: 'pdf',
       mimeType: MimeType.pdf,
@@ -596,29 +727,33 @@ class PdfService {
   static Future<void> printCashExpenseRequest({
     required Map<String, dynamic> data,
     required String branchName,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildCashExpenseRequest(
       data: data,
       branchName: branchName,
+      format: format,
     );
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,
       name:
-          'سند_صرف_${_safeName(data['request_number']?.toString() ?? 'جديد')}.pdf',
+          'سند_صرف_${_safeName(data['request_number']?.toString() ?? 'جديد')}_${format.fileSuffix}.pdf',
     );
   }
 
   static Future<String?> saveCashExpenseRequest({
     required Map<String, dynamic> data,
     required String branchName,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildCashExpenseRequest(
       data: data,
       branchName: branchName,
+      format: format,
     );
     return FileSaver.instance.saveFile(
       name:
-          'سند_صرف_${_safeName(data['request_number']?.toString() ?? 'جديد')}',
+          'سند_صرف_${_safeName(data['request_number']?.toString() ?? 'جديد')}_${format.fileSuffix}',
       bytes: bytes,
       fileExtension: 'pdf',
       mimeType: MimeType.pdf,
@@ -628,29 +763,33 @@ class PdfService {
   static Future<void> printSingleTransaction({
     required Map<String, dynamic> data,
     required String branchName,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildSingleTransaction(
       data: data,
       branchName: branchName,
+      format: format,
     );
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,
       name:
-          'سند_${_safeName(data['transaction_number']?.toString() ?? 'جديد')}.pdf',
+          'سند_${_safeName(data['transaction_number']?.toString() ?? 'جديد')}_${format.fileSuffix}.pdf',
     );
   }
 
   static Future<String?> saveSingleTransaction({
     required Map<String, dynamic> data,
     required String branchName,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildSingleTransaction(
       data: data,
       branchName: branchName,
+      format: format,
     );
     return FileSaver.instance.saveFile(
       name:
-          'سند_${_safeName(data['transaction_number']?.toString() ?? 'جديد')}',
+          'سند_${_safeName(data['transaction_number']?.toString() ?? 'جديد')}_${format.fileSuffix}',
       bytes: bytes,
       fileExtension: 'pdf',
       mimeType: MimeType.pdf,
@@ -662,16 +801,18 @@ class PdfService {
     required String branchName,
     required DateTime startDate,
     required DateTime endDate,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildTransactionsReport(
       transactions: transactions,
       branchName: branchName,
       startDate: startDate,
       endDate: endDate,
+      format: format,
     );
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,
-      name: _reportName(branchName, startDate, endDate),
+      name: _reportName(branchName, startDate, endDate, format),
     );
   }
 
@@ -680,15 +821,22 @@ class PdfService {
     required String branchName,
     required DateTime startDate,
     required DateTime endDate,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final bytes = await buildTransactionsReport(
       transactions: transactions,
       branchName: branchName,
       startDate: startDate,
       endDate: endDate,
+      format: format,
     );
     return FileSaver.instance.saveFile(
-      name: _reportName(branchName, startDate, endDate).replaceAll('.pdf', ''),
+      name: _reportName(
+        branchName,
+        startDate,
+        endDate,
+        format,
+      ).replaceAll('.pdf', ''),
       bytes: bytes,
       fileExtension: 'pdf',
       mimeType: MimeType.pdf,
@@ -699,8 +847,152 @@ class PdfService {
     String branchName,
     DateTime startDate,
     DateTime endDate,
+    PdfPrintFormat format,
   ) =>
-      'تقرير_${_safeName(branchName)}_${DateFormat('yyyyMMdd').format(startDate)}_${DateFormat('yyyyMMdd').format(endDate)}.pdf';
+      'تقرير_${_safeName(branchName)}_${DateFormat('yyyyMMdd').format(startDate)}_${DateFormat('yyyyMMdd').format(endDate)}_${format.fileSuffix}.pdf';
+
+  /// Creates a compact, automatic-height document for 80 mm thermal printers.
+  /// It deliberately uses a simple vertical layout so Arabic text and long item
+  /// names remain readable on cashier paper.
+  static Future<Uint8List> _buildReceipt({
+    required String title,
+    required String subtitle,
+    required String branchName,
+    List<List<String>> details = const [],
+    List<String> lines = const [],
+    List<_ReceiptItemLine> itemLines = const [],
+    List<String?> notes = const [],
+  }) async {
+    final pdf = pw.Document();
+    final theme = await _theme();
+    final cleanNotes = notes
+        .whereType<String>()
+        .map((note) => note.trim())
+        .where((note) => note.isNotEmpty)
+        .toList(growable: false);
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.roll80,
+        theme: theme,
+        textDirection: pw.TextDirection.rtl,
+        margin: const pw.EdgeInsets.all(14),
+        build: (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            pw.Text(
+              title,
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+            ),
+            pw.SizedBox(height: 3),
+            pw.Text(
+              subtitle,
+              textAlign: pw.TextAlign.center,
+              style: const pw.TextStyle(fontSize: 9),
+            ),
+            pw.Text(
+              'الفرع: $branchName',
+              textAlign: pw.TextAlign.center,
+              style: const pw.TextStyle(fontSize: 9),
+            ),
+            _receiptDivider(),
+            ...details.map(
+              (detail) =>
+                  _receiptPair(detail[0], detail.length > 1 ? detail[1] : '-'),
+            ),
+            if (itemLines.isNotEmpty) ...[
+              pw.SizedBox(height: 5),
+              pw.Text(
+                'الأصناف',
+                style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              ),
+              _receiptDivider(),
+              ...itemLines.map(
+                (item) => pw.Padding(
+                  padding: const pw.EdgeInsets.only(bottom: 6),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                    children: [
+                      pw.Text(
+                        item.title,
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                      ),
+                      pw.Text(
+                        item.detail,
+                        style: const pw.TextStyle(fontSize: 8),
+                      ),
+                      if (item.amount != null)
+                        pw.Text(
+                          item.amount!,
+                          textAlign: pw.TextAlign.left,
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (lines.isNotEmpty) ...[
+              _receiptDivider(),
+              ...lines.map(
+                (line) => pw.Padding(
+                  padding: const pw.EdgeInsets.only(bottom: 3),
+                  child: pw.Text(line, style: const pw.TextStyle(fontSize: 9)),
+                ),
+              ),
+            ],
+            if (cleanNotes.isNotEmpty) ...[
+              _receiptDivider(),
+              pw.Text(
+                'ملاحظات',
+                style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              ),
+              ...cleanNotes.map(
+                (note) => pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 2),
+                  child: pw.Text(note, style: const pw.TextStyle(fontSize: 8)),
+                ),
+              ),
+            ],
+            _receiptDivider(),
+            pw.Text(
+              'طُبع في ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.now())}',
+              textAlign: pw.TextAlign.center,
+              style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey700),
+            ),
+          ],
+        ),
+      ),
+    );
+    return pdf.save();
+  }
+
+  static pw.Widget _receiptPair(String label, String value) => pw.Padding(
+    padding: const pw.EdgeInsets.only(bottom: 3),
+    child: pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Expanded(
+          flex: 2,
+          child: pw.Text(
+            label,
+            style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+          ),
+        ),
+        pw.Expanded(
+          flex: 3,
+          child: pw.Text(value, style: const pw.TextStyle(fontSize: 8)),
+        ),
+      ],
+    ),
+  );
+
+  static pw.Widget _receiptDivider() => pw.Container(
+    margin: const pw.EdgeInsets.symmetric(vertical: 6),
+    decoration: const pw.BoxDecoration(
+      border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey500)),
+    ),
+  );
 
   static pw.Widget _documentHeader({
     required String title,

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:store_collection_app/services/pdf_print_format.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
 
 void main() {
@@ -66,5 +67,24 @@ void main() {
     );
 
     expect(bytes.length, greaterThan(1000));
+  });
+
+  test('ينشئ سند كاشير بعرض 80 مم', () async {
+    final bytes = await PdfService.buildSingleTransaction(
+      format: PdfPrintFormat.receipt80mm,
+      branchName: 'الفرع الرئيسي',
+      data: {
+        'transaction_number': 'AM-THERMAL',
+        'amount': 1500,
+        'currency': 'YER',
+        'status': 'approvedByAccountant',
+        'timestamp': DateTime(2026, 6, 15, 10, 30),
+        'dateFrom': DateTime(2026, 6, 1),
+        'dateTo': DateTime(2026, 6, 15),
+        'amount_matches': true,
+      },
+    );
+
+    expect(bytes.length, greaterThan(800));
   });
 }

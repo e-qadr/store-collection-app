@@ -3,8 +3,11 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_price_model.dart';
 import 'package:store_collection_app/services/purchase_invoice_pdf_service.dart';
+import 'package:store_collection_app/services/pdf_print_format.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   final invoice = PurchaseInvoiceRead(
     id: 'purchase-1',
     data: {
@@ -74,5 +77,21 @@ void main() {
     expect(input.showPrices, isTrue);
     expect(input.items.single['unit_price'], 5);
     expect(input.accountingReference, 'ACC-PRIVATE');
+  });
+
+  test('thermal purchase PDF preserves the role-safe prepared input', () async {
+    final input = PurchaseInvoicePdfService.prepare(
+      invoice: invoice,
+      audienceRole: UserRole.manager,
+      protectedPrices: prices,
+    );
+
+    final bytes = await PurchaseInvoicePdfService.build(
+      input,
+      format: PdfPrintFormat.receipt80mm,
+    );
+
+    expect(input.showPrices, isFalse);
+    expect(bytes.length, greaterThan(800));
   });
 }

@@ -6,6 +6,7 @@ import 'package:printing/printing.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_price_model.dart';
+import 'package:store_collection_app/services/pdf_print_format.dart';
 
 class PurchaseInvoicePdfInput {
   final Map<String, dynamic> header;
@@ -75,7 +76,10 @@ class PurchaseInvoicePdfService {
     );
   }
 
-  static Future<Uint8List> build(PurchaseInvoicePdfInput input) async {
+  static Future<Uint8List> build(
+    PurchaseInvoicePdfInput input, {
+    PdfPrintFormat format = PdfPrintFormat.a4,
+  }) async {
     final regular = pw.Font.ttf(
       await rootBundle.load('assets/fonts/Cairo-Regular.ttf'),
     );
@@ -84,6 +88,98 @@ class PurchaseInvoicePdfService {
     );
     final document = pw.Document();
     final header = input.header;
+    if (format == PdfPrintFormat.receipt80mm) {
+      document.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.roll80,
+          theme: pw.ThemeData.withFont(base: regular, bold: bold),
+          textDirection: pw.TextDirection.rtl,
+          margin: const pw.EdgeInsets.all(14),
+          build: (_) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              pw.Text(
+                'فاتورة مشتريات',
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.Text(
+                'رقم الفاتورة: ${header['purchase_number']}',
+                textAlign: pw.TextAlign.center,
+                style: const pw.TextStyle(fontSize: 9),
+              ),
+              pw.Text(
+                'الفرع: ${header['receiving_branch_name']}',
+                textAlign: pw.TextAlign.center,
+                style: const pw.TextStyle(fontSize: 9),
+              ),
+              _divider(),
+              _pair('المورد', _fallback(header['supplier_name'])),
+              _pair(
+                'فاتورة المورد',
+                _fallback(header['supplier_invoice_number']),
+              ),
+              _pair('التاريخ', _fallback(header['supplier_invoice_date'])),
+              _pair('الحالة', _fallback(header['status'])),
+              _divider(),
+              pw.Text(
+                'المواد',
+                style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              ),
+              ...input.items.map(
+                (item) => pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 6),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                    children: [
+                      pw.Text(
+                        item['name']?.toString() ?? '-',
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                      ),
+                      pw.Text(
+                        '${_number(item['ordered_quantity'])} ${item['unit'] ?? ''}'
+                        '${item['received_quantity'] == null ? '' : ' | المستلم: ${_number(item['received_quantity'])}'}',
+                        style: const pw.TextStyle(fontSize: 8),
+                      ),
+                      if (input.showPrices)
+                        pw.Text(
+                          '${_number(item['line_total'])} ${header['currency']}',
+                          textAlign: pw.TextAlign.left,
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (input.showPrices) ...[
+                _divider(),
+                pw.Text(
+                  'الإجمالي: ${_number(input.total)} ${header['currency']}',
+                  textAlign: pw.TextAlign.left,
+                  style: pw.TextStyle(
+                    fontSize: 11,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ],
+              _divider(),
+              pw.Text(
+                'طُبع في ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.now())}',
+                textAlign: pw.TextAlign.center,
+                style: const pw.TextStyle(
+                  fontSize: 7,
+                  color: PdfColors.grey700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      return document.save();
+    }
     document.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -166,16 +262,17 @@ class PurchaseInvoicePdfService {
     required PurchaseInvoiceRead invoice,
     required UserRole audienceRole,
     PurchaseInvoicePriceSnapshot? protectedPrices,
+    PdfPrintFormat format = PdfPrintFormat.a4,
   }) async {
     final input = prepare(
       invoice: invoice,
       audienceRole: audienceRole,
       protectedPrices: protectedPrices,
     );
-    final bytes = await build(input);
+    final bytes = await build(input, format: format);
     await Printing.layoutPdf(
       onLayout: (_) async => bytes,
-      name: 'purchase_${invoice.purchaseNumber}.pdf',
+      name: 'purchase_${invoice.purchaseNumber}_${format.fileSuffix}.pdf',
     );
   }
 
@@ -191,4 +288,31 @@ class PurchaseInvoicePdfService {
     final clean = value?.toString().trim() ?? '';
     return clean.isEmpty ? '-' : clean;
   }
+
+  static pw.Widget _divider() => pw.Container(
+    margin: const pw.EdgeInsets.symmetric(vertical: 7),
+    decoration: const pw.BoxDecoration(
+      border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey500)),
+    ),
+  );
+
+  static pw.Widget _pair(String label, String value) => pw.Padding(
+    padding: const pw.EdgeInsets.only(bottom: 3),
+    child: pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Expanded(
+          flex: 2,
+          child: pw.Text(
+            label,
+            style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+          ),
+        ),
+        pw.Expanded(
+          flex: 3,
+          child: pw.Text(value, style: const pw.TextStyle(fontSize: 8)),
+        ),
+      ],
+    ),
+  );
 }

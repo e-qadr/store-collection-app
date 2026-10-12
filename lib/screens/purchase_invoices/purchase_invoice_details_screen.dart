@@ -13,6 +13,7 @@ import 'package:store_collection_app/services/purchase_invoice_pdf_service.dart'
 import 'package:store_collection_app/services/purchase_invoice_service.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/widgets/pdf_print_format_picker.dart';
 
 /// Keeps a failed Firestore read distinct from an actual missing Purchase
 /// document. In particular, a protected-price denial must never turn the
@@ -286,11 +287,16 @@ class _PurchaseInvoiceDetailsScreenState
               tooltip: _mayReadPrices
                   ? 'طباعة النسخة المخولة'
                   : 'طباعة نسخة المدير',
-              onPressed: () => PurchaseInvoicePdfService.printInvoice(
-                invoice: invoice,
-                audienceRole: widget.role,
-                protectedPrices: prices,
-              ),
+              onPressed: () async {
+                final format = await showPdfPrintFormatPicker(context);
+                if (format == null) return;
+                await PurchaseInvoicePdfService.printInvoice(
+                  invoice: invoice,
+                  audienceRole: widget.role,
+                  protectedPrices: prices,
+                  format: format,
+                );
+              },
               icon: const Icon(Icons.picture_as_pdf_rounded),
             ),
           ],

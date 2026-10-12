@@ -17,6 +17,7 @@ import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/inter_branch_invoice_policies.dart';
+import 'package:store_collection_app/widgets/pdf_print_format_picker.dart';
 
 typedef DirectReceiptSubmitter =
     Future<void> Function({
@@ -177,6 +178,8 @@ class _InterBranchInvoiceDetailsScreenState
                   icon: const Icon(Icons.picture_as_pdf_rounded),
                   onPressed: () async {
                     try {
+                      final format = await showPdfPrintFormatPicker(context);
+                      if (format == null) return;
                       final invoice = header.isVersion2
                           ? header.withItemDocuments(
                               await _invoiceService.fetchV2ItemDocuments(
@@ -199,6 +202,7 @@ class _InterBranchInvoiceDetailsScreenState
                         audienceRole: widget.role,
                         priceSnapshot: protectedPrices,
                         itemDocuments: invoice.itemDocuments,
+                        format: format,
                       );
                     } catch (_) {
                       _showSnack('تعذر إنشاء PDF. حاول مجدداً.');
