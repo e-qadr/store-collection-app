@@ -21,6 +21,10 @@ on:
         required: true
         default: 'يتضمن هذا الإصدار تحسينات وإصلاحات مهمة.'
         type: string
+  push:
+    tags:
+      - 'android-v*'
+      - 'android-mandatory-v*'
 
 permissions:
   contents: write
@@ -32,10 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AUTH_API_BASE_URL: https://collection-api.alasalh.com
-      UPDATE_VERSION: ${{ inputs.version }}
-      UPDATE_BUILD: ${{ inputs.build_number }}
-      UPDATE_MANDATORY: ${{ inputs.mandatory }}
-      UPDATE_NOTES: ${{ inputs.release_notes }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +43,45 @@ jobs:
         with:
           flutter-version: '3.44.2'
           channel: stable
+
+      - name: Read release metadata
+        id: metadata
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD: ${{ inputs.build_number }}
+          INPUT_MANDATORY: ${{ inputs.mandatory }}
+          INPUT_NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            version="$INPUT_VERSION"
+            build="$INPUT_BUILD"
+            mandatory="$INPUT_MANDATORY"
+            notes="$INPUT_NOTES"
+          else
+            source_tag="$GITHUB_REF_NAME"
+            mandatory=false
+            if [[ "$source_tag" == android-mandatory-v* ]]; then
+              mandatory=true
+              release_id="${source_tag#android-mandatory-v}"
+            elif [[ "$source_tag" == android-v* ]]; then
+              release_id="${source_tag#android-v}"
+            else
+              echo "Unsupported release tag: $source_tag" >&2
+              exit 1
+            fi
+            version="${release_id%+*}"
+            build="${release_id##*+}"
+            notes='يتضمن هذا الإصدار تحسينات وإصلاحات مهمة.'
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$build" =~ ^[1-9][0-9]*$ ]]
+          [[ "$mandatory" == true || "$mandatory" == false ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "mandatory=$mandatory" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
 
       - name: Restore Android signing key
         shell: bash
@@ -72,8 +111,8 @@ jobs:
           set -euo pipefail
           flutter pub get
           flutter build apk --release \
-            --build-name="$UPDATE_VERSION" \
-            --build-number="$UPDATE_BUILD" \
+            --build-name="${{ steps.metadata.outputs.version }}" \
+            --build-number="${{ steps.metadata.outputs.build }}" \
             --dart-define=AUTH_API_BASE_URL="$AUTH_API_BASE_URL"
 
       - name: Prepare verified release assets
@@ -81,8 +120,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$UPDATE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$UPDATE_BUILD" =~ ^[1-9][0-9]*$ ]]
+          UPDATE_VERSION='${{ steps.metadata.outputs.version }}'
+          UPDATE_BUILD='${{ steps.metadata.outputs.build }}'
+          UPDATE_MANDATORY='${{ steps.metadata.outputs.mandatory }}'
+          UPDATE_NOTES='${{ steps.metadata.outputs.notes }}'
           apk_source='build/app/outputs/flutter-apk/app-release.apk'
           file_name="store-collection-app-v${UPDATE_VERSION}+${UPDATE_BUILD}.apk"
           mkdir -p dist
