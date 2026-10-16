@@ -68,6 +68,15 @@
           ]
         },
         {
+          "source": "deployment.json",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        },
+        {
           "source": "**/*.@(css|wasm)",
           "headers": [
             {

@@ -37,6 +37,11 @@ jobs:
       - run: >-
           flutter build web --release
           --dart-define=AUTH_API_BASE_URL=${{ env.AUTH_API_BASE_URL }}
+          --web-define=WEB_RELEASE_ID=${{ github.sha }}
+      - name: Write deployment revision
+        shell: bash
+        run: |
+          printf '{"release":"%s"}\n' "${GITHUB_SHA}" > build/web/deployment.json
       - id: auth
         uses: google-github-actions/auth@v2
         with:
