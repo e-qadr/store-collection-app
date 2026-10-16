@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/services/app_update_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
@@ -16,10 +18,12 @@ class AppUpdateGate extends StatefulWidget {
 class _AppUpdateGateState extends State<AppUpdateGate> {
   final _updateService = AppUpdateService();
   AppUpdateInfo? _mandatoryUpdate;
-  AppUpdateDownloadProgress? _progress;
+  AppUpdateDownloadState? _downloadState;
   String? _error;
   bool _downloading = false;
+  bool _openingInstaller = false;
   bool _optionalDialogShown = false;
+  StreamSubscription<AppUpdateDownloadState>? _downloadSubscription;
 
   @override
   void initState() {
@@ -29,6 +33,7 @@ class _AppUpdateGateState extends State<AppUpdateGate> {
 
   @override
   void dispose() {
+    _downloadSubscription?.cancel();
     _updateService.dispose();
     super.dispose();
   }
@@ -38,7 +43,18 @@ class _AppUpdateGateState extends State<AppUpdateGate> {
     if (!mounted || update == null) return;
 
     if (update.mandatory) {
-      setState(() => _mandatoryUpdate = update);
+      final existingState = await _updateService.downloadState();
+      if (!mounted) return;
+      setState(() {
+        _mandatoryUpdate = update;
+        _downloadState = existingState.belongsTo(update)
+            ? existingState
+            : null;
+        _downloading = existingState.belongsTo(update) &&
+            existingState.status != AppUpdateDownloadStatus.idle &&
+            existingState.status != AppUpdateDownloadStatus.readyToInstall;
+      });
+      if (_downloading) _watchDownload(update);
       return;
     }
 
@@ -88,45 +104,85 @@ class _AppUpdateGateState extends State<AppUpdateGate> {
     if (_downloading) return;
     setState(() {
       _downloading = true;
-      _progress = null;
       _error = null;
     });
 
     try {
-      final result = await _updateService.downloadAndInstall(
-        update,
-        onProgress: (progress) {
-          if (mounted) setState(() => _progress = progress);
-        },
-      );
+      final state = await _updateService.startOrResumeDownload(update);
       if (!mounted) return;
-      if (result == AppUpdateInstallResult.permissionRequired) {
-        setState(() {
-          _downloading = false;
-          _error =
-              'اسمح للتطبيق بتثبيت التحديثات من إعدادات أندرويد، ثم اضغط «تحديث الآن» مرة أخرى.';
-        });
-        await _updateService.openInstallPermissionSettings();
-        return;
-      }
-      setState(() => _downloading = false);
+      setState(() => _downloadState = state);
+      _watchDownload(update);
       if (!mandatory && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('فتح أندرويد شاشة تثبيت التحديث.')),
+          const SnackBar(
+            content: Text('بدأ التنزيل في الخلفية وسيستمر حتى عند إغلاق التطبيق.'),
+          ),
         );
       }
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _downloading = false;
         _error =
-            'تعذر تنزيل التحديث أو التحقق منه. تحقق من الإنترنت ثم أعد المحاولة.';
+            'تعذر بدء تنزيل التحديث: $error';
       });
       if (!mandatory && mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(_error!)));
       }
+    }
+  }
+
+  void _watchDownload(AppUpdateInfo update) {
+    _downloadSubscription?.cancel();
+    _downloadSubscription = _updateService.watchDownloadState(update).listen(
+      (state) {
+        if (!mounted || !state.belongsTo(update)) return;
+        setState(() {
+          _downloadState = state;
+          _downloading = state.status != AppUpdateDownloadStatus.readyToInstall &&
+              state.status != AppUpdateDownloadStatus.idle;
+          _error = state.status == AppUpdateDownloadStatus.retrying
+              ? state.error
+              : null;
+        });
+        if (state.status == AppUpdateDownloadStatus.readyToInstall) {
+          _openInstaller(update, mandatory: update.mandatory);
+        }
+      },
+      onError: (Object error) {
+        if (mounted) setState(() => _error = 'تعذر متابعة حالة التحديث: $error');
+      },
+    );
+  }
+
+  Future<void> _openInstaller(
+    AppUpdateInfo update, {
+    required bool mandatory,
+  }) async {
+    if (_openingInstaller) return;
+    _openingInstaller = true;
+    try {
+      final result = await _updateService.installDownloadedUpdate();
+      if (!mounted) return;
+      if (result == AppUpdateInstallResult.permissionRequired) {
+        setState(() {
+          _error =
+              'اسمح للتطبيق بتثبيت التحديثات من إعدادات أندرويد، ثم اضغط «تثبيت التحديث».';
+        });
+        await _updateService.openInstallPermissionSettings();
+      } else if (!mandatory) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('فتح أندرويد شاشة تثبيت التحديث.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = 'اكتمل التنزيل لكن تعذر فتح التثبيت: $error');
+      }
+    } finally {
+      _openingInstaller = false;
     }
   }
 
@@ -141,37 +197,39 @@ class _AppUpdateGateState extends State<AppUpdateGate> {
             child: _MandatoryUpdateScreen(
               update: mandatoryUpdate,
               downloading: _downloading,
-              progress: _progress,
+              downloadState: _downloadState,
               error: _error,
               onUpdate: () => _startUpdate(mandatoryUpdate, mandatory: true),
+              onInstall: () => _openInstaller(mandatoryUpdate, mandatory: true),
             ),
           ),
       ],
     );
   }
 }
-
 class _MandatoryUpdateScreen extends StatelessWidget {
   const _MandatoryUpdateScreen({
     required this.update,
     required this.downloading,
-    required this.progress,
+    required this.downloadState,
     required this.error,
     required this.onUpdate,
+    required this.onInstall,
   });
 
   final AppUpdateInfo update;
   final bool downloading;
-  final AppUpdateDownloadProgress? progress;
+  final AppUpdateDownloadState? downloadState;
   final String? error;
   final VoidCallback onUpdate;
+  final VoidCallback onInstall;
 
   @override
   Widget build(BuildContext context) {
-    final fraction = progress?.fraction;
-    final progressText = fraction == null
-        ? 'جارٍ تنزيل التحديث…'
-        : 'جارٍ تنزيل التحديث ${(fraction * 100).toStringAsFixed(0)}٪';
+    final state = downloadState;
+    final fraction = state?.fraction;
+    final progressText = state?.progressLabel ?? 'جارٍ تجهيز تنزيل التحديث…';
+    final readyToInstall = state?.status == AppUpdateDownloadStatus.readyToInstall;
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -209,6 +267,11 @@ class _MandatoryUpdateScreen extends StatelessWidget {
                           LinearProgressIndicator(value: fraction),
                           const SizedBox(height: 12),
                           Text(progressText),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'يمكنك إغلاق التطبيق؛ سيستمر التنزيل ويظهر تقدمه في إشعارات الهاتف.',
+                            textAlign: TextAlign.center,
+                          ),
                         ] else ...[
                           if (error != null) ...[
                             Text(
@@ -223,9 +286,15 @@ class _MandatoryUpdateScreen extends StatelessWidget {
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton.icon(
-                              onPressed: onUpdate,
-                              icon: const Icon(Icons.download_rounded),
-                              label: const Text('تحديث الآن'),
+                              onPressed: readyToInstall ? onInstall : onUpdate,
+                              icon: Icon(
+                                readyToInstall
+                                    ? Icons.install_mobile_rounded
+                                    : Icons.download_rounded,
+                              ),
+                              label: Text(
+                                readyToInstall ? 'تثبيت التحديث' : 'تحديث الآن',
+                              ),
                             ),
                           ),
                         ],

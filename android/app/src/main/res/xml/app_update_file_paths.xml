@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- APKs are downloaded to cache/updates and exposed only briefly to the
-         Android package installer through FileProvider. -->
-    <cache-path name="app_updates" path="updates/" />
+    <!--
+      Updates are kept in the app's files directory instead of its cache. This
+      lets an interrupted download resume and keeps the APK available to the
+      package installer even after Flutter has been closed.
+    -->
+    <files-path name="app_updates" path="updates/" />
+    <!-- Kept for APKs downloaded by older app builds during their transition. -->
+    <cache-path name="legacy_app_updates" path="updates/" />
 </paths>

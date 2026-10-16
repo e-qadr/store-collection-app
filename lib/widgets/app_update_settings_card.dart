@@ -45,24 +45,34 @@ class _AppUpdateSettingsCardState extends State<AppUpdateSettingsCard> {
     if (_installing) return;
     setState(() => _installing = true);
     try {
-      final result = await _service.downloadAndInstall(update);
+      final state = await _service.startOrResumeDownload(update);
       if (!mounted) return;
-      if (result == AppUpdateInstallResult.permissionRequired) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('اسمح للتطبيق بتثبيت التحديثات ثم حاول مرة أخرى.'),
-          ),
-        );
-        await _service.openInstallPermissionSettings();
+      if (state.status == AppUpdateDownloadStatus.readyToInstall) {
+        final result = await _service.installDownloadedUpdate();
+        if (!mounted) return;
+        if (result == AppUpdateInstallResult.permissionRequired) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('اسمح للتطبيق بتثبيت التحديثات ثم حاول مرة أخرى.'),
+            ),
+          );
+          await _service.openInstallPermissionSettings();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم فتح شاشة تثبيت التحديث.')),
+          );
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم فتح شاشة تثبيت التحديث.')),
+          const SnackBar(
+            content: Text('بدأ التنزيل في الخلفية. سيظهر تقدمه في إشعارات الهاتف.'),
+          ),
         );
       }
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر تنزيل التحديث أو التحقق منه.')),
+          SnackBar(content: Text('تعذر بدء تنزيل التحديث: $error')),
         );
       }
     } finally {

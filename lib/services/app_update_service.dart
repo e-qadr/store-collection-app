@@ -1,13 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:path_provider/path_provider.dart';
 
 /// A release published to the separate, public update hosting site.
 ///
@@ -100,20 +97,77 @@ class AppUpdateInfo {
   }
 }
 
+enum AppUpdateDownloadStatus {
+  idle,
+  downloading,
+  retrying,
+  verifying,
+  readyToInstall,
+}
+
+/// Persistent native download state. It is also available after Flutter has
+/// been closed because Android stores the partial APK and this state itself.
 @immutable
-class AppUpdateDownloadProgress {
-  const AppUpdateDownloadProgress({
+class AppUpdateDownloadState {
+  const AppUpdateDownloadState({
+    required this.status,
     required this.receivedBytes,
-    this.totalBytes,
+    required this.totalBytes,
+    this.error,
+    this.version,
+    this.buildNumber,
   });
 
+  final AppUpdateDownloadStatus status;
   final int receivedBytes;
-  final int? totalBytes;
+  final int totalBytes;
+  final String? error;
+  final String? version;
+  final int? buildNumber;
+
+  factory AppUpdateDownloadState.fromMap(Map<Object?, Object?> values) {
+    final statusValue = values['status'] as String? ?? 'idle';
+    final status = switch (statusValue) {
+      'downloading' => AppUpdateDownloadStatus.downloading,
+      'retrying' => AppUpdateDownloadStatus.retrying,
+      'verifying' => AppUpdateDownloadStatus.verifying,
+      'ready' => AppUpdateDownloadStatus.readyToInstall,
+      _ => AppUpdateDownloadStatus.idle,
+    };
+    final error = (values['error'] as String?)?.trim();
+    return AppUpdateDownloadState(
+      status: status,
+      receivedBytes: (values['receivedBytes'] as num?)?.toInt() ?? 0,
+      totalBytes: (values['totalBytes'] as num?)?.toInt() ?? 0,
+      error: error == null || error.isEmpty ? null : error,
+      version: values['version'] as String?,
+      buildNumber: (values['buildNumber'] as num?)?.toInt(),
+    );
+  }
 
   double? get fraction {
-    final total = totalBytes;
-    if (total == null || total <= 0) return null;
-    return (receivedBytes / total).clamp(0, 1);
+    if (totalBytes <= 0) return null;
+    return (receivedBytes / totalBytes).clamp(0, 1);
+  }
+
+  bool belongsTo(AppUpdateInfo update) =>
+      version == update.version && buildNumber == update.buildNumber;
+
+  String get progressLabel {
+    String formatBytes(int bytes) =>
+        '${(bytes / (1024 * 1024)).toStringAsFixed(1)} م.ب';
+    return switch (status) {
+      AppUpdateDownloadStatus.downloading when totalBytes > 0 =>
+        'تم تنزيل ${formatBytes(receivedBytes)} من ${formatBytes(totalBytes)} — '
+            'متبقي ${formatBytes((totalBytes - receivedBytes).clamp(0, totalBytes))}',
+      AppUpdateDownloadStatus.downloading =>
+        'تم تنزيل ${formatBytes(receivedBytes)} من التحديث',
+      AppUpdateDownloadStatus.retrying =>
+        'انقطع الاتصال؛ سيُستأنف التنزيل تلقائياً من حيث توقف.',
+      AppUpdateDownloadStatus.verifying => 'جارٍ التحقق من سلامة ملف التحديث…',
+      AppUpdateDownloadStatus.readyToInstall => 'اكتمل التنزيل وهو جاهز للتثبيت.',
+      AppUpdateDownloadStatus.idle => 'جاهز لتنزيل التحديث.',
+    };
   }
 }
 
@@ -148,9 +202,9 @@ class AppUpdateCheckResult {
 
 enum AppUpdateInstallResult { installerOpened, permissionRequired }
 
-/// Checks the published release manifest, downloads a new signed APK and asks
-/// Android's package installer to install it. It never silently installs an
-/// APK and is intentionally inactive on web and non-Android platforms.
+/// Checks the published release manifest and delegates Android downloads to a
+/// native foreground service. It never silently installs an APK: Android keeps
+/// its own final installation confirmation.
 class AppUpdateService {
   AppUpdateService({http.Client? client}) : _client = client ?? http.Client();
 
@@ -190,7 +244,7 @@ class AppUpdateService {
       final response = await _client
           .get(uri, headers: const {'Cache-Control': 'no-cache'})
           .timeout(const Duration(seconds: 10));
-      if (response.statusCode != HttpStatus.ok) {
+      if (response.statusCode != 200) {
         return AppUpdateCheckResult(
           state: AppUpdateCheckState.failed,
           installedVersion: installed,
@@ -234,66 +288,58 @@ class AppUpdateService {
         : null;
   }
 
-  Future<AppUpdateInstallResult> downloadAndInstall(
-    AppUpdateInfo update, {
-    ValueChanged<AppUpdateDownloadProgress>? onProgress,
-  }) async {
+  Future<AppUpdateDownloadState> startOrResumeDownload(
+    AppUpdateInfo update,
+  ) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       throw StateError('التحديث الداخلي متاح لتطبيق أندرويد فقط.');
     }
-
-    final cacheDirectory = await getTemporaryDirectory();
-    final updateDirectory = Directory(
-      '${cacheDirectory.path}${Platform.pathSeparator}updates',
+    final values = await _channel.invokeMapMethod<Object?, Object?>(
+      'startUpdateDownload',
+      {
+        'url': update.apkUrl.toString(),
+        'sha256': update.sha256,
+        'version': update.version,
+        'buildNumber': update.buildNumber,
+      },
     );
-    await updateDirectory.create(recursive: true);
-    final targetFile = File(
-      '${updateDirectory.path}${Platform.pathSeparator}'
-      'store-collection-app-v${update.version}+${update.buildNumber}.apk',
-    );
+    return AppUpdateDownloadState.fromMap(values ?? const {});
+  }
 
-    final request = http.Request('GET', update.apkUrl);
-    final response = await _client
-        .send(request)
-        .timeout(const Duration(seconds: 60));
-    if (response.statusCode != HttpStatus.ok) {
-      throw HttpException('تعذر تنزيل ملف التحديث.');
+  Future<AppUpdateDownloadState> downloadState() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return const AppUpdateDownloadState(
+        status: AppUpdateDownloadStatus.idle,
+        receivedBytes: 0,
+        totalBytes: 0,
+      );
     }
+    final values = await _channel.invokeMapMethod<Object?, Object?>(
+      'getUpdateDownloadState',
+    );
+    return AppUpdateDownloadState.fromMap(values ?? const {});
+  }
 
-    final contentLength = response.contentLength;
-    var receivedBytes = 0;
-    final fileSink = targetFile.openWrite();
-
-    try {
-      await for (final chunk in response.stream) {
-        fileSink.add(chunk);
-        receivedBytes += chunk.length;
-        onProgress?.call(
-          AppUpdateDownloadProgress(
-            receivedBytes: receivedBytes,
-            totalBytes: contentLength,
-          ),
-        );
+  /// Polling is deliberate here: the Android service may survive a complete
+  /// Flutter process restart, so persistent state is more reliable than an
+  /// activity-bound event channel.
+  Stream<AppUpdateDownloadState> watchDownloadState(AppUpdateInfo update) async* {
+    while (true) {
+      final state = await downloadState();
+      yield state;
+      if (state.belongsTo(update) &&
+          state.status == AppUpdateDownloadStatus.readyToInstall) {
+        return;
       }
-      await fileSink.close();
-    } catch (_) {
-      await fileSink.close();
-      rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 650));
     }
+  }
 
-    final downloadedChecksum = (await sha256.bind(targetFile.openRead()).first)
-        .toString()
-        .toLowerCase();
-    if (downloadedChecksum != update.sha256) {
-      await targetFile.delete();
-      throw const FormatException('فشل التحقق من سلامة ملف التحديث.');
-    }
-
+  Future<AppUpdateInstallResult> installDownloadedUpdate() async {
     final canInstall =
         await _channel.invokeMethod<bool>('canInstallPackages') ?? false;
     if (!canInstall) return AppUpdateInstallResult.permissionRequired;
-
-    await _channel.invokeMethod<void>('installApk', {'path': targetFile.path});
+    await _channel.invokeMethod<void>('installDownloadedUpdate');
     return AppUpdateInstallResult.installerOpened;
   }
 

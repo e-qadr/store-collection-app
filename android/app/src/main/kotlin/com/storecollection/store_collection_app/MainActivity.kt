@@ -7,11 +7,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.io.File
 
 class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,9 +40,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "canInstallPackages" -> {
-                        val canInstall = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-                            packageManager.canRequestPackageInstalls()
-                        result.success(canInstall)
+                        result.success(UpdateInstaller.canInstall(this))
                     }
 
                     "openInstallSettings" -> {
@@ -65,27 +61,71 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
 
-                        val apk = File(path)
+                        val apk = java.io.File(path)
                         if (!apk.isFile) {
                             result.error("file_missing", "ملف التحديث غير موجود.", null)
                             return@setMethodCallHandler
                         }
 
                         try {
-                            val apkUri = FileProvider.getUriForFile(
-                                this,
-                                "$packageName.fileprovider",
-                                apk,
+                            UpdateInstaller.install(this, apk)
+                            result.success(null)
+                        } catch (error: Exception) {
+                            result.error(
+                                "install_failed",
+                                error.message ?: "تعذر فتح مُثبّت التحديث.",
+                                null,
                             )
-                            val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(
-                                    apkUri,
-                                    "application/vnd.android.package-archive",
-                                )
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            startActivity(installIntent)
+                        }
+                    }
+
+                    "startUpdateDownload" -> {
+                        val request = UpdateRequest(
+                            url = call.argument<String>("url").orEmpty(),
+                            sha256 = call.argument<String>("sha256").orEmpty(),
+                            version = call.argument<String>("version").orEmpty(),
+                            buildNumber = call.argument<Int>("buildNumber") ?: 0,
+                        )
+                        if (!request.isValid) {
+                            result.error("invalid_update", "بيانات التحديث غير صالحة.", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            AppUpdateDownloadService.start(this, request)
+                            result.success(UpdateDownloadStore.readState(this).toMap())
+                        } catch (error: Exception) {
+                            result.error(
+                                "download_start_failed",
+                                error.message ?: "تعذر بدء تنزيل التحديث.",
+                                null,
+                            )
+                        }
+                    }
+
+                    "getUpdateDownloadState" -> result.success(
+                        UpdateDownloadStore.readState(this).toMap(),
+                    )
+
+                    "installDownloadedUpdate" -> {
+                        val apk = UpdateDownloadStore.readyFile(this)
+                        if (apk == null) {
+                            result.error(
+                                "file_missing",
+                                "ملف التحديث المكتمل غير موجود.",
+                                null,
+                            )
+                            return@setMethodCallHandler
+                        }
+                        if (!UpdateInstaller.canInstall(this)) {
+                            result.error(
+                                "permission_required",
+                                "يتطلب أندرويد السماح بتثبيت التطبيقات من هذا المصدر.",
+                                null,
+                            )
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            UpdateInstaller.install(this, apk)
                             result.success(null)
                         } catch (error: Exception) {
                             result.error(
