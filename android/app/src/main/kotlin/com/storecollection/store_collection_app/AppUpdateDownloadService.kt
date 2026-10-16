@@ -247,7 +247,7 @@ class AppUpdateDownloadService : Service() {
         private const val NOTIFICATION_UPDATE_INTERVAL_MILLIS = 500L
         private const val BUFFER_SIZE = 128 * 1024
 
-        fun start(context: Context, request: UpdateRequest) {
+        internal fun start(context: Context, request: UpdateRequest) {
             val intent = Intent(context, AppUpdateDownloadService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_URL, request.url)
