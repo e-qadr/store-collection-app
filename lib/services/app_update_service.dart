@@ -117,6 +117,35 @@ class AppUpdateDownloadProgress {
   }
 }
 
+/// The locally installed application identity shown in the settings screen.
+@immutable
+class InstalledAppVersion {
+  const InstalledAppVersion({required this.version, required this.buildNumber});
+
+  final String version;
+  final int buildNumber;
+
+  String get label => '$version ($buildNumber)';
+}
+
+enum AppUpdateCheckState { upToDate, updateAvailable, unsupported, failed }
+
+/// Full, user-facing result of a manual update check.
+@immutable
+class AppUpdateCheckResult {
+  const AppUpdateCheckResult({
+    required this.state,
+    required this.installedVersion,
+    this.update,
+    this.message,
+  });
+
+  final AppUpdateCheckState state;
+  final InstalledAppVersion installedVersion;
+  final AppUpdateInfo? update;
+  final String? message;
+}
+
 enum AppUpdateInstallResult { installerOpened, permissionRequired }
 
 /// Checks the published release manifest, downloads a new signed APK and asks
@@ -136,34 +165,73 @@ class AppUpdateService {
 
   final http.Client _client;
 
-  Future<AppUpdateInfo?> checkForUpdate() async {
+  Future<InstalledAppVersion> installedVersion() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    return InstalledAppVersion(
+      version: packageInfo.version,
+      buildNumber: int.tryParse(packageInfo.buildNumber) ?? 0,
+    );
+  }
+
+  /// Checks the manifest while preserving enough information for Settings to
+  /// clearly explain whether the installed version is current.
+  Future<AppUpdateCheckResult> checkUpdateStatus() async {
+    final installed = await installedVersion();
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
-      return null;
+      return AppUpdateCheckResult(
+        state: AppUpdateCheckState.unsupported,
+        installedVersion: installed,
+        message: 'تحديثات الويب تصل تلقائياً عند إعادة تحميل الصفحة.',
+      );
     }
 
     try {
-      final packageInfo = await PackageInfo.fromPlatform();
-      final installedBuildNumber = int.tryParse(packageInfo.buildNumber) ?? 0;
       final uri = Uri.parse(manifestUrl);
       final response = await _client
           .get(uri, headers: const {'Cache-Control': 'no-cache'})
           .timeout(const Duration(seconds: 10));
-      if (response.statusCode != HttpStatus.ok) return null;
+      if (response.statusCode != HttpStatus.ok) {
+        return AppUpdateCheckResult(
+          state: AppUpdateCheckState.failed,
+          installedVersion: installed,
+          message: 'تعذر الوصول إلى معلومات التحديث حالياً.',
+        );
+      }
 
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is! Map<String, dynamic>) return null;
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('ملف التحديث غير صالح.');
+      }
       final update = AppUpdateInfo.fromJson(decoded, uri);
-      return update.isNewerThan(
-            installedBuildNumber: installedBuildNumber,
-            installedVersion: packageInfo.version,
-          )
-          ? update
-          : null;
+      if (update.isNewerThan(
+        installedBuildNumber: installed.buildNumber,
+        installedVersion: installed.version,
+      )) {
+        return AppUpdateCheckResult(
+          state: AppUpdateCheckState.updateAvailable,
+          installedVersion: installed,
+          update: update,
+        );
+      }
+      return AppUpdateCheckResult(
+        state: AppUpdateCheckState.upToDate,
+        installedVersion: installed,
+      );
     } catch (_) {
-      // A transient network error must never prevent the user from opening the
-      // app. A mandatory update is enforced only after its manifest is read.
-      return null;
+      return AppUpdateCheckResult(
+        state: AppUpdateCheckState.failed,
+        installedVersion: installed,
+        message:
+            'تعذر التحقق من التحديث. تحقق من اتصال الإنترنت ثم أعد المحاولة.',
+      );
     }
+  }
+
+  Future<AppUpdateInfo?> checkForUpdate() async {
+    final result = await checkUpdateStatus();
+    return result.state == AppUpdateCheckState.updateAvailable
+        ? result.update
+        : null;
   }
 
   Future<AppUpdateInstallResult> downloadAndInstall(

@@ -4,6 +4,7 @@ import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/services/auth_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/password_policy.dart';
+import 'package:store_collection_app/widgets/app_update_settings_card.dart';
 import 'package:store_collection_app/widgets/password_strength_indicator.dart';
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -180,6 +181,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 16),
+                    const AppUpdateSettingsCard(),
                     const SizedBox(height: 16),
                     Card(
                       child: Padding(
