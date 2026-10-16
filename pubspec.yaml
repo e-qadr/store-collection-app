@@ -47,6 +47,11 @@ dependencies:
   file_picker: ^11.0.2
   http: ^1.6.0
   url_launcher: ^6.3.2
+  # Used by the Android in-app updater to identify the installed release,
+  # download the signed APK safely, and verify its checksum before install.
+  package_info_plus: ^8.3.1
+  path_provider: ^2.1.5
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:

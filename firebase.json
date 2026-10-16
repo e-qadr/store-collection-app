@@ -38,6 +38,38 @@
           "destination": "/index.html"
         }
       ]
+    },
+    {
+      "target": "updates",
+      "public": "app-releases",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**",
+        "**/*.apk",
+        "**/*.apk.sha256",
+        "README.md"
+      ],
+      "headers": [
+        {
+          "source": "android.json",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        },
+        {
+          "source": "**/*.apk",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=31536000, immutable"
+            }
+          ]
+        }
+      ]
     }
   ],
   "emulators": {

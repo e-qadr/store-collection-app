@@ -45,6 +45,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Signed application packages are published to the dedicated Firebase Hosting
+# update site, never committed to source control.
+/app-releases/*.apk
+/app-releases/*.apk.sha256
+
 # Local secrets and environment configuration
 **/.env
 **/.env.*

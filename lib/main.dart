@@ -11,6 +11,7 @@ import 'package:store_collection_app/services/app_navigation_service.dart';
 import 'package:store_collection_app/services/device_notification_service.dart';
 import 'package:store_collection_app/services/local_notification_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/widgets/app_update_gate.dart';
 import 'package:store_collection_app/widgets/device_notification_initializer.dart';
 
 void main() {
@@ -79,7 +80,9 @@ class _AppBootstrapState extends State<_AppBootstrap> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.done &&
             !snapshot.hasError) {
-          return const DeviceNotificationInitializer(child: AuthGate());
+          return const AppUpdateGate(
+            child: DeviceNotificationInitializer(child: AuthGate()),
+          );
         }
 
         if (snapshot.hasError) {

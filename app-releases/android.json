@@ -1,0 +1,10 @@
+{
+  "platform": "android",
+  "version": "1.0.10",
+  "buildNumber": 17,
+  "mandatory": false,
+  "title": "يتوفر تحديث جديد",
+  "message": "يتضمن هذا الإصدار تحسينات وإصلاحات مهمة.",
+  "apkUrl": "https://updates-alasalh.web.app/store-collection-app-v1.0.10+17.apk",
+  "sha256": "ac4d4f1aa1f360ebf7ac3e755ad922c1fdeB9488362f93758d284659859c76f2"
+}

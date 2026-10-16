@@ -7,6 +7,9 @@
       "hosting": {
         "web": [
           "app-alasalh"
+        ],
+        "updates": [
+          "updates-alasalh"
         ]
       }
     }

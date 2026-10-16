@@ -1,0 +1,133 @@
+name: Publish Android update
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version name, for example 1.0.11'
+        required: true
+        type: string
+      build_number:
+        description: 'Increasing Android build number, for example 18'
+        required: true
+        type: string
+      mandatory:
+        description: 'Force this update for every Android user'
+        required: true
+        default: false
+        type: boolean
+      release_notes:
+        description: 'Arabic release notes shown inside the app'
+        required: true
+        default: 'يتضمن هذا الإصدار تحسينات وإصلاحات مهمة.'
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Build, verify, and publish Android update
+    runs-on: ubuntu-latest
+    env:
+      AUTH_API_BASE_URL: https://collection-api.alasalh.com
+      UPDATE_VERSION: ${{ inputs.version }}
+      UPDATE_BUILD: ${{ inputs.build_number }}
+      UPDATE_MANDATORY: ${{ inputs.mandatory }}
+      UPDATE_NOTES: ${{ inputs.release_notes }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          channel: stable
+
+      - name: Restore Android signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          test -n "$STORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          mkdir -p android/keystore
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/keystore/upload-keystore.jks
+          {
+            echo 'storeFile=keystore/upload-keystore.jks'
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Build signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build apk --release \
+            --build-name="$UPDATE_VERSION" \
+            --build-number="$UPDATE_BUILD" \
+            --dart-define=AUTH_API_BASE_URL="$AUTH_API_BASE_URL"
+
+      - name: Prepare verified release assets
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$UPDATE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$UPDATE_BUILD" =~ ^[1-9][0-9]*$ ]]
+          apk_source='build/app/outputs/flutter-apk/app-release.apk'
+          file_name="store-collection-app-v${UPDATE_VERSION}+${UPDATE_BUILD}.apk"
+          mkdir -p dist
+          cp "$apk_source" "dist/$file_name"
+          checksum="$(sha256sum "dist/$file_name" | awk '{print $1}')"
+          tag="v${UPDATE_VERSION}+${UPDATE_BUILD}"
+          apk_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${file_name}"
+          if [[ "$UPDATE_MANDATORY" == true ]]; then
+            title='تحديث مطلوب'
+          else
+            title='يتوفر تحديث جديد'
+          fi
+          jq -n \
+            --arg version "$UPDATE_VERSION" \
+            --argjson build "$UPDATE_BUILD" \
+            --argjson mandatory "$UPDATE_MANDATORY" \
+            --arg title "$title" \
+            --arg message "$UPDATE_NOTES" \
+            --arg apkUrl "$apk_url" \
+            --arg sha256 "$checksum" \
+            '{platform: "android", version: $version, buildNumber: $build, mandatory: $mandatory, title: $title, message: $message, apkUrl: $apkUrl, sha256: $sha256}' \
+            > app-releases/android.json
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "file_name=$file_name" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release and upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: الإصدار ${{ inputs.version }} (${{ inputs.build_number }})
+          body: ${{ inputs.release_notes }}
+          generate_release_notes: false
+          files: dist/${{ steps.release.outputs.file_name }}
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/385756153909/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: github-firebase-deployer@store-collection-app.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+
+      - name: Publish update manifest
+        shell: bash
+        run: |
+          npx firebase-tools@15.27.0 deploy --only hosting:updates \
+            --project store-collection-app --non-interactive \
+            --token "${{ steps.auth.outputs.access_token }}"
