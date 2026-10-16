@@ -112,6 +112,61 @@ test('the accountant may finalize only the manager-approved voucher', async () =
   }));
 });
 
+test('collection amendments require the recorded approvers and apply only on the final vote', async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'transactions', 'voucher-1'), {
+      ...voucher({status: 'approvedByManager'}),
+      collection_approval_participants: {
+        collector: {user_id: 'collector-a', user_name: 'Collector', role: 'collector'},
+        manager: {user_id: 'manager-a', user_name: 'Manager', role: 'manager'},
+      },
+    });
+  });
+  const collectorRef = doc(db('collector-a'), 'transactions', 'voucher-1');
+  const proposal = {
+    amount: 12, currency: 'YER', amount_matches: null, cashier_amount: null,
+    dateFrom: serverTimestamp(), dateTo: serverTimestamp(), notes: 'Corrected',
+  };
+  const amendment = {
+    state: 'pending', requested_by: {user_id: 'collector-a', role: 'collector'},
+    requested_at: serverTimestamp(), base_status: 'approvedByManager',
+    proposed_data: proposal,
+    required_approvers: {
+      'collector-a': {user_id: 'collector-a', role: 'collector'},
+      'manager-a': {user_id: 'manager-a', role: 'manager'},
+    },
+    approvals: {},
+  };
+  await assertSucceeds(updateDoc(collectorRef, {
+    collection_amendment: amendment, last_updated: serverTimestamp(), history: history(),
+  }));
+
+  const managerRef = doc(db('manager-a'), 'transactions', 'voucher-1');
+  await assertSucceeds(updateDoc(managerRef, {
+    'collection_amendment.approvals': {
+      'manager-a': {user_id: 'manager-a', role: 'manager', approved_at: serverTimestamp()},
+    },
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  const waiting = await getDoc(collectorRef);
+  if (waiting.data().amount !== 10) {
+    throw new Error('amendment changed amount before every recorded approver voted');
+  }
+
+  await assertSucceeds(updateDoc(collectorRef, {
+    amount: 12, currency: 'YER', amount_matches: null, cashier_amount: null,
+    dateFrom: waiting.data().collection_amendment.proposed_data.dateFrom,
+    dateTo: waiting.data().collection_amendment.proposed_data.dateTo,
+    notes: 'Corrected',
+    status: 'approvedByManager', collection_amendment: null,
+    last_updated: serverTimestamp(), history: history(),
+  }));
+  const applied = await getDoc(collectorRef);
+  if (applied.data().amount !== 12 || applied.data().collection_amendment != null) {
+    throw new Error('final recorded approval did not apply the amendment');
+  }
+});
+
 test('accountant may reserve a branch voucher but branch managers see only their own reservation', async () => {
   await assertSucceeds(setDoc(
     doc(db('accountant-a'), 'transactions', 'reserved-1'),

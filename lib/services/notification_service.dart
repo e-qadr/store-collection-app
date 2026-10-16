@@ -221,6 +221,88 @@ class NotificationService {
     );
   }
 
+  /// Collection-voucher amendments are sent only to the users who approved
+  /// this exact voucher before, rather than broadcasting to every user in a
+  /// matching role.
+  Future<void> notifyCollectionAmendment({
+    required String transactionId,
+    required List<Map<String, dynamic>> approvers,
+  }) async {
+    final document = await _firestore
+        .collection('transactions')
+        .doc(transactionId)
+        .get();
+    final data = document.data();
+    if (data == null) return;
+    final number = _referenceNumber(
+      data,
+      keys: const ['transaction_number'],
+      fallbackPrefix: 'TR',
+      fallbackId: transactionId,
+    );
+    await _send(
+      recipients: approvers
+          .map((approver) => _string(approver, 'user_id'))
+          .where((uid) => uid.isNotEmpty)
+          .toSet(),
+      module: transactionsModule,
+      entityCollection: 'transactions',
+      entityId: transactionId,
+      branchId: _string(data, 'branchId'),
+      referenceNumber: number,
+      notificationType: 'collection_amendment_requested',
+      title: 'تعديل سند تحصيل بانتظار موافقتك',
+      message: 'يوجد تعديل على السند رقم $number يحتاج مراجعتك وموافقتك.',
+      extraData: {
+        'transaction_id': transactionId,
+        'transaction_number': number,
+      },
+    );
+  }
+
+  Future<void> notifyCollectionAmendmentProgress({
+    required String transactionId,
+    required List<Map<String, dynamic>> approvers,
+    required bool completed,
+  }) async {
+    final document = await _firestore
+        .collection('transactions')
+        .doc(transactionId)
+        .get();
+    final data = document.data();
+    if (data == null) return;
+    final number = _referenceNumber(
+      data,
+      keys: const ['transaction_number'],
+      fallbackPrefix: 'TR',
+      fallbackId: transactionId,
+    );
+    await _send(
+      recipients: approvers
+          .map((approver) => _string(approver, 'user_id'))
+          .where((uid) => uid.isNotEmpty)
+          .toSet(),
+      module: transactionsModule,
+      entityCollection: 'transactions',
+      entityId: transactionId,
+      branchId: _string(data, 'branchId'),
+      referenceNumber: number,
+      notificationType: completed
+          ? 'collection_amendment_completed'
+          : 'collection_amendment_progress',
+      title: completed
+          ? 'تم تطبيق تعديل سند التحصيل'
+          : 'تعديل سند التحصيل بانتظار موافقات أخرى',
+      message: completed
+          ? 'اكتملت جميع الموافقات وتم تحديث السند رقم $number.'
+          : 'تم تسجيل موافقة على تعديل السند رقم $number وما زالت هناك موافقات مطلوبة.',
+      extraData: {
+        'transaction_id': transactionId,
+        'transaction_number': number,
+      },
+    );
+  }
+
   Future<void> notifyForArchive({
     required String transactionId,
     bool completed = false,

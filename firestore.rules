@@ -2043,7 +2043,12 @@ service cloud.firestore {
         request.auth.uid && data.get('status', '') == 'pending' &&
         data.get('branchId', '') is string &&
         data.get('transaction_number', '') is string &&
-        data.get('history', []) is list;
+        data.get('history', []) is list &&
+        (!data.keys().hasAny(['collection_approval_participants']) ||
+          (data.get('collection_approval_participants', {}) is map &&
+            data.collection_approval_participants.get('collector', {}).get(
+              'user_id', ''
+            ) == request.auth.uid));
     }
 
     function collectionReservedCreateAllowed(data) {
@@ -2150,6 +2155,12 @@ service cloud.firestore {
     function collectionManagerDecisionAllowed() {
       let current = resource.data.get('status', '');
       let next = request.resource.data.get('status', '');
+      let currentParticipants = resource.data.get(
+        'collection_approval_participants', {}
+      );
+      let nextParticipants = request.resource.data.get(
+        'collection_approval_participants', {}
+      );
       return collectionManagerFor(resource.data) &&
         ((current == 'pending' &&
             (next == 'approvedByManager' || next == 'rejectedByManager' ||
@@ -2157,10 +2168,24 @@ service cloud.firestore {
           (current == 'approvedByCollector' && next == 'approvedByManager') ||
           (current == 'pendingApprovalOfEdit' &&
             (next == 'approvedByManager' || next == 'editRequestedByCollector'))) &&
+        ((next == 'approvedByManager' &&
+            ((!request.resource.data.keys().hasAny([
+              'collection_approval_participants'
+            ]) && !resource.data.keys().hasAny([
+              'collection_approval_participants'
+            ])) ||
+              (nextParticipants is map && currentParticipants is map &&
+                nextParticipants.get('manager', {}).get('user_id', '') ==
+                  request.auth.uid &&
+                nextParticipants.diff(currentParticipants).affectedKeys().hasOnly([
+                  'manager'
+                ])))) ||
+          (next != 'approvedByManager' && nextParticipants == currentParticipants)) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'manager_notes', 'amount', 'currency', 'dateFrom',
           'dateTo', 'notes', 'amount_matches', 'cashier_amount',
-          'pending_edit_data', 'last_updated', 'history'
+          'pending_edit_data', 'collection_approval_participants',
+          'last_updated', 'history'
         ]);
     }
 
@@ -2177,13 +2202,199 @@ service cloud.firestore {
     function collectionAccountantTransitionAllowed() {
       let current = resource.data.get('status', '');
       let next = request.resource.data.get('status', '');
+      let currentParticipants = resource.data.get(
+        'collection_approval_participants', {}
+      );
+      let nextParticipants = request.resource.data.get(
+        'collection_approval_participants', {}
+      );
       return role() == 'accountant' &&
         ((current == 'approvedByManager' &&
             (next == 'editRequestedByCollector' || next == 'approvedByAccountant')) ||
           (current == 'approvedByCollector' && next == 'approvedByAccountant')) &&
+        ((next == 'approvedByAccountant' &&
+            ((!request.resource.data.keys().hasAny([
+              'collection_approval_participants'
+            ]) && !resource.data.keys().hasAny([
+              'collection_approval_participants'
+            ])) ||
+              (nextParticipants is map && currentParticipants is map &&
+                nextParticipants.get('accountant', {}).get('user_id', '') ==
+                  request.auth.uid &&
+                nextParticipants.diff(currentParticipants).affectedKeys().hasOnly([
+                  'accountant'
+                ])))) ||
+          (next != 'approvedByAccountant' &&
+            nextParticipants == currentParticipants)) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'status', 'manager_notes', 'previous_status', 'accountant_notes',
-          'last_updated', 'history'
+          'collection_approval_participants', 'last_updated', 'history'
+        ]);
+    }
+
+    // Amendments keep the original voucher immutable until the recorded
+    // approvers of this exact voucher all vote again. These helpers are kept
+    // separate from the old status transitions so old and new vouchers remain
+    // readable without opening a broad write permission.
+    function collectionStoredParticipant(data, roleName) {
+      return data.get('collection_approval_participants', {}).get(
+        roleName, {}
+      );
+    }
+
+    function collectionAmendmentActor(data) {
+      return (role() == 'collector' && collectionCreatorFor(data)) ||
+        (role() == 'manager' && collectionManagerFor(data) &&
+          collectionStoredParticipant(data, 'manager').get('user_id', '') ==
+            request.auth.uid) ||
+        (role() == 'accountant' &&
+          collectionStoredParticipant(data, 'accountant').get('user_id', '') ==
+            request.auth.uid);
+    }
+
+    function collectionAmendmentProposalValid(amendment) {
+      let proposal = amendment.get('proposed_data', {});
+      return amendment is map && amendment.get('state', '') == 'pending' &&
+        amendment.get('base_status', '') == resource.data.get('status', '') &&
+        proposal is map && proposal.get('amount', -1) is number &&
+        proposal.amount > 0 && proposal.get('currency', '') is string &&
+        proposal.currency.size() > 0 && proposal.get('dateFrom', null) is timestamp &&
+        proposal.get('dateTo', null) is timestamp && proposal.get('notes', '') is string &&
+        (proposal.get('amount_matches', null) is bool ||
+          proposal.get('amount_matches', null) == null);
+    }
+
+    function collectionRequiredApproversMatch(data, amendment) {
+      let required = amendment.get('required_approvers', {});
+      let collectorId = data.get('collectorId', '');
+      let manager = collectionStoredParticipant(data, 'manager');
+      let accountant = collectionStoredParticipant(data, 'accountant');
+      let status = data.get('status', '');
+      return required is map && collectorId != '' &&
+        required.get(collectorId, {}).get('user_id', '') == collectorId &&
+        ((status != 'approvedByManager' && status != 'approvedByAccountant') ||
+          (manager.get('user_id', '') != '' &&
+            required.get(manager.get('user_id', ''), {}).get('user_id', '') ==
+              manager.get('user_id', ''))) &&
+        (status != 'approvedByAccountant' ||
+          (accountant.get('user_id', '') != '' &&
+            required.get(accountant.get('user_id', ''), {}).get('user_id', '') ==
+              accountant.get('user_id', '')));
+    }
+
+    function collectionAmendmentRequestAllowed() {
+      let amendment = request.resource.data.get('collection_amendment', {});
+      return collectionAmendmentActor(resource.data) &&
+        resource.data.get('collection_amendment', {}).get('state', '') !=
+          'pending' &&
+        (resource.data.get('status', '') == 'approvedByManager' ||
+          resource.data.get('status', '') == 'approvedByAccountant') &&
+        collectionAmendmentProposalValid(amendment) &&
+        collectionRequiredApproversMatch(resource.data, amendment) &&
+        amendment.get('approvals', {}) is map &&
+        amendment.approvals.keys().size() == 0 &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'collection_amendment', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionAmendmentCurrentActorRequired(amendment) {
+      return amendment.get('required_approvers', {}).get(
+        request.auth.uid, {}
+      ).get('user_id', '') == request.auth.uid;
+    }
+
+    function collectionAmendmentApprovalAllowed() {
+      let amendment = resource.data.get('collection_amendment', {});
+      let nextAmendment = request.resource.data.get('collection_amendment', {});
+      let approvals = amendment.get('approvals', {});
+      let nextApprovals = nextAmendment.get('approvals', {});
+      return amendment.get('state', '') == 'pending' &&
+        collectionAmendmentActor(resource.data) &&
+        collectionAmendmentCurrentActorRequired(amendment) && approvals is map &&
+        nextApprovals is map && !approvals.keys().hasAny([request.auth.uid]) &&
+        nextAmendment.get('state', '') == 'pending' &&
+        nextAmendment.get('base_status', '') == amendment.get('base_status', '') &&
+        nextAmendment.get('proposed_data', {}) == amendment.get('proposed_data', {}) &&
+        nextAmendment.get('required_approvers', {}) ==
+          amendment.get('required_approvers', {}) &&
+        nextApprovals.get(request.auth.uid, {}).get('user_id', '') ==
+          request.auth.uid &&
+        nextApprovals.diff(approvals).affectedKeys().hasOnly([request.auth.uid]) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'collection_amendment', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionPreviousRequiredVotesPresent(amendment) {
+      let approvals = amendment.get('approvals', {});
+      let collectorId = resource.data.get('collectorId', '');
+      let manager = collectionStoredParticipant(resource.data, 'manager');
+      let accountant = collectionStoredParticipant(resource.data, 'accountant');
+      let status = resource.data.get('status', '');
+      return (collectorId == request.auth.uid ||
+          approvals.get(collectorId, {}).get('user_id', '') == collectorId) &&
+        ((status != 'approvedByManager' && status != 'approvedByAccountant') ||
+          (manager.get('user_id', '') == request.auth.uid ||
+            approvals.get(manager.get('user_id', ''), {}).get('user_id', '') ==
+              manager.get('user_id', ''))) &&
+        (status != 'approvedByAccountant' ||
+          (accountant.get('user_id', '') == request.auth.uid ||
+            approvals.get(accountant.get('user_id', ''), {}).get('user_id', '') ==
+              accountant.get('user_id', '')));
+    }
+
+    function collectionAmendmentApplyAllowed() {
+      let amendment = resource.data.get('collection_amendment', {});
+      let proposal = amendment.get('proposed_data', {});
+      return amendment.get('state', '') == 'pending' &&
+        collectionAmendmentActor(resource.data) &&
+        collectionAmendmentCurrentActorRequired(amendment) &&
+        !amendment.get('approvals', {}).keys().hasAny([request.auth.uid]) &&
+        collectionPreviousRequiredVotesPresent(amendment) &&
+        request.resource.data.get('collection_amendment', null) == null &&
+        request.resource.data.get('amount', null) == proposal.get('amount', null) &&
+        request.resource.data.get('currency', '') == proposal.get('currency', '') &&
+        request.resource.data.get('amount_matches', null) ==
+          proposal.get('amount_matches', null) &&
+        request.resource.data.get('cashier_amount', null) ==
+          proposal.get('cashier_amount', null) &&
+        request.resource.data.get('dateFrom', null) == proposal.get('dateFrom', null) &&
+        request.resource.data.get('dateTo', null) == proposal.get('dateTo', null) &&
+        request.resource.data.get('notes', '') == proposal.get('notes', '') &&
+        request.resource.data.get('status', '') == amendment.get('base_status', '') &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'amount', 'currency', 'amount_matches', 'cashier_amount', 'dateFrom',
+          'dateTo', 'notes', 'status', 'collection_amendment',
+          'pending_edit_data', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionAmendmentRejectionAllowed() {
+      let amendment = resource.data.get('collection_amendment', {});
+      return amendment.get('state', '') == 'pending' &&
+        collectionAmendmentActor(resource.data) &&
+        collectionAmendmentCurrentActorRequired(amendment) &&
+        request.resource.data.get('collection_amendment', null) == null &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'collection_amendment', 'last_updated', 'history'
+        ]);
+    }
+
+    function collectionDirectAmendmentAllowed() {
+      return collectionCreatorFor(resource.data) &&
+        resource.data.get('status', '') == 'pending' &&
+        request.resource.data.get('status', '') == 'pending' &&
+        !request.resource.data.keys().hasAny(['collection_amendment']) &&
+        request.resource.data.get('amount', -1) is number &&
+        request.resource.data.amount > 0 &&
+        request.resource.data.get('currency', '') is string &&
+        request.resource.data.get('dateFrom', null) is timestamp &&
+        request.resource.data.get('dateTo', null) is timestamp &&
+        request.resource.data.get('notes', '') is string &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'amount', 'currency', 'amount_matches', 'cashier_amount', 'dateFrom',
+          'dateTo', 'notes', 'last_updated', 'history'
         ]);
     }
 
@@ -2223,6 +2434,9 @@ service cloud.firestore {
         (collectionManagerDecisionAllowed() || collectionCollectorEditAllowed() ||
           collectionAccountantTransitionAllowed() || collectionArchiveRequestAllowed() ||
           collectionArchiveApprovalAllowed() ||
+          collectionDirectAmendmentAllowed() || collectionAmendmentRequestAllowed() ||
+          collectionAmendmentApprovalAllowed() || collectionAmendmentApplyAllowed() ||
+          collectionAmendmentRejectionAllowed() ||
           collectionReservedAccountantUpdateAllowed() ||
           collectionReservedCancellationAllowed() ||
           collectionReservedPhysicalReceiptAllowed() ||

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/services/database_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
@@ -200,7 +201,7 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
       );
     } catch (e) {
       _closeLoadingAndShowSnackBar(
-        'حدث خطأ أثناء اعتماد التعديلات',
+        'تعذر اعتماد التعديل: ${e.toString().replaceFirst('Exception: ', '')}',
         Colors.red,
       );
     }
@@ -209,10 +210,9 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
   Future<void> _rejectEdit(String transactionId, String trnNumber) async {
     _showLoadingDialog();
     try {
-      await _dbService.updateTransactionStatus(
+      await _dbService.rejectCollectionAmendment(
         transactionId: transactionId,
-        newStatus: 'editRequestedByCollector',
-        managerNotes:
+        reason:
             'تم رفض التعديل الأخير، يرجى مراجعة البيانات وإعادة الإرسال بدقة.',
       );
       _closeLoadingAndShowSnackBar(
@@ -577,12 +577,25 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
           );
         }
 
+        final userId = FirebaseAuth.instance.currentUser?.uid;
         final transactions = filterAndSortTransactionRecords(
-          records: snapshot.data!.docs,
+          records: snapshot.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final amendment = data['collection_amendment'];
+            if (amendment is Map && amendment['state'] == 'pending') {
+              final required = amendment['required_approvers'];
+              final approvals = amendment['approvals'];
+              return userId != null &&
+                  required is Map &&
+                  required.containsKey(userId) &&
+                  !(approvals is Map && approvals.containsKey(userId));
+            }
+            // A one-time bridge for requests created by an older app release.
+            return data['status'] == 'pendingApprovalOfEdit' &&
+                data['pending_edit_data'] is Map;
+          }),
           dataOf: (doc) => doc.data() as Map<String, dynamic>,
-          filters: const TransactionRecordFilters(
-            status: 'pendingApprovalOfEdit',
-          ),
+          filters: const TransactionRecordFilters(),
         );
 
         if (transactions.isEmpty) {
@@ -602,8 +615,12 @@ class _ManagerApprovalsScreenState extends State<ManagerApprovalsScreen> {
             itemBuilder: (context, index) {
               final doc = transactions[index];
               final data = doc.data() as Map<String, dynamic>;
-              final pendingData =
-                  data['pending_edit_data'] as Map<String, dynamic>? ?? {};
+              final amendment = data['collection_amendment'] as Map? ?? {};
+              final pendingData = amendment['proposed_data'] is Map
+                  ? Map<String, dynamic>.from(amendment['proposed_data'] as Map)
+                  : data['pending_edit_data'] is Map
+                  ? Map<String, dynamic>.from(data['pending_edit_data'] as Map)
+                  : <String, dynamic>{};
 
               final String trnNumber = data['transaction_number'] ?? '#';
 

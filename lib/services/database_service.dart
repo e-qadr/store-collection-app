@@ -51,6 +51,150 @@ class DatabaseService {
     };
   }
 
+  /// Keeps the identity of the people who actually approved a collection
+  /// voucher.  A role alone is not enough: a later amendment must go back to
+  /// the same people, not every user that happens to have that role.
+  Map<String, dynamic> _approvalParticipant(Map<String, String> actor) {
+    return {
+      'user_id': actor['uid'] ?? '',
+      'user_name': actor['name'] ?? 'مستخدم غير معروف',
+      'role': actor['role'] ?? 'unknown',
+      'recorded_at': Timestamp.now(),
+    };
+  }
+
+  Map<String, dynamic> _mapValue(dynamic value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return <String, dynamic>{};
+  }
+
+  /// Reads approvals saved by the current workflow and falls back to the
+  /// audit trail for old vouchers created before this field existed.
+  Map<String, Map<String, dynamic>> _recordedParticipants(
+    Map<String, dynamic> data,
+  ) {
+    final participants = <String, Map<String, dynamic>>{};
+    final stored = _mapValue(data['collection_approval_participants']);
+    for (final entry in stored.entries) {
+      final participant = _mapValue(entry.value);
+      if ((participant['user_id']?.toString() ?? '').isNotEmpty) {
+        participants[entry.key] = participant;
+      }
+    }
+
+    final history = data['history'];
+    if (history is List) {
+      // The newest matching record wins, which is important for historical
+      // vouchers that were approved more than once before this improvement.
+      for (final raw in history) {
+        final entry = _mapValue(raw);
+        final role = entry['actor_role']?.toString() ?? '';
+        final uid = entry['actor_id']?.toString() ?? '';
+        final action = entry['action']?.toString() ?? '';
+        final changes = _mapValue(entry['changes']);
+        final newStatus = changes['to_status']?.toString() ?? '';
+        final message = entry['message']?.toString() ?? '';
+        final isRecordedApproval =
+            (role == 'collector' && action == 'created') ||
+            (role == 'manager' &&
+                (newStatus == 'approvedByManager' ||
+                    message.contains('معتمد من المدير'))) ||
+            (role == 'accountant' &&
+                (action == 'approved_by_accountant' ||
+                    newStatus == 'approvedByAccountant' ||
+                    message.contains('الاعتماد النهائي')));
+        if (isRecordedApproval && uid.isNotEmpty) {
+          participants[role] = {
+            'user_id': uid,
+            'user_name': entry['actor_name']?.toString() ?? 'مستخدم غير معروف',
+            'role': role,
+            'recorded_at': entry['timestamp'],
+          };
+        }
+      }
+    }
+    return participants;
+  }
+
+  Map<String, Map<String, dynamic>> _requiredAmendmentParticipants(
+    Map<String, dynamic> data,
+    Map<String, String> actor,
+  ) {
+    final participants = _recordedParticipants(data);
+    final status = data['status']?.toString() ?? 'pending';
+
+    // A direct collection voucher is created by the collector/general manager.
+    // Old records may only have collectorId, so retain that safe fallback.
+    if (!participants.containsKey('collector')) {
+      final collectorId = data['collectorId']?.toString() ?? '';
+      if (collectorId.isNotEmpty) {
+        participants['collector'] = {
+          'user_id': collectorId,
+          'user_name': data['collector_name']?.toString() ?? 'المدير العام',
+          'role': 'collector',
+        };
+      } else if (actor['role'] == 'collector' && actor['uid'] != null) {
+        participants['collector'] = _approvalParticipant(actor);
+      }
+    }
+
+    final needsManager =
+        status == 'approvedByManager' ||
+        status == 'approvedByAccountant' ||
+        participants.containsKey('manager');
+    final needsAccountant =
+        status == 'approvedByAccountant' ||
+        participants.containsKey('accountant');
+
+    final required = <String, Map<String, dynamic>>{};
+    for (final role in const ['collector', 'manager', 'accountant']) {
+      if (role == 'manager' && !needsManager) continue;
+      if (role == 'accountant' && !needsAccountant) continue;
+      final participant = participants[role];
+      if (participant != null &&
+          (participant['user_id']?.toString() ?? '').isNotEmpty) {
+        required[role] = participant;
+      }
+    }
+    return required;
+  }
+
+  String _missingParticipantMessage(
+    Map<String, dynamic> data,
+    Map<String, Map<String, dynamic>> required,
+  ) {
+    final status = data['status']?.toString() ?? '';
+    if ((status == 'approvedByManager' || status == 'approvedByAccountant') &&
+        !required.containsKey('manager')) {
+      return 'لا يمكن تحديد مدير الفرع الذي اعتمد هذا السند القديم. افتح السند من حساب المدير الذي اعتمده ثم أعد المحاولة.';
+    }
+    if (status == 'approvedByAccountant' &&
+        !required.containsKey('accountant')) {
+      return 'لا يمكن تحديد المحاسب الذي اعتمد هذا السند القديم. افتح السند من حساب المحاسب الذي اعتمده ثم أعد المحاولة.';
+    }
+    return 'لا يمكن تحديد أصحاب الموافقة لهذا السند.';
+  }
+
+  Map<String, dynamic> _amendmentPayload({
+    required double amount,
+    required String currency,
+    required bool? amountMatches,
+    required double? cashierAmount,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    required String notes,
+  }) {
+    return {
+      'amount': amount,
+      'currency': currency,
+      'amount_matches': amountMatches,
+      'cashier_amount': cashierAmount,
+      'dateFrom': Timestamp.fromDate(dateFrom),
+      'dateTo': Timestamp.fromDate(dateTo),
+      'notes': notes,
+    };
+  }
+
   // أداة مساعدة لترجمة الحالة للسجل التاريخي
   String _getStatusArabicText(String status) {
     switch (status) {
@@ -120,6 +264,10 @@ class DatabaseService {
         final data = transaction.toJson()
           ..['transaction_number'] = transactionNumber
           ..['branch_code'] = branchCode
+          ..['collection_approval_participants'] = {
+            if (actor['role'] == 'collector')
+              'collector': _approvalParticipant(actor),
+          }
           ..['history'] = [
             _historyEntry(
               action: 'created',
@@ -456,27 +604,51 @@ class DatabaseService {
           ? '\nملاحظة: $managerNotes'
           : '';
 
-      final historyEntry = _historyEntry(
-        action: 'status_update',
-        message:
-            'تغيرت حالة السند إلى: ${_getStatusArabicText(newStatus)}$noteMsg',
-        actor: actor,
-      );
-
-      Map<String, dynamic> updateData = {
-        'status': newStatus,
-        'last_updated': FieldValue.serverTimestamp(),
-        'history': FieldValue.arrayUnion([historyEntry]),
-      };
-
-      if (managerNotes != null && managerNotes.isNotEmpty) {
-        updateData['manager_notes'] = managerNotes;
-      }
-
-      await _firestore
+      final reference = _firestore
           .collection('transactions')
-          .doc(transactionId)
-          .update(updateData);
+          .doc(transactionId);
+      await _firestore.runTransaction((firestoreTransaction) async {
+        final snapshot = await firestoreTransaction.get(reference);
+        final currentData = snapshot.data();
+        if (currentData == null) throw Exception('السند غير موجود');
+        if (_mapValue(currentData['collection_amendment'])['state'] ==
+            'pending') {
+          throw Exception(
+            'لا يمكن تغيير حالة السند أثناء وجود طلب تعديل بانتظار الموافقات.',
+          );
+        }
+        final oldStatus = currentData['status']?.toString() ?? '';
+        final historyEntry = _historyEntry(
+          action: 'status_update',
+          message:
+              'تغيرت حالة السند إلى: ${_getStatusArabicText(newStatus)}$noteMsg',
+          actor: actor,
+          changes: {'from_status': oldStatus, 'to_status': newStatus},
+        );
+
+        Map<String, dynamic> updateData = {
+          'status': newStatus,
+          'last_updated': FieldValue.serverTimestamp(),
+          'history': FieldValue.arrayUnion([historyEntry]),
+        };
+
+        if (managerNotes != null && managerNotes.isNotEmpty) {
+          updateData['manager_notes'] = managerNotes;
+        }
+
+        final participantRole = switch (newStatus) {
+          'approvedByCollector' => 'collector',
+          'approvedByManager' => 'manager',
+          'approvedByAccountant' => 'accountant',
+          _ => null,
+        };
+        if (participantRole != null && actor['role'] == participantRole) {
+          updateData['collection_approval_participants.$participantRole'] =
+              _approvalParticipant(actor);
+        }
+
+        firestoreTransaction.update(reference, updateData);
+      });
       await _notifySafely(
         () => _notificationService.notifyForStatus(
           transactionId: transactionId,
@@ -500,57 +672,117 @@ class DatabaseService {
     required DateTime newDateTo,
     required String newNotes,
   }) async {
-    try {
-      final actor = await _getCurrentActor();
-      final doc = await _firestore
-          .collection('transactions')
-          .doc(transactionId)
-          .get();
-      final oldData = doc.data() as Map<String, dynamic>;
-
-      final historyEntry = _historyEntry(
-        action: 'edit_requested',
-        message: 'تم تعديل بيانات السند وطلب الموافقة',
-        actor: actor,
-        changes: {
-          'oldAmount': oldData['amount'],
-          'newAmount': newAmount,
-          'oldCurrency': oldData['currency'],
-          'newCurrency': newCurrency,
-          'oldAmountMatches': oldData['amount_matches'],
-          'newAmountMatches': newAmountMatches,
-          'oldCashierAmount': oldData['cashier_amount'],
-          'newCashierAmount': newCashierAmount,
-          'oldDateFrom': oldData['dateFrom'],
-          'newDateFrom': Timestamp.fromDate(newDateFrom),
-          'oldDateTo': oldData['dateTo'],
-          'newDateTo': Timestamp.fromDate(newDateTo),
-        },
+    if (newAmount <= 0) throw Exception('المبلغ يجب أن يكون أكبر من صفر.');
+    if (newDateTo.isBefore(newDateFrom)) {
+      throw Exception(
+        'تاريخ النهاية يجب أن يكون بعد أو مساوياً لتاريخ البداية.',
       );
-
-      await _firestore.collection('transactions').doc(transactionId).update({
-        'pending_edit_data': {
-          'amount': newAmount,
-          'currency': newCurrency,
-          'amount_matches': newAmountMatches,
-          'cashier_amount': newCashierAmount,
-          'dateFrom': Timestamp.fromDate(newDateFrom),
-          'dateTo': Timestamp.fromDate(newDateTo),
-          'notes': newNotes,
-        },
-        'status': 'pendingApprovalOfEdit',
-        'last_updated': FieldValue.serverTimestamp(),
-        'history': FieldValue.arrayUnion([historyEntry]),
-      });
-      await _notifySafely(
-        () => _notificationService.notifyForStatus(
-          transactionId: transactionId,
-          newStatus: 'pendingApprovalOfEdit',
-        ),
-      );
-    } catch (e) {
-      throw Exception('Failed to submit edited transaction: $e');
     }
+
+    final actor = await _getCurrentActor();
+    final reference = _firestore.collection('transactions').doc(transactionId);
+    var wasAppliedDirectly = false;
+    var requiresApprovals = <Map<String, dynamic>>[];
+
+    await _firestore.runTransaction((firestoreTransaction) async {
+      final snapshot = await firestoreTransaction.get(reference);
+      final oldData = snapshot.data();
+      if (oldData == null) throw Exception('السند غير موجود أو لم يعد متاحاً.');
+      if (_mapValue(oldData['collection_amendment'])['state'] == 'pending') {
+        throw Exception(
+          'يوجد طلب تعديل معلق لهذا السند. أكمل أو ارفض الطلب الحالي أولاً.',
+        );
+      }
+
+      final required = _requiredAmendmentParticipants(oldData, actor);
+      if (required.isEmpty)
+        throw Exception(_missingParticipantMessage(oldData, required));
+      if (!required.values.any((item) => item['user_id'] == actor['uid'])) {
+        throw Exception(
+          'لا يحق إلا لمن شارك في اعتماد السند تقديم تعديل عليه.',
+        );
+      }
+
+      final proposedData = _amendmentPayload(
+        amount: newAmount,
+        currency: newCurrency,
+        amountMatches: newAmountMatches,
+        cashierAmount: newCashierAmount,
+        dateFrom: newDateFrom,
+        dateTo: newDateTo,
+        notes: newNotes,
+      );
+      final historyChanges = {
+        'oldAmount': oldData['amount'],
+        'newAmount': newAmount,
+        'oldCurrency': oldData['currency'],
+        'newCurrency': newCurrency,
+        'oldAmountMatches': oldData['amount_matches'],
+        'newAmountMatches': newAmountMatches,
+        'oldCashierAmount': oldData['cashier_amount'],
+        'newCashierAmount': newCashierAmount,
+        'oldDateFrom': oldData['dateFrom'],
+        'newDateFrom': proposedData['dateFrom'],
+        'oldDateTo': oldData['dateTo'],
+        'newDateTo': proposedData['dateTo'],
+      };
+
+      // Before a second person has approved the voucher, its creator can make
+      // a correction directly. This is the only direct-edit case.
+      if (required.length == 1 &&
+          required.values.first['user_id'] == actor['uid']) {
+        firestoreTransaction.update(reference, {
+          ...proposedData,
+          'last_updated': FieldValue.serverTimestamp(),
+          'history': FieldValue.arrayUnion([
+            _historyEntry(
+              action: 'collection_amendment_applied_directly',
+              message: 'تم تعديل السند مباشرة قبل وجود موافقات أخرى عليه.',
+              actor: actor,
+              changes: historyChanges,
+            ),
+          ]),
+        });
+        wasAppliedDirectly = true;
+        return;
+      }
+
+      final approversByUserId = <String, dynamic>{
+        for (final participant in required.values)
+          participant['user_id'].toString(): participant,
+      };
+      requiresApprovals = required.values.toList(growable: false);
+      firestoreTransaction.update(reference, {
+        // Keep status and the live voucher data intact until every recorded
+        // participant gives a fresh approval.
+        'collection_amendment': {
+          'state': 'pending',
+          'requested_by': _approvalParticipant(actor),
+          'requested_at': Timestamp.now(),
+          'base_status': oldData['status'],
+          'proposed_data': proposedData,
+          'required_approvers': approversByUserId,
+          'approvals': <String, dynamic>{},
+        },
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([
+          _historyEntry(
+            action: 'collection_amendment_requested',
+            message: 'تم تقديم تعديل للسند بانتظار اعتماد المشاركين السابقين.',
+            actor: actor,
+            changes: historyChanges,
+          ),
+        ]),
+      });
+    });
+
+    if (wasAppliedDirectly) return;
+    await _notifySafely(
+      () => _notificationService.notifyCollectionAmendment(
+        transactionId: transactionId,
+        approvers: requiresApprovals,
+      ),
+    );
   }
 
   // 5. اعتماد التعديلات
@@ -558,45 +790,185 @@ class DatabaseService {
     required String transactionId,
     required Map<String, dynamic> pendingData,
   }) async {
-    try {
-      final actor = await _getCurrentActor();
-      final historyEntry = _historyEntry(
-        action: 'edit_approved',
-        message: 'تمت الموافقة على التعديلات وتحديث بيانات السند',
+    final snapshot = await _firestore
+        .collection('transactions')
+        .doc(transactionId)
+        .get();
+    final data = snapshot.data();
+    if (data == null) throw Exception('السند غير موجود.');
+    if (_mapValue(data['collection_amendment'])['state'] != 'pending') {
+      await _migrateLegacyCollectionAmendment(
+        transactionId: transactionId,
+        legacyPendingData: pendingData,
+      );
+    }
+    await approveCollectionAmendment(transactionId: transactionId);
+  }
+
+  /// One-time compatibility bridge for edits submitted by older app versions.
+  /// It never applies their pending data directly; instead it converts them to
+  /// the current unanimous-approval record before accepting a vote.
+  Future<void> _migrateLegacyCollectionAmendment({
+    required String transactionId,
+    required Map<String, dynamic> legacyPendingData,
+  }) async {
+    if (legacyPendingData.isEmpty) {
+      throw Exception('بيانات التعديل القديمة غير متوفرة.');
+    }
+    final actor = await _getCurrentActor();
+    final reference = _firestore.collection('transactions').doc(transactionId);
+    await _firestore.runTransaction((firestoreTransaction) async {
+      final snapshot = await firestoreTransaction.get(reference);
+      final data = snapshot.data();
+      if (data == null) throw Exception('السند غير موجود.');
+      if (_mapValue(data['collection_amendment'])['state'] == 'pending') return;
+      final required = _requiredAmendmentParticipants(data, actor);
+      if (required.isEmpty)
+        throw Exception(_missingParticipantMessage(data, required));
+      final baseStatus = required.containsKey('accountant')
+          ? 'approvedByAccountant'
+          : required.containsKey('manager')
+          ? 'approvedByManager'
+          : 'pending';
+      firestoreTransaction.update(reference, {
+        'collection_amendment': {
+          'state': 'pending',
+          'requested_by': {
+            'user_id': '',
+            'user_name': 'طلب تعديل من إصدار سابق',
+            'role': 'legacy',
+          },
+          'requested_at': Timestamp.now(),
+          'base_status': baseStatus,
+          'proposed_data': legacyPendingData,
+          'required_approvers': {
+            for (final participant in required.values)
+              participant['user_id'].toString(): participant,
+          },
+          'approvals': <String, dynamic>{},
+        },
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([
+          _historyEntry(
+            action: 'collection_amendment_migrated',
+            message:
+                'تم تحويل طلب تعديل قديم إلى مسار الموافقات الحالي دون تغيير بيانات السند.',
+            actor: actor,
+          ),
+        ]),
+      });
+    });
+  }
+
+  /// Gives the current recorded approver one explicit vote. Data is applied
+  /// only by the last required vote; every earlier approval is audit logged.
+  Future<void> approveCollectionAmendment({
+    required String transactionId,
+  }) async {
+    final actor = await _getCurrentActor();
+    final reference = _firestore.collection('transactions').doc(transactionId);
+    var completed = false;
+    var participantsToNotify = <Map<String, dynamic>>[];
+
+    await _firestore.runTransaction((firestoreTransaction) async {
+      final snapshot = await firestoreTransaction.get(reference);
+      final data = snapshot.data();
+      if (data == null) throw Exception('السند غير موجود.');
+      final amendment = _mapValue(data['collection_amendment']);
+      if (amendment['state'] != 'pending') {
+        throw Exception('لا يوجد طلب تعديل معلق لهذا السند.');
+      }
+      final required = _mapValue(amendment['required_approvers']);
+      final currentApprover = _mapValue(required[actor['uid']]);
+      if (currentApprover.isEmpty) {
+        throw Exception(
+          'هذه الموافقة مخصصة للمستخدمين الذين اعتمدوا السند سابقاً.',
+        );
+      }
+      final approvals = _mapValue(amendment['approvals']);
+      if (approvals.containsKey(actor['uid'])) {
+        throw Exception('لقد سجلت موافقتك على هذا التعديل مسبقاً.');
+      }
+      approvals[actor['uid']!] = {
+        ..._approvalParticipant(actor),
+        'approved_at': Timestamp.now(),
+      };
+      final allApproved = required.keys.every(approvals.containsKey);
+      participantsToNotify = required.values.map(_mapValue).toList();
+      final approvalHistory = _historyEntry(
+        action: allApproved
+            ? 'collection_amendment_applied'
+            : 'collection_amendment_approved',
+        message: allApproved
+            ? 'اكتملت موافقات التعديل وتم تطبيق البيانات الجديدة على السند.'
+            : 'سجل ${actor['name']} موافقته على تعديل السند.',
         actor: actor,
       );
-      final updateData = <String, dynamic>{
-        'amount': pendingData['amount'],
-        'currency': pendingData['currency'],
-        'dateFrom': pendingData['dateFrom'],
-        'dateTo': pendingData['dateTo'],
-        'notes': pendingData['notes'],
-        'status': 'approvedByManager',
+
+      if (!allApproved) {
+        firestoreTransaction.update(reference, {
+          'collection_amendment.approvals': approvals,
+          'last_updated': FieldValue.serverTimestamp(),
+          'history': FieldValue.arrayUnion([approvalHistory]),
+        });
+        return;
+      }
+
+      final proposedData = _mapValue(amendment['proposed_data']);
+      if (proposedData.isEmpty) throw Exception('بيانات التعديل غير مكتملة.');
+      firestoreTransaction.update(reference, {
+        ...proposedData,
+        'status': amendment['base_status'] ?? data['status'],
+        'collection_amendment': FieldValue.delete(),
+        // Clear only the old workflow payload if a voucher was transitioned
+        // from an older app version into the current approval process.
         'pending_edit_data': FieldValue.delete(),
-        'manager_notes': FieldValue.delete(),
         'last_updated': FieldValue.serverTimestamp(),
-        'history': FieldValue.arrayUnion([historyEntry]),
-      };
-      if (pendingData.containsKey('amount_matches')) {
-        updateData['amount_matches'] = pendingData['amount_matches'];
+        'history': FieldValue.arrayUnion([approvalHistory]),
+      });
+      completed = true;
+    });
+
+    await _notifySafely(
+      () => _notificationService.notifyCollectionAmendmentProgress(
+        transactionId: transactionId,
+        approvers: participantsToNotify,
+        completed: completed,
+      ),
+    );
+  }
+
+  Future<void> rejectCollectionAmendment({
+    required String transactionId,
+    required String reason,
+  }) async {
+    final cleanReason = reason.trim();
+    if (cleanReason.isEmpty) throw Exception('سبب رفض التعديل مطلوب.');
+    final actor = await _getCurrentActor();
+    final reference = _firestore.collection('transactions').doc(transactionId);
+    await _firestore.runTransaction((firestoreTransaction) async {
+      final snapshot = await firestoreTransaction.get(reference);
+      final data = snapshot.data();
+      if (data == null) throw Exception('السند غير موجود.');
+      final amendment = _mapValue(data['collection_amendment']);
+      final required = _mapValue(amendment['required_approvers']);
+      if (amendment['state'] != 'pending' ||
+          !_mapValue(required[actor['uid']]).isNotEmpty) {
+        throw Exception('لا تملك صلاحية رفض هذا التعديل.');
       }
-      if (pendingData.containsKey('cashier_amount')) {
-        updateData['cashier_amount'] =
-            pendingData['cashier_amount'] ?? FieldValue.delete();
-      }
-      await _firestore
-          .collection('transactions')
-          .doc(transactionId)
-          .update(updateData);
-      await _notifySafely(
-        () => _notificationService.notifyForStatus(
-          transactionId: transactionId,
-          newStatus: 'approvedByManager',
-        ),
-      );
-    } catch (e) {
-      throw Exception('Failed to approve edit: $e');
-    }
+      firestoreTransaction.update(reference, {
+        'collection_amendment': FieldValue.delete(),
+        'last_updated': FieldValue.serverTimestamp(),
+        'history': FieldValue.arrayUnion([
+          _historyEntry(
+            action: 'collection_amendment_rejected',
+            message: 'تم رفض تعديل السند. السبب: $cleanReason',
+            actor: actor,
+            changes: {'reason': cleanReason},
+          ),
+        ]),
+      });
+    });
   }
 
   // --- دوال المحاسب ---
@@ -636,6 +1008,17 @@ class DatabaseService {
   }) async {
     try {
       final actor = await _getCurrentActor();
+      final current = await _firestore
+          .collection('transactions')
+          .doc(transactionId)
+          .get();
+      if (current.data() == null) throw Exception('السند غير موجود.');
+      if (_mapValue(current.data()!['collection_amendment'])['state'] ==
+          'pending') {
+        throw Exception(
+          'لا يمكن اعتماد السند نهائياً أثناء وجود طلب تعديل بانتظار الموافقات.',
+        );
+      }
       final notes = accountantNotes?.trim() ?? '';
       final historyEntry = _historyEntry(
         action: 'approved_by_accountant',
@@ -646,6 +1029,9 @@ class DatabaseService {
       );
       await _firestore.collection('transactions').doc(transactionId).update({
         'status': 'approvedByAccountant',
+        'collection_approval_participants.accountant': _approvalParticipant(
+          actor,
+        ),
         if (notes.isNotEmpty) 'accountant_notes': notes,
         'last_updated': FieldValue.serverTimestamp(),
         'history': FieldValue.arrayUnion([historyEntry]),

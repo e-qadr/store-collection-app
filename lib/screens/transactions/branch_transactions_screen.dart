@@ -146,6 +146,211 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     ).showSnackBar(SnackBar(content: Text(message), backgroundColor: color));
   }
 
+  String _collectionErrorText(Object error, {required String fallback}) {
+    final detail = error.toString().replaceFirst('Exception: ', '').trim();
+    if (detail.contains('permission-denied') || detail.contains('permission')) {
+      return '$fallback. ليس لدى الحساب صلاحية تنفيذ هذه الخطوة على السند.';
+    }
+    // DatabaseService supplies Arabic, action-specific validation messages.
+    return RegExp(r'[\u0600-\u06FF]').hasMatch(detail) ? detail : fallback;
+  }
+
+  Map<String, dynamic> _pendingCollectionAmendment(Map<String, dynamic> data) {
+    final amendment = data['collection_amendment'];
+    if (amendment is! Map || amendment['state'] != 'pending') {
+      return <String, dynamic>{};
+    }
+    return Map<String, dynamic>.from(amendment);
+  }
+
+  Future<void> _reviewCollectionAmendment({
+    required String transactionId,
+    required String transactionNumber,
+    required Map<String, dynamic> data,
+  }) async {
+    final amendment = _pendingCollectionAmendment(data);
+    final proposed = amendment['proposed_data'] is Map
+        ? Map<String, dynamic>.from(amendment['proposed_data'] as Map)
+        : <String, dynamic>{};
+    final oldAmount = (data['amount'] as num?)?.toDouble() ?? 0;
+    final newAmount = (proposed['amount'] as num?)?.toDouble() ?? oldAmount;
+    final oldCurrency = data['currency']?.toString() ?? 'YER';
+    final newCurrency = proposed['currency']?.toString() ?? oldCurrency;
+    final oldFrom = (data['dateFrom'] as Timestamp?)?.toDate();
+    final oldTo = (data['dateTo'] as Timestamp?)?.toDate();
+    final newFrom = (proposed['dateFrom'] as Timestamp?)?.toDate() ?? oldFrom;
+    final newTo = (proposed['dateTo'] as Timestamp?)?.toDate() ?? oldTo;
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final approvals = amendment['approvals'] is Map
+        ? Map<String, dynamic>.from(amendment['approvals'] as Map)
+        : <String, dynamic>{};
+    final alreadyApproved =
+        currentUserId != null && approvals.containsKey(currentUserId);
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.fact_check_rounded, color: Colors.orange),
+            SizedBox(width: 8),
+            Expanded(child: Text('مراجعة تعديل السند')),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('السند رقم $transactionNumber'),
+              const SizedBox(height: 14),
+              _amendmentComparisonRow(
+                'المبلغ',
+                '${NumberFormat('#,##0.##', 'en_US').format(oldAmount)} $oldCurrency',
+                '${NumberFormat('#,##0.##', 'en_US').format(newAmount)} $newCurrency',
+              ),
+              _amendmentComparisonRow(
+                'الفترة',
+                oldFrom == null || oldTo == null
+                    ? '-'
+                    : '${DateFormat('yyyy/MM/dd').format(oldFrom)} — ${DateFormat('yyyy/MM/dd').format(oldTo)}',
+                newFrom == null || newTo == null
+                    ? '-'
+                    : '${DateFormat('yyyy/MM/dd').format(newFrom)} — ${DateFormat('yyyy/MM/dd').format(newTo)}',
+              ),
+              _amendmentComparisonRow(
+                'الملاحظات',
+                data['notes']?.toString().trim().isEmpty ?? true
+                    ? 'لا توجد'
+                    : data['notes'].toString(),
+                proposed['notes']?.toString().trim().isEmpty ?? true
+                    ? 'لا توجد'
+                    : proposed['notes'].toString(),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'لن تُطبّق البيانات الجديدة إلا بعد اكتمال موافقة جميع المشاركين السابقين في السند.',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          if (!alreadyApproved)
+            TextButton(
+              onPressed: () async {
+                final reason = await _askAmendmentRejectionReason(
+                  dialogContext,
+                );
+                if (reason == null) return;
+                try {
+                  await _dbService.rejectCollectionAmendment(
+                    transactionId: transactionId,
+                    reason: reason,
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  _showArchiveMessage(
+                    'تم رفض التعديل وبقيت بيانات السند دون تغيير.',
+                    Colors.red,
+                  );
+                } catch (e) {
+                  _showArchiveMessage(
+                    'تعذر رفض التعديل: ${e.toString().replaceFirst('Exception: ', '')}',
+                    Colors.red,
+                  );
+                }
+              },
+              child: const Text(
+                'رفض التعديل',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ElevatedButton.icon(
+            onPressed: alreadyApproved
+                ? null
+                : () async {
+                    try {
+                      await _dbService.approveCollectionAmendment(
+                        transactionId: transactionId,
+                      );
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      _showArchiveMessage(
+                        'تم تسجيل موافقتك. سيُطبق التعديل بعد اكتمال جميع الموافقات.',
+                        Colors.green,
+                      );
+                    } catch (e) {
+                      _showArchiveMessage(
+                        'تعذر اعتماد التعديل: ${e.toString().replaceFirst('Exception: ', '')}',
+                        Colors.red,
+                      );
+                    }
+                  },
+            icon: const Icon(Icons.check_circle_rounded),
+            label: Text(alreadyApproved ? 'تمت موافقتك' : 'اعتماد التعديل'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _amendmentComparisonRow(
+    String label,
+    String oldValue,
+    String newValue,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 3),
+          Text(
+            'الحالي: $oldValue',
+            style: const TextStyle(color: Colors.redAccent),
+          ),
+          Text(
+            'المقترح: $newValue',
+            style: const TextStyle(color: Colors.green),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _askAmendmentRejectionReason(
+    BuildContext dialogContext,
+  ) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: dialogContext,
+      builder: (context) => AlertDialog(
+        title: const Text('سبب رفض التعديل'),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          decoration: const InputDecoration(hintText: 'اكتب سبب الرفض'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('تأكيد الرفض'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result == null || result.isEmpty ? null : result;
+  }
+
   // --- دوال التقويم الذكية للتعديل ---
   Future<void> _pickEditDate(
     BuildContext context,
@@ -256,8 +461,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('حدث خطأ'),
+                      SnackBar(
+                        content: Text(
+                          _collectionErrorText(
+                            e,
+                            fallback: 'تعذر إرسال طلب التعديل',
+                          ),
+                        ),
                         backgroundColor: Colors.red,
                       ),
                     );
@@ -344,8 +554,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                 } catch (e) {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('حدث خطأ'),
+                      SnackBar(
+                        content: Text(
+                          _collectionErrorText(
+                            e,
+                            fallback: 'تعذر إرسال طلب التعديل',
+                          ),
+                        ),
                         backgroundColor: Colors.red,
                       ),
                     );
@@ -432,8 +647,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
               } catch (e) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('حدث خطأ'),
+                    SnackBar(
+                      content: Text(
+                        _collectionErrorText(
+                          e,
+                          fallback: 'تعذر الاعتماد النهائي للسند',
+                        ),
+                      ),
                       backgroundColor: Colors.red,
                     ),
                   );
@@ -760,8 +980,13 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
                             setDialogState(() => isSaving = false);
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('حدث خطأ'),
+                                SnackBar(
+                                  content: Text(
+                                    _collectionErrorText(
+                                      e,
+                                      fallback: 'تعذر حفظ طلب التعديل',
+                                    ),
+                                  ),
                                   backgroundColor: Colors.red,
                                 ),
                               );
@@ -795,6 +1020,36 @@ class _BranchTransactionsScreenState extends State<BranchTransactionsScreen> {
     String trnNumber,
     Map<String, dynamic> data,
   ) {
+    final amendment = _pendingCollectionAmendment(data);
+    if (amendment.isNotEmpty) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final required = amendment['required_approvers'];
+      final approvals = amendment['approvals'];
+      final canReview =
+          uid != null && required is Map && required.containsKey(uid);
+      final alreadyApproved =
+          uid != null && approvals is Map && approvals.containsKey(uid);
+      if (canReview && !alreadyApproved) {
+        return IconButton(
+          icon: const Icon(
+            Icons.fact_check_rounded,
+            color: Colors.orange,
+            size: 26,
+          ),
+          tooltip: 'مراجعة تعديل السند',
+          onPressed: () => _reviewCollectionAmendment(
+            transactionId: transactionId,
+            transactionNumber: trnNumber,
+            data: data,
+          ),
+        );
+      }
+      return const Tooltip(
+        message: 'يوجد تعديل بانتظار بقية الموافقات',
+        child: Icon(Icons.hourglass_top_rounded, color: Colors.orange),
+      );
+    }
+
     if (status == 'approvedByAccountant') {
       return Container(
         padding: const EdgeInsets.all(8),
