@@ -17,6 +17,21 @@ class InterBranchInvoicePage {
   });
 }
 
+/// A lightweight branch record for the administrative transfer register.
+/// It intentionally includes main branches: they are valid receiving sides
+/// for transfers even though they are not operational purchase branches.
+class InterBranchInvoiceBranchOption {
+  final String id;
+  final String name;
+  final bool isMain;
+
+  const InterBranchInvoiceBranchOption({
+    required this.id,
+    required this.name,
+    required this.isMain,
+  });
+}
+
 class InterBranchInvoiceService {
   final FirebaseFirestore _firestore;
   final NotificationService _notificationService;
@@ -199,6 +214,50 @@ class InterBranchInvoiceService {
     return _page(snapshot, pageSize);
   }
 
+  /// Reads both incoming and outgoing invoices for one branch. This is used
+  /// by the manager's personal task list; the separate sent/received history
+  /// pages continue to use [fetchBranchPage].
+  Future<InterBranchInvoicePage> fetchParticipantBranchPage({
+    required String branchId,
+    DocumentSnapshot<Map<String, dynamic>>? after,
+    int pageSize = 30,
+  }) async {
+    final cleanBranchId = branchId.trim();
+    if (cleanBranchId.isEmpty) throw ArgumentError('Branch ID is required.');
+    Query<Map<String, dynamic>> query = _collection
+        .where(InterBranchInvoiceFields.branchIds, arrayContains: cleanBranchId)
+        .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
+        .limit(pageSize);
+    if (after != null) query = query.startAfterDocument(after);
+    return _page(await query.get(), pageSize);
+  }
+
+  /// The register must not derive branch choices only from the first loaded
+  /// invoice page, otherwise a quiet/old branch cannot be selected.
+  Future<List<InterBranchInvoiceBranchOption>> fetchRegisterBranches() async {
+    final snapshot = await _firestore.collection('branches').get();
+    final options =
+        snapshot.docs
+            .where((document) {
+              final data = document.data();
+              return data['active'] != false &&
+                  data['isActive'] != false &&
+                  data['is_active'] != false;
+            })
+            .map((document) {
+              final data = document.data();
+              final name = data['name']?.toString().trim();
+              return InterBranchInvoiceBranchOption(
+                id: document.id,
+                name: (name == null || name.isEmpty) ? 'فرع غير مسمى' : name,
+                isMain: data['branch_type']?.toString().trim() == 'main',
+              );
+            })
+            .toList(growable: false)
+          ..sort((left, right) => left.name.compareTo(right.name));
+    return options;
+  }
+
   Future<InterBranchInvoicePage> fetchQueuePage({
     required UserRole role,
     DocumentSnapshot<Map<String, dynamic>>? after,
@@ -261,8 +320,10 @@ class InterBranchInvoiceService {
     DocumentSnapshot<Map<String, dynamic>>? after,
     int pageSize = 30,
   }) async {
-    if (role != UserRole.admin) {
-      throw ArgumentError('Only administrators may request the global list.');
+    if (role != UserRole.admin &&
+        role != UserRole.collector &&
+        role != UserRole.accountant) {
+      throw ArgumentError('This role cannot request the global list.');
     }
     Query<Map<String, dynamic>> query = _collection
         .orderBy(InterBranchInvoiceFields.lastUpdated, descending: true)
@@ -332,13 +393,71 @@ class InterBranchInvoiceService {
     required int expectedRevision,
     required String accountingReference,
     required String idempotencyKey,
+    String? postingSide,
     String? accountingNotes,
   }) => commandApi.postAccounting(
     invoiceId: invoiceId,
     expectedRevision: expectedRevision,
     accountingReference: accountingReference,
     idempotencyKey: idempotencyKey,
+    postingSide: postingSide,
     accountingNotes: accountingNotes,
+  );
+
+  Future<InterBranchInvoiceCommandResult> requestDirectAmendment({
+    required String invoiceId,
+    required int expectedRevision,
+    required String reason,
+    required List<InterBranchInvoiceItem> items,
+    required String idempotencyKey,
+    String? invoiceNotes,
+  }) => commandApi.requestAmendment(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    reason: reason,
+    items: items,
+    idempotencyKey: idempotencyKey,
+    invoiceNotes: invoiceNotes,
+  );
+
+  Future<InterBranchInvoiceCommandResult> decideDirectAmendment({
+    required String invoiceId,
+    required int expectedRevision,
+    required bool approved,
+    required String idempotencyKey,
+    String? reason,
+  }) => commandApi.decideAmendment(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    approved: approved,
+    idempotencyKey: idempotencyKey,
+    reason: reason,
+  );
+
+  Future<InterBranchInvoiceCommandResult> requestDirectCancellation({
+    required String invoiceId,
+    required int expectedRevision,
+    required String reason,
+    required String idempotencyKey,
+  }) => commandApi.requestCancellation(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    reason: reason,
+    idempotencyKey: idempotencyKey,
+  );
+
+  Future<InterBranchInvoiceCommandResult> decideDirectCancellation({
+    required String invoiceId,
+    required int expectedRevision,
+    required bool approved,
+    required String idempotencyKey,
+    String? reason,
+  }) => commandApi.decideCancellation(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    approved: approved,
+    idempotencyKey: idempotencyKey,
+    reason: reason,
   );
 
   @Deprecated(

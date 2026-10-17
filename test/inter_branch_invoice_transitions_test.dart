@@ -94,5 +94,40 @@ void main() {
         isFalse,
       );
     });
+
+    test('workflow v3 requires both accounting postings after receipt', () {
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingReceiverReview,
+          InterBranchInvoiceStatus.pendingDualAccounting,
+          workflowVersion: 3,
+        ),
+        isTrue,
+      );
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingDualAccounting,
+          InterBranchInvoiceStatus.pendingDualAccounting,
+          workflowVersion: 3,
+        ),
+        isTrue,
+      );
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingDualAccounting,
+          InterBranchInvoiceStatus.postedToAccounting,
+          workflowVersion: 3,
+        ),
+        isTrue,
+      );
+      expect(
+        InterBranchInvoiceTransitions.allowsCoreTransition(
+          InterBranchInvoiceStatus.pendingReceiverReview,
+          InterBranchInvoiceStatus.pendingPriceEntry,
+          workflowVersion: 3,
+        ),
+        isFalse,
+      );
+    });
   });
 }

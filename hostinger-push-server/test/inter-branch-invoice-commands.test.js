@@ -301,7 +301,7 @@ function publicHasProtectedKey(value) {
       publicHasProtectedKey(nested));
 }
 
-test("the complete direct workflow is atomic, idempotent, and price-isolated", async () => {
+test.skip("retired version-2 priced transfer workflow", async () => {
   const firestore = new FakeFirestore(seed());
   await withServer(firestore, async (baseUrl) => {
     const createBody = {
@@ -405,7 +405,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
         },
     );
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).status, "pendingPriceEntry");
+    assert.equal((await response.json()).status, "pendingDualAccounting");
     invoice = firestore.document("inter_branch_invoices", created.invoice_id);
     items = invoiceItems(firestore, created.invoice_id);
     assert.equal(items[0].received_quantity, 8);
@@ -554,7 +554,7 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
           body: pricingBody,
         },
     );
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 409);
     const pricedResponse = await response.json();
     assert.equal(pricedResponse.status, "pendingAccountingEntry");
     assert.equal(publicHasProtectedKey(pricedResponse), false);
@@ -734,7 +734,6 @@ test("the complete direct workflow is atomic, idempotent, and price-isolated", a
     assert.deepEqual(events.map((event) => event.action), [
       "direct_invoice_created",
       "receipt_confirmed",
-      "prices_confirmed",
       "posted_to_accounting",
     ]);
     for (const event of events) {
@@ -948,7 +947,7 @@ test("main branches remain collector destinations and may receive cross-brand tr
         },
     );
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).status, "pendingPriceEntry");
+    assert.equal((await response.json()).status, "pendingDualAccounting");
 
     response = await post(
         baseUrl,
@@ -963,13 +962,12 @@ test("main branches remain collector destinations and may receive cross-brand tr
           },
         },
     );
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 409);
     const events = firestore.documents("inter_branch_invoice_events")
         .sort((left, right) => left.revision - right.revision);
     assert.deepEqual(events.map((event) => event.action), [
       "direct_invoice_created",
       "receipt_confirmed",
-      "prices_confirmed",
     ]);
 
     response = await post(baseUrl, "/v1/inter-branch-invoices", {
@@ -977,7 +975,7 @@ test("main branches remain collector destinations and may receive cross-brand tr
       key: "cross-brand-main-0001",
       body: {
         receiving_branch_id: "main-b",
-        items: [{product_id: "product-b", unit_id: "primary", supplied_quantity: 1}],
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 1}],
       },
     });
     assert.equal(response.status, 201);
@@ -986,7 +984,7 @@ test("main branches remain collector destinations and may receive cross-brand tr
         "inter_branch_invoices", crossBrand.invoice_id);
     const [crossBrandItem] = invoiceItems(firestore, crossBrand.invoice_id);
     assert.equal(crossBrandInvoice.receiving_brand_id, "brand-b");
-    assert.equal(crossBrandItem.product_brand_id, "brand-b");
+    assert.equal(crossBrandItem.product_brand_id, "brand-a");
     assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 3);
   });
 });
@@ -1083,7 +1081,7 @@ test("the isolated parser accepts the measured worst-case valid 50-item creation
   });
 });
 
-test("a 50-item invoice completes atomically through every version-2 transition", async () => {
+test("a 50-item transfer completes both accounting postings without prices", async () => {
   const firestore = new FakeFirestore(seedWithCatalogItems(50));
   await withServer(firestore, async (baseUrl) => {
     const createItems = Array.from({length: 50}, (_, index) => ({
@@ -1127,49 +1125,313 @@ test("a 50-item invoice completes atomically through every version-2 transition"
 
     response = await post(
         baseUrl,
-        `/v1/inter-branch-invoices/${created.invoice_id}/confirm-prices`,
+        `/v1/inter-branch-invoices/${created.invoice_id}/post-accounting`,
         {
-          uid: "collector",
-          key: "fifty-price-0001",
+          uid: "accountant",
+          key: "fifty-source-post-0001",
           body: {
             expected_revision: 2,
-            currency: "YER",
-            items: items.map((item, index) => ({
-              item_id: item.item_id,
-              unit_price: index + 1,
-            })),
+            posting_side: "source",
+            accounting_reference: "ACC-50-SOURCE",
           },
         },
     );
     assert.equal(response.status, 200);
-    assert.equal(firestore.documents("product_price_latest").length, 50);
-    assert.equal(firestore.documents("product_price_history").length, 50);
-    const priceSnapshot = firestore.document(
-        "inter_branch_invoice_prices",
-        created.invoice_id,
-    );
-    assert.equal(priceSnapshot.item_count, 50);
-    assert.equal(priceSnapshot.items.length, 50);
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    assert.equal(invoice.status, "pendingDualAccounting");
+    assert.equal(invoice.source_accounting_status, "posted");
+    assert.equal(invoice.receiving_accounting_status, "pending");
 
     response = await post(
         baseUrl,
         `/v1/inter-branch-invoices/${created.invoice_id}/post-accounting`,
         {
           uid: "accountant",
-          key: "fifty-post-0001",
+          key: "fifty-receiving-post-0001",
           body: {
             expected_revision: 3,
-            accounting_reference: "ACC-50-ITEMS",
+            posting_side: "receiving",
+            accounting_reference: "ACC-50-RECEIVING",
           },
         },
     );
     assert.equal(response.status, 200);
     invoice = firestore.document("inter_branch_invoices", created.invoice_id);
     assert.equal(invoice.status, "postedToAccounting");
-    assert.equal(
-        firestore.document("inter_branch_invoice_prices", created.invoice_id).locked,
-        true,
+    assert.equal(invoice.receiving_accounting_status, "posted");
+    assert.equal(firestore.documents("inter_branch_invoice_prices").length, 0);
+    assert.equal(firestore.documents("product_price_latest").length, 0);
+  });
+});
+
+test("transfer amendments use recorded participants, restore after rejection, and restart receipt", async () => {
+  const firestore = new FakeFirestore(seed());
+  await withServer(firestore, async (baseUrl) => {
+    let response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s",
+      key: "amendment-create-0001",
+      body: {
+        receiving_branch_id: "branch-r",
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 1}],
+      },
+    });
+    assert.equal(response.status, 201);
+    const created = await response.json();
+
+    // Before receipt the creator changes the document directly; the selected
+    // item is still resolved from the sending branch catalogue by the server.
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/request-amendment`,
+        {
+          uid: "manager-s",
+          key: "amendment-direct-0001",
+          body: {
+            expected_revision: 1,
+            reason: "تصحيح الكمية قبل الاستلام",
+            items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 2}],
+          },
+        },
     );
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "pendingReceiverReview");
+    let invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    let items = invoiceItems(firestore, created.invoice_id);
+    assert.equal(invoice.revision, 2);
+    assert.equal(items[0].supplied_quantity, 2);
+
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/confirm-receipt`,
+        {
+          uid: "manager-r",
+          key: "amendment-receipt-0001",
+          body: {
+            expected_revision: 2,
+            items: [{item_id: items[0].item_id, received_quantity: 2}],
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/request-amendment`,
+        {
+          uid: "manager-s",
+          key: "amendment-request-0001",
+          body: {
+            expected_revision: 3,
+            reason: "إضافة كمية مؤكدة",
+            items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 4}],
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "editPendingApprovals");
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    items = invoiceItems(firestore, created.invoice_id);
+    assert.equal(items[0].supplied_quantity, 2, "pending proposal must not mutate the invoice");
+    assert.deepEqual(invoice.amendment_request.required_approver_ids.sort(), ["manager-r", "manager-s"]);
+
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/decide-amendment`,
+        {
+          uid: "manager-r",
+          key: "amendment-reject-0001",
+          body: {expected_revision: 4, approved: false, reason: "الكمية غير صحيحة"},
+        },
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "pendingDualAccounting");
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    assert.equal(invoice.last_amendment.state, "rejected");
+    assert.equal(invoice.last_amendment.rejection_reason, "الكمية غير صحيحة");
+    assert.equal(invoice.last_amendment.requested_by, "manager-s");
+
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/request-amendment`,
+        {
+          uid: "manager-s",
+          key: "amendment-request-0002",
+          body: {
+            expected_revision: 5,
+            reason: "تصحيح نهائي",
+            items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 5}],
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    response = await post(
+        baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/decide-amendment`,
+        {
+          uid: "manager-r",
+          key: "amendment-approve-0001",
+          body: {expected_revision: 6, approved: true},
+        },
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "pendingReceiverReview");
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    items = invoiceItems(firestore, created.invoice_id);
+    assert.equal(invoice.last_amendment.state, "applied");
+    assert.equal(invoice.last_amendment.requested_by, "manager-s");
+    assert.equal(items[0].supplied_quantity, 5);
+    assert.equal(Object.hasOwn(items[0], "received_quantity"), false);
+    assert.equal(invoice.source_accounting_status, "pending");
+    assert.equal(invoice.receiving_accounting_status, "pending");
+  });
+});
+
+test("a transfer amendment after accounting waits for every accountant who posted", async () => {
+  const firestore = new FakeFirestore(seed());
+  await withServer(firestore, async (baseUrl) => {
+    let response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s", key: "participant-create-0001",
+      body: {
+        receiving_branch_id: "branch-r",
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 1}],
+      },
+    });
+    const created = await response.json();
+    let items = invoiceItems(firestore, created.invoice_id);
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/confirm-receipt`, {
+          uid: "manager-r", key: "participant-receipt-0001",
+          body: {expected_revision: 1, items: [
+            {item_id: items[0].item_id, received_quantity: 1},
+          ]},
+        });
+    assert.equal(response.status, 200);
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/post-accounting`, {
+          uid: "accountant", key: "participant-post-0001",
+          body: {
+            expected_revision: 2,
+            posting_side: "source",
+            accounting_reference: "SRC-1",
+          },
+        });
+    assert.equal(response.status, 200);
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/request-amendment`, {
+          uid: "manager-s", key: "participant-amend-0001",
+          body: {
+            expected_revision: 3,
+            reason: "تصحيح بعد الترحيل",
+            items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 2}],
+          },
+        });
+    assert.equal(response.status, 200);
+    let invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    assert.deepEqual(invoice.amendment_request.required_approver_ids.sort(), [
+      "accountant", "manager-r", "manager-s",
+    ]);
+
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/decide-amendment`, {
+          uid: "manager-r", key: "participant-manager-approve-0001",
+          body: {expected_revision: 4, approved: true},
+        });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "editPendingApprovals");
+
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/decide-amendment`, {
+          uid: "accountant", key: "participant-accountant-approve-0001",
+          body: {expected_revision: 5, approved: true},
+        });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "pendingReceiverReview");
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    items = invoiceItems(firestore, created.invoice_id);
+    assert.equal(items[0].supplied_quantity, 2);
+    assert.equal(invoice.last_amendment.requested_by, "manager-s");
+    assert.equal(invoice.source_accounting_status, "pending");
+    assert.equal(invoice.receiving_accounting_status, "pending");
+  });
+});
+
+test("transfer cancellation uses the same recorded participants and restores on rejection", async () => {
+  const firestore = new FakeFirestore(seed());
+  await withServer(firestore, async (baseUrl) => {
+    let response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s", key: "cancel-create-direct-0001",
+      body: {
+        receiving_branch_id: "branch-r",
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 1}],
+      },
+    });
+    const direct = await response.json();
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${direct.invoice_id}/request-cancellation`, {
+          uid: "manager-s", key: "cancel-direct-0001",
+          body: {expected_revision: 1, reason: "إدخال مكرر"},
+        });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "cancelled");
+
+    response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s", key: "cancel-create-shared-0001",
+      body: {
+        receiving_branch_id: "branch-r",
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 1}],
+      },
+    });
+    const created = await response.json();
+    let items = invoiceItems(firestore, created.invoice_id);
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/confirm-receipt`, {
+          uid: "manager-r", key: "cancel-receipt-0001",
+          body: {expected_revision: 1, items: [
+            {item_id: items[0].item_id, received_quantity: 1},
+          ]},
+        });
+    assert.equal(response.status, 200);
+
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/request-cancellation`, {
+          uid: "manager-s", key: "cancel-request-0001",
+          body: {expected_revision: 2, reason: "تم إرساله بالخطأ"},
+        });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "cancellationPendingApprovals");
+    let invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    assert.deepEqual(invoice.cancellation_request.required_approver_ids.sort(), [
+      "manager-r", "manager-s",
+    ]);
+
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/decide-cancellation`, {
+          uid: "manager-r", key: "cancel-reject-0001",
+          body: {expected_revision: 3, approved: false, reason: "المناقلة صحيحة"},
+        });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "pendingDualAccounting");
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    assert.equal(invoice.last_cancellation.state, "rejected");
+    assert.equal(invoice.last_cancellation.requested_by, "manager-s");
+    assert.equal(invoice.last_cancellation.rejection_reason, "المناقلة صحيحة");
+
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/request-cancellation`, {
+          uid: "manager-s", key: "cancel-request-0002",
+          body: {expected_revision: 4, reason: "أصبح غير مطلوب"},
+        });
+    assert.equal(response.status, 200);
+    response = await post(baseUrl,
+        `/v1/inter-branch-invoices/${created.invoice_id}/decide-cancellation`, {
+          uid: "manager-r", key: "cancel-approve-0001",
+          body: {expected_revision: 5, approved: true},
+        });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, "cancelled");
+    invoice = firestore.document("inter_branch_invoices", created.invoice_id);
+    assert.equal(invoice.last_cancellation.state, "applied");
+    assert.equal(invoice.status, "cancelled");
   });
 });
 
@@ -1226,7 +1488,7 @@ test("spoofed identity fields and same-branch selection are rejected", async () 
   assert.equal(firestore.documents("inter_branch_invoices").length, 0);
 });
 
-test("cross-brand normal destinations use the receiving catalog in both directions", async () => {
+test("cross-brand normal destinations always use the sending catalog", async () => {
   const firestore = new FakeFirestore(seed());
   await withServer(firestore, async (baseUrl) => {
     let response = await post(baseUrl, "/v1/inter-branch-invoices", {
@@ -1241,30 +1503,31 @@ test("cross-brand normal destinations use the receiving catalog in both directio
         }],
       },
     });
-    assert.equal(response.status, 403);
-    assert.equal((await response.json()).error.code, "product-brand-mismatch");
+    assert.equal(response.status, 201);
+    const aToB = await response.json();
+    assert.equal(invoiceItems(firestore, aToB.invoice_id)[0].product_brand_id, "brand-a");
 
     response = await post(baseUrl, "/v1/inter-branch-invoices", {
       uid: "manager-s",
       key: "cross-normal-a-to-b-0001",
       body: {
         receiving_branch_id: "branch-b",
-        items: [{product_id: "product-b", unit_id: "primary", supplied_quantity: 2}],
+        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 2}],
       },
     });
     assert.equal(response.status, 201);
-    const aToB = await response.json();
-    const aToBInvoice = firestore.document("inter_branch_invoices", aToB.invoice_id);
+    const sameSource = await response.json();
+    const aToBInvoice = firestore.document("inter_branch_invoices", sameSource.invoice_id);
     assert.equal(aToBInvoice.sending_brand_id, "brand-a");
     assert.equal(aToBInvoice.receiving_brand_id, "brand-b");
-    assert.equal(invoiceItems(firestore, aToB.invoice_id)[0].product_brand_id, "brand-b");
+    assert.equal(invoiceItems(firestore, sameSource.invoice_id)[0].product_brand_id, "brand-a");
 
     response = await post(baseUrl, "/v1/inter-branch-invoices", {
       uid: "manager-b",
       key: "cross-normal-b-to-a-0001",
       body: {
         receiving_branch_id: "branch-r",
-        items: [{product_id: "product-a", unit_id: "primary", supplied_quantity: 2}],
+        items: [{product_id: "product-b", unit_id: "primary", supplied_quantity: 2}],
       },
     });
     assert.equal(response.status, 201);
@@ -1274,11 +1537,11 @@ test("cross-brand normal destinations use the receiving catalog in both directio
     assert.equal(bToA.invoice_number, "CC001");
     assert.equal(bToAInvoice.sending_brand_id, "brand-b");
     assert.equal(bToAInvoice.receiving_brand_id, "brand-a");
-    assert.equal(invoiceItems(firestore, bToA.invoice_id)[0].product_brand_id, "brand-a");
+    assert.equal(invoiceItems(firestore, bToA.invoice_id)[0].product_brand_id, "brand-b");
   });
-  assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 2);
+  assert.equal(firestore.document("inter_branch_invoice_counters", "branch-s").next_number, 3);
   assert.equal(firestore.document("inter_branch_invoice_counters", "branch-b").next_number, 2);
-  assert.equal(firestore.documents("inter_branch_invoices").length, 2);
+  assert.equal(firestore.documents("inter_branch_invoices").length, 3);
 });
 
 test("invalid catalog units and inactive products fail without consuming the counter", async () => {

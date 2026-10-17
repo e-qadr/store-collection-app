@@ -52,6 +52,7 @@ class InterBranchInvoicePolicy {
     required UserRole role,
     required String? branchId,
     required InterBranchInvoiceRead invoice,
+    String? actorId,
   }) {
     if (!canView(role: role, branchId: branchId, invoice: invoice)) {
       return const {};
@@ -62,7 +63,36 @@ class InterBranchInvoicePolicy {
         branch.isNotEmpty && invoice.receivingBranchId == branch;
     final actions = <InterBranchInvoiceAction>{};
 
-    if (!invoice.isVersion2) {
+    if (invoice.isVersion3) {
+      final participant =
+          actorId != null && invoice.participantIds.contains(actorId);
+      final mayRequestDirect =
+          role == UserRole.manager &&
+          isSupplying &&
+          actorId != null &&
+          actorId == invoice.createdBy &&
+          invoice.status == InterBranchInvoiceStatus.pendingReceiverReview;
+      final mayRequestShared =
+          participant &&
+          (invoice.status == InterBranchInvoiceStatus.pendingDualAccounting ||
+              invoice.status == InterBranchInvoiceStatus.postedToAccounting);
+      if (mayRequestDirect || mayRequestShared) {
+        actions.add(InterBranchInvoiceAction.requestEdit);
+        actions.add(InterBranchInvoiceAction.requestCancellation);
+      }
+      if (invoice.hasPendingAmendment &&
+          actorId != null &&
+          invoice.amendmentApproverIds.contains(actorId) &&
+          !invoice.amendmentApprovals.containsKey(actorId)) {
+        actions.add(InterBranchInvoiceAction.approveSharedRequest);
+      }
+      if (invoice.hasPendingCancellation &&
+          actorId != null &&
+          invoice.cancellationApproverIds.contains(actorId) &&
+          !invoice.cancellationApprovals.containsKey(actorId)) {
+        actions.add(InterBranchInvoiceAction.approveSharedRequest);
+      }
+    } else if (!invoice.isVersion2) {
       if (role == UserRole.manager &&
           isSupplying &&
           invoice.status == InterBranchInvoiceStatus.requestPending) {
@@ -103,15 +133,29 @@ class InterBranchInvoicePolicy {
         invoice.status == InterBranchInvoiceStatus.pendingReceiverReview) {
       actions.add(InterBranchInvoiceAction.confirmReceipt);
     }
-    if (role == UserRole.collector &&
+    if (!invoice.isVersion3 &&
+        role == UserRole.collector &&
         invoice.status == InterBranchInvoiceStatus.pendingPriceEntry) {
       actions.add(InterBranchInvoiceAction.confirmPrices);
     }
     if (role == UserRole.accountant &&
-        invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry) {
+        (invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry ||
+            invoice.status == InterBranchInvoiceStatus.pendingDualAccounting)) {
       actions.add(InterBranchInvoiceAction.postAccounting);
     }
     return actions;
+  }
+
+  /// A task is an action that is waiting for this exact account. Optional
+  /// actions such as starting an amendment are deliberately excluded so the
+  /// task register never claims that a user has work when no decision is due.
+  static bool hasRequiredAction(Set<InterBranchInvoiceAction> actions) {
+    return actions.contains(InterBranchInvoiceAction.legacySupplierApprove) ||
+        actions.contains(InterBranchInvoiceAction.legacySupplierReject) ||
+        actions.contains(InterBranchInvoiceAction.confirmReceipt) ||
+        actions.contains(InterBranchInvoiceAction.confirmPrices) ||
+        actions.contains(InterBranchInvoiceAction.postAccounting) ||
+        actions.contains(InterBranchInvoiceAction.approveSharedRequest);
   }
 
   static bool matchesScope({
@@ -129,7 +173,8 @@ class InterBranchInvoicePolicy {
         return invoice.status == InterBranchInvoiceStatus.pendingPriceEntry;
       case InterBranchInvoiceListScope.accountingQueue:
         return invoice.status ==
-            InterBranchInvoiceStatus.pendingAccountingEntry;
+                InterBranchInvoiceStatus.pendingAccountingEntry ||
+            invoice.status == InterBranchInvoiceStatus.pendingDualAccounting;
       case InterBranchInvoiceListScope.allAuthorized:
         return branch.isEmpty || invoice.branchIds.contains(branch);
     }

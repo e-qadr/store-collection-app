@@ -13,6 +13,9 @@ const {
   productPriceLatestKey,
   publicError,
   validateCreatePayload,
+  validateAmendmentDecisionPayload,
+  validateAmendmentRequestPayload,
+  validateCancellationRequestPayload,
   validateIdempotencyKey,
   validatePostingPayload,
   validatePricingPayload,
@@ -39,6 +42,10 @@ const STATUS = Object.freeze({
   pendingReceiverReview: "pendingReceiverReview",
   pendingPriceEntry: "pendingPriceEntry",
   pendingAccountingEntry: "pendingAccountingEntry",
+  pendingDualAccounting: "pendingDualAccounting",
+  editPendingApprovals: "editPendingApprovals",
+  cancellationPendingApprovals: "cancellationPendingApprovals",
+  cancelled: "cancelled",
   postedToAccounting: "postedToAccounting",
 });
 
@@ -58,6 +65,7 @@ const PUBLIC_INVOICE_KEYS = new Set([
   "schema_version",
   "workflow_version",
   "creation_mode",
+  "catalog_branch_side",
   "status",
   "revision",
   "invoice_number",
@@ -81,6 +89,24 @@ const PUBLIC_INVOICE_KEYS = new Set([
   "receipt_confirmed_by",
   "receipt_confirmed_by_name",
   "receipt_confirmed_at",
+  "participant_ids",
+  "previous_status",
+  "cancellation_request",
+  "cancellation_approvals",
+  "last_cancellation",
+  "amendment_request",
+  "amendment_approvals",
+  "last_amendment",
+  "source_accounting_status",
+  "source_accounting_reference",
+  "source_accounting_posted_by",
+  "source_accounting_posted_by_name",
+  "source_accounting_posted_at",
+  "receiving_accounting_status",
+  "receiving_accounting_reference",
+  "receiving_accounting_posted_by",
+  "receiving_accounting_posted_by_name",
+  "receiving_accounting_posted_at",
   "accounting_reference",
   "posted_by",
   "posted_by_name",
@@ -295,9 +321,9 @@ function assertClosedPublicItem(invoice, item, expectedId) {
       item.id !== expectedId ||
       item.item_id !== expectedId ||
       item.invoice_id !== invoice.id ||
-      item.schema_version !== 2 ||
-      item.workflow_version !== 2 ||
-      item.creation_mode !== "direct_supplier_invoice" ||
+      item.schema_version !== invoice.schema_version ||
+      item.workflow_version !== invoice.workflow_version ||
+      item.creation_mode !== invoice.creation_mode ||
       !Number.isSafeInteger(item.invoice_revision) ||
       item.invoice_revision < 1 ||
       item.invoice_revision > invoice.revision ||
@@ -312,7 +338,9 @@ function assertClosedPublicItem(invoice, item, expectedId) {
       item.line_number > invoice.item_count ||
       typeof item.product_id !== "string" || !item.product_id ||
       !Number.isSafeInteger(item.product_version) || item.product_version < 1 ||
-      item.product_brand_id !== invoice.receiving_brand_id ||
+      item.product_brand_id !== (invoice.workflow_version >= 3 &&
+        invoice.catalog_branch_side === 'sending' ?
+        invoice.sending_brand_id : invoice.receiving_brand_id) ||
       typeof item.product_name !== "string" || !item.product_name ||
       Buffer.byteLength(item.product_name, "utf8") > CATALOG_SNAPSHOT_LIMITS.productNameBytes ||
       !optionalStoredString(
@@ -360,13 +388,17 @@ function requireV2Invoice(snapshot, expectedId) {
     throw new CommandError("invoice-not-found", 404, "The invoice was not found.");
   }
   const invoice = snapshot.data();
-  if (invoice?.schema_version !== 2 ||
-      invoice?.workflow_version !== 2 ||
-      invoice?.creation_mode !== "direct_supplier_invoice") {
+  const directV2 = invoice?.schema_version === 2 &&
+    invoice?.workflow_version === 2 &&
+    invoice?.creation_mode === "direct_supplier_invoice";
+  const directV3 = invoice?.schema_version === 3 &&
+    invoice?.workflow_version === 3 &&
+    invoice?.creation_mode === "direct_transfer_invoice";
+  if (!directV2 && !directV3) {
     throw new CommandError(
         "unsupported-workflow",
         409,
-        "This command is available only for direct version-2 invoices.",
+        "This command is available only for direct transfer invoices.",
     );
   }
   if (!Number.isSafeInteger(invoice.revision) || invoice.revision < 1 ||
@@ -683,7 +715,7 @@ function writePublicEvent(transaction, firestore, {invoice, event, revision}) {
   transaction.set(firestore.collection(COLLECTIONS.invoiceEvents).doc(eventId), {
     id: eventId,
     invoice_id: invoice.id,
-    workflow_version: 2,
+    workflow_version: invoice.workflow_version,
     branch_ids: [invoice.sending_branch_id, invoice.receiving_branch_id],
     revision,
     action: event.action,
@@ -771,6 +803,82 @@ function buildPublicCatalogItem({
     supplied_quantity: input.supplied_quantity,
     ...(input.line_notes ? {line_notes: input.line_notes} : {}),
   };
+}
+
+/**
+ * Resolve transfer lines from the *sending* branch catalogue.  This is kept
+ * server-side for both creation and amendments so a client cannot select an
+ * item that only belongs to the receiving branch.
+ */
+async function buildTransferCatalogItems({
+  transaction,
+  firestore,
+  inputs,
+  invoiceId,
+  supplying,
+  receiving,
+  revision,
+  randomUUID,
+}) {
+  const productSnapshots = await Promise.all(inputs.map((item) =>
+    transaction.get(firestore.collection(COLLECTIONS.products).doc(item.product_id))));
+  const productData = productSnapshots.map((snapshot, index) => {
+    if (!snapshot.exists) {
+      throw new CommandError('product-not-found', 404, 'A selected product was not found.');
+    }
+    const product = snapshot.data();
+    if (product.id !== inputs[index].product_id ||
+        !Number.isSafeInteger(product.version) || product.version < 1) {
+      throw new CommandError('catalog-snapshot-invalid', 409, 'A product identity is invalid.');
+    }
+    if (String(product.brand_id || '') !== supplying.brandId) {
+      throw new CommandError(
+          'product-brand-mismatch',
+          403,
+          'A selected product does not belong to the sending branch brand.',
+      );
+    }
+    const groupId = String(product.group_id || '').trim();
+    if (!groupId) {
+      throw new CommandError('catalog-snapshot-invalid', 409, 'A product group is missing.');
+    }
+    return {product, groupId, productId: inputs[index].product_id};
+  });
+  const uniqueGroupIds = [...new Set(productData.map((entry) => entry.groupId))];
+  const groupSnapshots = await Promise.all(uniqueGroupIds.map((groupId) =>
+    transaction.get(firestore.collection(COLLECTIONS.groups).doc(groupId))));
+  const groups = new Map();
+  groupSnapshots.forEach((snapshot, index) => {
+    const groupId = uniqueGroupIds[index];
+    const group = snapshot.data();
+    if (!snapshot.exists || group?.id !== groupId ||
+        !activeCatalogDocument(group) ||
+        String(group.brand_id || '') !== supplying.brandId) {
+      throw new CommandError(
+          'group-invalid',
+          409,
+          'A product group is not active for the sending branch brand.',
+      );
+    }
+    groups.set(groupId, group);
+  });
+  return productData.map((entry, index) => ({
+    ...buildPublicCatalogItem({
+      input: inputs[index],
+      productId: entry.productId,
+      product: entry.product,
+      group: groups.get(entry.groupId),
+      itemId: randomUUID(),
+      invoiceId,
+      supplyingBranchId: supplying.id,
+      receivingBranchId: receiving.id,
+      lineNumber: index + 1,
+    }),
+    schema_version: 3,
+    workflow_version: 3,
+    creation_mode: 'direct_transfer_invoice',
+    invoice_revision: revision,
+  }));
 }
 
 function transferCounterNextNumber(snapshot, supplyingBranch) {
@@ -882,11 +990,11 @@ async function createDirectInvoice({
             product.version < 1) {
           throw new CommandError("catalog-snapshot-invalid", 409, "A product identity is invalid.");
         }
-        if (String(product.brand_id || "") !== receiving.brandId) {
+        if (String(product.brand_id || "") !== supplying.brandId) {
           throw new CommandError(
               "product-brand-mismatch",
               403,
-              "A selected product does not belong to the receiving branch brand.",
+              "A selected product does not belong to the sending branch brand.",
           );
         }
         const groupId = String(product.group_id || "").trim();
@@ -905,11 +1013,11 @@ async function createDirectInvoice({
         if (!snapshot.exists ||
             group?.id !== groupId ||
             !activeCatalogDocument(group) ||
-            String(group.brand_id || "") !== receiving.brandId) {
+            String(group.brand_id || "") !== supplying.brandId) {
           throw new CommandError(
               "group-invalid",
               409,
-              "A product group is not active for the receiving branch brand.",
+              "A product group is not active for the sending branch brand.",
           );
         }
         groups.set(groupId, group);
@@ -924,7 +1032,8 @@ async function createDirectInvoice({
         );
       }
 
-      const items = productData.map((entry, index) => buildPublicCatalogItem({
+      const items = productData.map((entry, index) => ({
+        ...buildPublicCatalogItem({
         input: payload.items[index],
         productId: entry.productId,
         product: entry.product,
@@ -933,7 +1042,11 @@ async function createDirectInvoice({
         invoiceId: invoiceRef.id,
         supplyingBranchId: supplying.id,
         receivingBranchId: receiving.id,
-        lineNumber: index + 1,
+          lineNumber: index + 1,
+        }),
+        schema_version: 3,
+        workflow_version: 3,
+        creation_mode: "direct_transfer_invoice",
       }));
       const itemDigest = invoiceItemDigest(items);
       const createdEvent = eventData(
@@ -944,9 +1057,10 @@ async function createDirectInvoice({
       );
       const publicInvoice = {
         id: invoiceRef.id,
-        schema_version: 2,
-        workflow_version: 2,
-        creation_mode: "direct_supplier_invoice",
+        schema_version: 3,
+        workflow_version: 3,
+        creation_mode: "direct_transfer_invoice",
+        catalog_branch_side: "sending",
         status: STATUS.pendingReceiverReview,
         revision: 1,
         invoice_number: invoiceNumber,
@@ -965,6 +1079,7 @@ async function createDirectInvoice({
         created_by: actor.uid,
         created_by_name: actor.name,
         created_by_role: actor.role,
+        participant_ids: [actor.uid],
         created_at: timestamp,
         last_updated: timestamp,
         history: [createdEvent],
@@ -1033,11 +1148,12 @@ function receiptItemsForInvoice(invoiceItems, receivedItems) {
       throw new CommandError("invoice-malformed", 409, "An invoice quantity is invalid.");
     }
     const maximumMissing = Math.max(supplied - receipt.received_quantity, 0);
-    if (receipt.missing_quantity > maximumMissing) {
+    if (receipt.missing_quantity > maximumMissing ||
+        Math.abs((receipt.received_quantity + receipt.missing_quantity) - supplied) > 0.000001) {
       throw new CommandError(
           "quantity-inconsistent",
           400,
-          "Missing quantity cannot exceed the supplied quantity.",
+          "Received and missing quantities must explain the supplied quantity.",
       );
     }
     return {
@@ -1106,12 +1222,15 @@ async function confirmReceipt({
         invoice_revision: revision,
       }));
       const itemDigest = invoiceItemDigest(items);
-      const collectors = await activeUsersByRole(transaction, firestore, "collector");
-      if (collectors.length === 0) {
+      const isVersion3 = invoice.workflow_version >= 3;
+      const nextRecipients = await activeUsersByRole(
+          transaction, firestore, isVersion3 ? "accountant" : "collector");
+      if (nextRecipients.length === 0) {
         throw new CommandError(
-            "general-manager-not-configured",
+            isVersion3 ? "accountant-not-configured" : "general-manager-not-configured",
             409,
-            "No active general manager is configured.",
+            isVersion3 ? "No active accountant is configured." :
+              "No active general manager is configured.",
         );
       }
       const event = eventData(
@@ -1124,12 +1243,20 @@ async function confirmReceipt({
       );
       transaction.update(invoiceRef, {
         item_digest: itemDigest,
-        status: STATUS.pendingPriceEntry,
+        status: isVersion3 ? STATUS.pendingDualAccounting : STATUS.pendingPriceEntry,
         revision,
         ...(payload.receiver_notes ? {receiver_notes: payload.receiver_notes} : {}),
         receipt_confirmed_by: actor.uid,
         receipt_confirmed_by_name: actor.name,
         receipt_confirmed_at: timestamp,
+        ...(isVersion3 ? {
+          participant_ids: [...new Set([
+            ...(Array.isArray(invoice.participant_ids) ? invoice.participant_ids : []),
+            actor.uid,
+          ])],
+          source_accounting_status: "pending",
+          receiving_accounting_status: "pending",
+        } : {}),
         last_updated: timestamp,
         history: historyWithEvent(invoice, event),
       });
@@ -1139,18 +1266,27 @@ async function confirmReceipt({
       });
       writePublicEvent(transaction, firestore, {invoice, event, revision});
       writeNotifications(transaction, firestore, {
-        recipients: collectors,
+        recipients: nextRecipients,
         invoice,
-        type: "inter_branch_v2_receipt_confirmed",
-        title: "فاتورة تحويل بانتظار التسعير",
-        message: `تم تأكيد استلام الفاتورة رقم ${invoice.invoice_number}.`,
+        type: isVersion3 ? "inter_branch_v3_receipt_confirmed" :
+          "inter_branch_v2_receipt_confirmed",
+        title: isVersion3 ? "فاتورة مناقلة بانتظار الترحيل المحاسبي" :
+          "فاتورة تحويل بانتظار التسعير",
+        message: isVersion3 ?
+          `تم تأكيد الاستلام للفاتورة رقم ${invoice.invoice_number}. يلزم ترحيل الصادر والوارد.` :
+          `تم تأكيد استلام الفاتورة رقم ${invoice.invoice_number}.`,
         revision,
         timestamp,
         excludeUid: actor.uid,
       });
       return {
         statusCode: 200,
-        responseData: responseFor(invoiceId, null, STATUS.pendingPriceEntry, revision),
+        responseData: responseFor(
+            invoiceId,
+            null,
+            isVersion3 ? STATUS.pendingDualAccounting : STATUS.pendingPriceEntry,
+            revision,
+        ),
       };
     },
   });
@@ -1448,6 +1584,738 @@ function assertProtectedSnapshotMatchesInvoice(invoice, publicItems, snapshot) {
   }
 }
 
+function transferParticipants(invoice) {
+  const ids = Array.isArray(invoice.participant_ids) ? invoice.participant_ids : [];
+  const unique = [...new Set(ids.filter((id) => typeof id === 'string' && id.trim()))];
+  if (unique.length === 0) {
+    throw new CommandError('invoice-malformed', 409, 'The invoice participants are invalid.');
+  }
+  return unique;
+}
+
+function pendingAmendment(invoice) {
+  const request = invoice.amendment_request;
+  if (!request || typeof request !== 'object' || Array.isArray(request) ||
+      request.state !== 'pending' || !Array.isArray(request.required_approver_ids) ||
+      !Array.isArray(request.proposed_items)) {
+    throw new CommandError('amendment-not-found', 409, 'There is no pending amendment.');
+  }
+  const approvers = [...new Set(request.required_approver_ids.filter((id) =>
+    typeof id === 'string' && id.trim()))];
+  if (approvers.length === 0 || approvers.length !== request.required_approver_ids.length) {
+    throw new CommandError('invoice-malformed', 409, 'The amendment approvers are invalid.');
+  }
+  return {...request, required_approver_ids: approvers};
+}
+
+function pendingCancellation(invoice) {
+  const request = invoice.cancellation_request;
+  if (!request || typeof request !== 'object' || Array.isArray(request) ||
+      request.state !== 'pending' || !Array.isArray(request.required_approver_ids)) {
+    throw new CommandError('cancellation-not-found', 409, 'There is no pending cancellation.');
+  }
+  const approvers = [...new Set(request.required_approver_ids.filter((id) =>
+    typeof id === 'string' && id.trim()))];
+  if (approvers.length === 0 || approvers.length !== request.required_approver_ids.length) {
+    throw new CommandError('invoice-malformed', 409, 'The cancellation approvers are invalid.');
+  }
+  return {...request, required_approver_ids: approvers};
+}
+
+async function transferBranchesForInvoice(transaction, firestore, invoice) {
+  const [supplyingSnapshot, receivingSnapshot] = await Promise.all([
+    transaction.get(firestore.collection(COLLECTIONS.branches).doc(invoice.sending_branch_id)),
+    transaction.get(firestore.collection(COLLECTIONS.branches).doc(invoice.receiving_branch_id)),
+  ]);
+  return {
+    supplying: cleanBranch(supplyingSnapshot, invoice.sending_branch_id),
+    receiving: cleanBranch(receivingSnapshot, invoice.receiving_branch_id),
+  };
+}
+
+function amendmentSummary({
+  id,
+  state,
+  reason,
+  actor,
+  requester = actor,
+  timestamp,
+  rejectionReason,
+  proposalCount,
+}) {
+  return {
+    id,
+    state,
+    reason,
+    // The person taking the final decision may differ from the person who
+    // originally requested the amendment. Keep the audit trail attributed to
+    // the requester in both the approved and rejected outcomes.
+    requested_by: requester.uid,
+    requested_by_name: requester.name,
+    requested_by_role: requester.role,
+    requested_at: timestamp,
+    proposal_item_count: proposalCount,
+    ...(rejectionReason ? {rejection_reason: rejectionReason} : {}),
+  };
+}
+
+function cancellationSummary({
+  id,
+  state,
+  reason,
+  actor,
+  requester = actor,
+  timestamp,
+  rejectionReason,
+}) {
+  return {
+    id,
+    state,
+    reason,
+    requested_by: requester.uid,
+    requested_by_name: requester.name,
+    requested_by_role: requester.role,
+    requested_at: timestamp,
+    ...(rejectionReason ? {rejection_reason: rejectionReason} : {}),
+  };
+}
+
+function updateItemDocuments(transaction, invoiceRef, previousItems, nextItems) {
+  previousItems.forEach((item) => transaction.delete(
+      invoiceItemsCollection(invoiceRef).doc(item.item_id)));
+  nextItems.forEach((item) => transaction.set(
+      invoiceItemsCollection(invoiceRef).doc(item.item_id), item));
+}
+
+async function requestAmendment({
+  admin,
+  firestore,
+  actorUid,
+  invoiceId,
+  payload,
+  idempotencyKey,
+  timestamp,
+  randomUUID,
+}) {
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const requestHash = canonicalRequestHash({invoice_id: invoiceId, ...payload});
+  return runIdempotentTransaction({
+    admin,
+    firestore,
+    command: 'request_amendment',
+    actorUid,
+    expectedRole: ['manager', 'collector', 'accountant'],
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const invoiceSnapshot = await transaction.get(invoiceRef);
+      const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
+      if (invoice.workflow_version < 3) {
+        throw new CommandError('unsupported-workflow', 409, 'This amendment flow requires a transfer invoice.');
+      }
+      requireStatusAndRevision(invoice, invoice.status, payload.expected_revision);
+      if (invoice.status === STATUS.editPendingApprovals) {
+        throw new CommandError('amendment-already-pending', 409, 'An amendment is already pending.');
+      }
+      if (invoice.status !== STATUS.pendingReceiverReview &&
+          invoice.status !== STATUS.pendingDualAccounting &&
+          invoice.status !== STATUS.postedToAccounting) {
+        throw new CommandError('invalid-state', 409, 'The invoice cannot be amended in its current state.');
+      }
+      const {supplying, receiving} = await transferBranchesForInvoice(
+          transaction, firestore, invoice);
+      const directBeforeReceipt = invoice.status === STATUS.pendingReceiverReview &&
+        actor.role === 'manager' && invoice.created_by === actor.uid;
+      if (directBeforeReceipt) {
+        assertActorManagesBranch(actor, supplying.id, supplying.data);
+      } else if (!transferParticipants(invoice).includes(actor.uid)) {
+        throw new CommandError('forbidden', 403, 'Only a recorded participant may request this amendment.');
+      }
+
+      const revision = invoice.revision + 1;
+      const proposedItems = await buildTransferCatalogItems({
+        transaction,
+        firestore,
+        inputs: payload.items,
+        invoiceId,
+        supplying,
+        receiving,
+        revision,
+        randomUUID,
+      });
+      const itemDigest = invoiceItemDigest(proposedItems);
+      const currentItems = await readV2PublicItems(transaction, invoiceRef, invoice);
+      const amendmentId = randomUUID();
+
+      if (directBeforeReceipt) {
+        const event = eventData(
+            'amendment_applied_directly',
+            'عدّل منشئ الفاتورة المواد قبل تأكيد الاستلام.',
+            actor,
+            timestamp,
+        );
+        const nextInvoice = {
+          ...invoice,
+          revision,
+          catalog_branch_side: 'sending',
+          item_count: proposedItems.length,
+          item_digest: itemDigest,
+          ...(payload.invoice_notes ? {invoice_notes: payload.invoice_notes} : {}),
+          last_amendment: amendmentSummary({
+            id: amendmentId,
+            state: 'applied_directly',
+            reason: payload.reason,
+            actor,
+            timestamp,
+            proposalCount: proposedItems.length,
+          }),
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        };
+        if (!payload.invoice_notes) delete nextInvoice.invoice_notes;
+        assertNoPriceLikeKeys(nextInvoice, 'invoice');
+        assertClosedPublicInvoice(nextInvoice);
+        proposedItems.forEach((item) => assertClosedPublicItem(nextInvoice, item, item.item_id));
+        transaction.set(invoiceRef, nextInvoice);
+        updateItemDocuments(transaction, invoiceRef, currentItems, proposedItems);
+        writePublicEvent(transaction, firestore, {invoice, event, revision});
+        const recipients = await activeReceivingRecipients(transaction, firestore, receiving);
+        writeNotifications(transaction, firestore, {
+          recipients,
+          invoice,
+          type: 'inter_branch_v3_direct_amendment_applied',
+          title: 'تم تعديل فاتورة المناقلة',
+          message: `تم تعديل الفاتورة رقم ${invoice.invoice_number} قبل تأكيد الاستلام.`,
+          revision,
+          timestamp,
+          excludeUid: actor.uid,
+        });
+        return {statusCode: 200, responseData: responseFor(
+            invoiceId, null, STATUS.pendingReceiverReview, revision)};
+      }
+
+      const requiredApprovers = transferParticipants(invoice);
+      const event = eventData(
+          'amendment_requested',
+          'تم طلب تعديل فاتورة المناقلة وبانتظار موافقة جميع المشاركين.',
+          actor,
+          timestamp,
+      );
+      const amendmentRequest = {
+        ...amendmentSummary({
+          id: amendmentId,
+          state: 'pending',
+          reason: payload.reason,
+          actor,
+          timestamp,
+          proposalCount: proposedItems.length,
+        }),
+        required_approver_ids: requiredApprovers,
+        proposed_items: proposedItems,
+        ...(payload.invoice_notes ? {proposed_invoice_notes: payload.invoice_notes} : {}),
+      };
+      const nextInvoice = {
+        ...invoice,
+        previous_status: invoice.status,
+        status: STATUS.editPendingApprovals,
+        revision,
+        amendment_request: amendmentRequest,
+        amendment_approvals: {
+          [actor.uid]: {
+            approved: true,
+            actor_name: actor.name,
+            actor_role: actor.role,
+            reason: payload.reason,
+            at: timestamp,
+          },
+        },
+        last_updated: timestamp,
+        history: historyWithEvent(invoice, event),
+      };
+      assertNoPriceLikeKeys(nextInvoice, 'invoice');
+      assertClosedPublicInvoice(nextInvoice);
+      transaction.set(invoiceRef, nextInvoice);
+      writePublicEvent(transaction, firestore, {invoice, event, revision});
+      writeNotifications(transaction, firestore, {
+        recipients: requiredApprovers,
+        invoice,
+        type: 'inter_branch_v3_amendment_requested',
+        title: 'طلب تعديل فاتورة مناقلة',
+        message: `يوجد طلب تعديل للفاتورة رقم ${invoice.invoice_number} بانتظار موافقتك.`,
+        revision,
+        timestamp,
+        excludeUid: actor.uid,
+      });
+      return {statusCode: 200, responseData: responseFor(
+          invoiceId, null, STATUS.editPendingApprovals, revision)};
+    },
+  });
+}
+
+async function decideAmendment({
+  admin,
+  firestore,
+  actorUid,
+  invoiceId,
+  payload,
+  idempotencyKey,
+  timestamp,
+}) {
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const requestHash = canonicalRequestHash({invoice_id: invoiceId, ...payload});
+  return runIdempotentTransaction({
+    admin,
+    firestore,
+    command: 'decide_amendment',
+    actorUid,
+    expectedRole: ['manager', 'collector', 'accountant'],
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const invoiceSnapshot = await transaction.get(invoiceRef);
+      const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
+      if (invoice.workflow_version < 3) {
+        throw new CommandError('unsupported-workflow', 409, 'This amendment flow requires a transfer invoice.');
+      }
+      requireStatusAndRevision(invoice, STATUS.editPendingApprovals, payload.expected_revision);
+      const amendment = pendingAmendment(invoice);
+      if (!amendment.required_approver_ids.includes(actor.uid)) {
+        throw new CommandError('forbidden', 403, 'You are not an approver for this amendment.');
+      }
+      const approvals = invoice.amendment_approvals && typeof invoice.amendment_approvals === 'object' ?
+        {...invoice.amendment_approvals} : {};
+      if (approvals[actor.uid]) {
+        throw new CommandError('decision-already-recorded', 409, 'Your decision was already recorded.');
+      }
+      const revision = invoice.revision + 1;
+      if (!payload.approved) {
+        const event = eventData(
+            'amendment_rejected',
+            'تم رفض طلب تعديل فاتورة المناقلة وإعادة الفاتورة إلى مسارها السابق.',
+            actor,
+            timestamp,
+        );
+        const nextInvoice = {
+          ...invoice,
+          status: invoice.previous_status,
+          revision,
+          last_amendment: amendmentSummary({
+            id: amendment.id,
+            state: 'rejected',
+            reason: amendment.reason,
+            actor,
+            requester: {
+              uid: amendment.requested_by,
+              name: amendment.requested_by_name,
+              role: amendment.requested_by_role,
+            },
+            timestamp,
+            rejectionReason: payload.reason,
+            proposalCount: amendment.proposal_item_count,
+          }),
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        };
+        delete nextInvoice.previous_status;
+        delete nextInvoice.amendment_request;
+        delete nextInvoice.amendment_approvals;
+        assertNoPriceLikeKeys(nextInvoice, 'invoice');
+        assertClosedPublicInvoice(nextInvoice);
+        transaction.set(invoiceRef, nextInvoice);
+        writePublicEvent(transaction, firestore, {invoice, event, revision});
+        writeNotifications(transaction, firestore, {
+          recipients: amendment.required_approver_ids,
+          invoice,
+          type: 'inter_branch_v3_amendment_rejected',
+          title: 'تم رفض تعديل فاتورة المناقلة',
+          message: `تم رفض طلب تعديل الفاتورة رقم ${invoice.invoice_number}: ${payload.reason}.`,
+          revision,
+          timestamp,
+          excludeUid: actor.uid,
+        });
+        return {statusCode: 200, responseData: responseFor(
+            invoiceId, null, invoice.previous_status, revision)};
+      }
+
+      approvals[actor.uid] = {
+        approved: true,
+        actor_name: actor.name,
+        actor_role: actor.role,
+        ...(payload.reason ? {reason: payload.reason} : {}),
+        at: timestamp,
+      };
+      const allApproved = amendment.required_approver_ids.every((uid) => approvals[uid]?.approved === true);
+      if (!allApproved) {
+        const event = eventData(
+            'amendment_approved',
+            'سجّل أحد المشاركين موافقته على تعديل فاتورة المناقلة.',
+            actor,
+            timestamp,
+        );
+        const nextInvoice = {
+          ...invoice,
+          revision,
+          amendment_approvals: approvals,
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        };
+        assertNoPriceLikeKeys(nextInvoice, 'invoice');
+        assertClosedPublicInvoice(nextInvoice);
+        transaction.set(invoiceRef, nextInvoice);
+        writePublicEvent(transaction, firestore, {invoice, event, revision});
+        return {statusCode: 200, responseData: responseFor(
+            invoiceId, null, STATUS.editPendingApprovals, revision)};
+      }
+
+      const proposedItems = amendment.proposed_items.map((item) => ({
+        ...item,
+        invoice_revision: revision,
+      }));
+      const currentItems = await readV2PublicItems(transaction, invoiceRef, invoice);
+      const nextDigest = invoiceItemDigest(proposedItems);
+      const event = eventData(
+          'amendment_applied',
+          'اكتملت الموافقات وطُبّق تعديل فاتورة المناقلة. يلزم تأكيد الاستلام والترحيل من جديد.',
+          actor,
+          timestamp,
+      );
+      const nextInvoice = {
+        ...invoice,
+        status: STATUS.pendingReceiverReview,
+        revision,
+        catalog_branch_side: 'sending',
+        item_count: proposedItems.length,
+        item_digest: nextDigest,
+        ...(amendment.proposed_invoice_notes ? {invoice_notes: amendment.proposed_invoice_notes} : {}),
+        source_accounting_status: 'pending',
+        receiving_accounting_status: 'pending',
+        last_amendment: amendmentSummary({
+          id: amendment.id,
+          state: 'applied',
+          reason: amendment.reason,
+          actor,
+          requester: {
+            uid: amendment.requested_by,
+            name: amendment.requested_by_name,
+            role: amendment.requested_by_role,
+          },
+          timestamp,
+          proposalCount: proposedItems.length,
+        }),
+        last_updated: timestamp,
+        history: historyWithEvent(invoice, event),
+      };
+      [
+        'previous_status', 'amendment_request', 'amendment_approvals',
+        'receipt_confirmed_by', 'receipt_confirmed_by_name', 'receipt_confirmed_at',
+        'receiver_notes', 'source_accounting_reference', 'source_accounting_posted_by',
+        'source_accounting_posted_by_name', 'source_accounting_posted_at',
+        'receiving_accounting_reference', 'receiving_accounting_posted_by',
+        'receiving_accounting_posted_by_name', 'receiving_accounting_posted_at',
+      ].forEach((key) => delete nextInvoice[key]);
+      if (!amendment.proposed_invoice_notes) delete nextInvoice.invoice_notes;
+      assertNoPriceLikeKeys(nextInvoice, 'invoice');
+      assertClosedPublicInvoice(nextInvoice);
+      proposedItems.forEach((item) => assertClosedPublicItem(nextInvoice, item, item.item_id));
+      transaction.set(invoiceRef, nextInvoice);
+      updateItemDocuments(transaction, invoiceRef, currentItems, proposedItems);
+      writePublicEvent(transaction, firestore, {invoice, event, revision});
+      writeNotifications(transaction, firestore, {
+        recipients: transferParticipants(invoice),
+        invoice,
+        type: 'inter_branch_v3_amendment_applied',
+        title: 'تم اعتماد تعديل فاتورة المناقلة',
+        message: `تم اعتماد تعديل الفاتورة رقم ${invoice.invoice_number}. يلزم تأكيد الاستلام ثم إعادة الترحيل.`,
+        revision,
+        timestamp,
+        excludeUid: actor.uid,
+      });
+      return {statusCode: 200, responseData: responseFor(
+          invoiceId, null, STATUS.pendingReceiverReview, revision)};
+    },
+  });
+}
+
+async function requestCancellation({
+  admin,
+  firestore,
+  actorUid,
+  invoiceId,
+  payload,
+  idempotencyKey,
+  timestamp,
+  randomUUID,
+}) {
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const requestHash = canonicalRequestHash({invoice_id: invoiceId, ...payload});
+  return runIdempotentTransaction({
+    admin,
+    firestore,
+    command: 'request_cancellation',
+    actorUid,
+    expectedRole: ['manager', 'collector', 'accountant'],
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const invoiceSnapshot = await transaction.get(invoiceRef);
+      const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
+      if (invoice.workflow_version < 3) {
+        throw new CommandError('unsupported-workflow', 409, 'This cancellation flow requires a transfer invoice.');
+      }
+      requireStatusAndRevision(invoice, invoice.status, payload.expected_revision);
+      if (invoice.status === STATUS.cancellationPendingApprovals ||
+          invoice.status === STATUS.editPendingApprovals) {
+        throw new CommandError('shared-request-already-pending', 409, 'A shared request is already pending.');
+      }
+      if (invoice.status !== STATUS.pendingReceiverReview &&
+          invoice.status !== STATUS.pendingDualAccounting &&
+          invoice.status !== STATUS.postedToAccounting) {
+        throw new CommandError('invalid-state', 409, 'The invoice cannot be cancelled in its current state.');
+      }
+
+      const directBeforeReceipt = invoice.status === STATUS.pendingReceiverReview &&
+        actor.role === 'manager' && invoice.created_by === actor.uid;
+      if (!directBeforeReceipt && !transferParticipants(invoice).includes(actor.uid)) {
+        throw new CommandError('forbidden', 403, 'Only a recorded participant may request this cancellation.');
+      }
+
+      const requiredApprovers = transferParticipants(invoice);
+      const cancellationId = randomUUID();
+      const revision = invoice.revision + 1;
+      const request = {
+        ...cancellationSummary({
+          id: cancellationId,
+          state: 'pending',
+          reason: payload.reason,
+          actor,
+          timestamp,
+        }),
+        required_approver_ids: requiredApprovers,
+      };
+      const approvals = {
+        [actor.uid]: {
+          approved: true,
+          actor_name: actor.name,
+          actor_role: actor.role,
+          reason: payload.reason,
+          at: timestamp,
+        },
+      };
+      const directCancellation = requiredApprovers.length === 1;
+      const event = eventData(
+          directCancellation ? 'cancellation_applied_directly' : 'cancellation_requested',
+          directCancellation ?
+            'ألغى منشئ فاتورة المناقلة الفاتورة قبل تأكيد الاستلام.' :
+            'تم طلب إلغاء فاتورة المناقلة وبانتظار موافقة جميع المشاركين.',
+          actor,
+          timestamp,
+      );
+      const nextInvoice = {
+        ...invoice,
+        status: directCancellation ? STATUS.cancelled : STATUS.cancellationPendingApprovals,
+        revision,
+        ...(directCancellation ? {
+          last_cancellation: cancellationSummary({
+            id: cancellationId,
+            state: 'applied_directly',
+            reason: payload.reason,
+            actor,
+            timestamp,
+          }),
+        } : {
+          previous_status: invoice.status,
+          cancellation_request: request,
+          cancellation_approvals: approvals,
+        }),
+        last_updated: timestamp,
+        history: historyWithEvent(invoice, event),
+      };
+      assertNoPriceLikeKeys(nextInvoice, 'invoice');
+      assertClosedPublicInvoice(nextInvoice);
+      transaction.set(invoiceRef, nextInvoice);
+      writePublicEvent(transaction, firestore, {invoice, event, revision});
+      if (!directCancellation) {
+        writeNotifications(transaction, firestore, {
+          recipients: requiredApprovers,
+          invoice,
+          type: 'inter_branch_v3_cancellation_requested',
+          title: 'طلب إلغاء فاتورة مناقلة',
+          message: `يوجد طلب إلغاء للفاتورة رقم ${invoice.invoice_number} بانتظار موافقتك.`,
+          revision,
+          timestamp,
+          excludeUid: actor.uid,
+        });
+      }
+      return {statusCode: 200, responseData: responseFor(
+          invoiceId, null, nextInvoice.status, revision)};
+    },
+  });
+}
+
+async function decideCancellation({
+  admin,
+  firestore,
+  actorUid,
+  invoiceId,
+  payload,
+  idempotencyKey,
+  timestamp,
+}) {
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const requestHash = canonicalRequestHash({invoice_id: invoiceId, ...payload});
+  return runIdempotentTransaction({
+    admin,
+    firestore,
+    command: 'decide_cancellation',
+    actorUid,
+    expectedRole: ['manager', 'collector', 'accountant'],
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const invoiceSnapshot = await transaction.get(invoiceRef);
+      const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
+      if (invoice.workflow_version < 3) {
+        throw new CommandError('unsupported-workflow', 409, 'This cancellation flow requires a transfer invoice.');
+      }
+      requireStatusAndRevision(
+          invoice, STATUS.cancellationPendingApprovals, payload.expected_revision);
+      const cancellation = pendingCancellation(invoice);
+      if (!cancellation.required_approver_ids.includes(actor.uid)) {
+        throw new CommandError('forbidden', 403, 'You are not an approver for this cancellation.');
+      }
+      const approvals = invoice.cancellation_approvals &&
+          typeof invoice.cancellation_approvals === 'object' ?
+        {...invoice.cancellation_approvals} : {};
+      if (approvals[actor.uid]) {
+        throw new CommandError('decision-already-recorded', 409, 'Your decision was already recorded.');
+      }
+      const revision = invoice.revision + 1;
+      const requester = {
+        uid: cancellation.requested_by,
+        name: cancellation.requested_by_name,
+        role: cancellation.requested_by_role,
+      };
+      if (!payload.approved) {
+        const event = eventData(
+            'cancellation_rejected',
+            'تم رفض طلب إلغاء فاتورة المناقلة وإعادة الفاتورة إلى مسارها السابق.',
+            actor,
+            timestamp,
+        );
+        const nextInvoice = {
+          ...invoice,
+          status: invoice.previous_status,
+          revision,
+          last_cancellation: cancellationSummary({
+            id: cancellation.id,
+            state: 'rejected',
+            reason: cancellation.reason,
+            actor,
+            requester,
+            timestamp,
+            rejectionReason: payload.reason,
+          }),
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        };
+        ['previous_status', 'cancellation_request', 'cancellation_approvals']
+            .forEach((key) => delete nextInvoice[key]);
+        assertNoPriceLikeKeys(nextInvoice, 'invoice');
+        assertClosedPublicInvoice(nextInvoice);
+        transaction.set(invoiceRef, nextInvoice);
+        writePublicEvent(transaction, firestore, {invoice, event, revision});
+        writeNotifications(transaction, firestore, {
+          recipients: cancellation.required_approver_ids,
+          invoice,
+          type: 'inter_branch_v3_cancellation_rejected',
+          title: 'تم رفض إلغاء فاتورة المناقلة',
+          message: `تم رفض طلب إلغاء الفاتورة رقم ${invoice.invoice_number}: ${payload.reason}.`,
+          revision,
+          timestamp,
+          excludeUid: actor.uid,
+        });
+        return {statusCode: 200, responseData: responseFor(
+            invoiceId, null, invoice.previous_status, revision)};
+      }
+
+      approvals[actor.uid] = {
+        approved: true,
+        actor_name: actor.name,
+        actor_role: actor.role,
+        ...(payload.reason ? {reason: payload.reason} : {}),
+        at: timestamp,
+      };
+      const allApproved = cancellation.required_approver_ids.every(
+          (uid) => approvals[uid]?.approved === true);
+      if (!allApproved) {
+        const event = eventData(
+            'cancellation_approved',
+            'سجّل أحد المشاركين موافقته على إلغاء فاتورة المناقلة.',
+            actor,
+            timestamp,
+        );
+        const nextInvoice = {
+          ...invoice,
+          revision,
+          cancellation_approvals: approvals,
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, event),
+        };
+        assertNoPriceLikeKeys(nextInvoice, 'invoice');
+        assertClosedPublicInvoice(nextInvoice);
+        transaction.set(invoiceRef, nextInvoice);
+        writePublicEvent(transaction, firestore, {invoice, event, revision});
+        return {statusCode: 200, responseData: responseFor(
+            invoiceId, null, STATUS.cancellationPendingApprovals, revision)};
+      }
+
+      const event = eventData(
+          'cancellation_applied',
+          'اكتملت الموافقات وأُلغيت فاتورة المناقلة.',
+          actor,
+          timestamp,
+      );
+      const nextInvoice = {
+        ...invoice,
+        status: STATUS.cancelled,
+        revision,
+        last_cancellation: cancellationSummary({
+          id: cancellation.id,
+          state: 'applied',
+          reason: cancellation.reason,
+          actor,
+          requester,
+          timestamp,
+        }),
+        last_updated: timestamp,
+        history: historyWithEvent(invoice, event),
+      };
+      ['previous_status', 'cancellation_request', 'cancellation_approvals']
+          .forEach((key) => delete nextInvoice[key]);
+      assertNoPriceLikeKeys(nextInvoice, 'invoice');
+      assertClosedPublicInvoice(nextInvoice);
+      transaction.set(invoiceRef, nextInvoice);
+      writePublicEvent(transaction, firestore, {invoice, event, revision});
+      writeNotifications(transaction, firestore, {
+        recipients: cancellation.required_approver_ids,
+        invoice,
+        type: 'inter_branch_v3_cancellation_applied',
+        title: 'تم إلغاء فاتورة المناقلة',
+        message: `تم إلغاء الفاتورة رقم ${invoice.invoice_number} بعد اكتمال الموافقات.`,
+        revision,
+        timestamp,
+        excludeUid: actor.uid,
+      });
+      return {statusCode: 200, responseData: responseFor(
+          invoiceId, null, STATUS.cancelled, revision)};
+    },
+  });
+}
+
 async function postToAccounting({
   admin,
   firestore,
@@ -1475,6 +2343,89 @@ async function postToAccounting({
         transaction.get(snapshotRef),
       ]);
       const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
+      if (invoice.workflow_version >= 3) {
+        requireStatusAndRevision(
+            invoice,
+            STATUS.pendingDualAccounting,
+            payload.expected_revision,
+        );
+        const side = String(payload.posting_side || "").trim();
+        if (side !== "source" && side !== "receiving") {
+          throw new CommandError(
+              "invalid-argument",
+              400,
+              "A source or receiving accounting side is required.",
+          );
+        }
+        const statusField = side === "source" ?
+          "source_accounting_status" : "receiving_accounting_status";
+        const referenceField = side === "source" ?
+          "source_accounting_reference" : "receiving_accounting_reference";
+        const actorField = side === "source" ?
+          "source_accounting_posted_by" : "receiving_accounting_posted_by";
+        const actorNameField = side === "source" ?
+          "source_accounting_posted_by_name" : "receiving_accounting_posted_by_name";
+        const postedAtField = side === "source" ?
+          "source_accounting_posted_at" : "receiving_accounting_posted_at";
+        if (invoice[statusField] === "posted") {
+          throw new CommandError(
+              "accounting-side-already-posted",
+              409,
+              "This accounting side was already posted.",
+          );
+        }
+        const otherStatusField = side === "source" ?
+          "receiving_accounting_status" : "source_accounting_status";
+        const completed = invoice[otherStatusField] === "posted";
+        const revision = invoice.revision + 1;
+        const publicEvent = eventData(
+            side === "source" ? "source_accounting_posted" :
+              "receiving_accounting_posted",
+            side === "source" ?
+              "تم ترحيل حركة المناقلة الصادرة محاسبيًا." :
+              "تم ترحيل حركة المناقلة الواردة محاسبيًا.",
+            actor,
+            timestamp,
+        );
+        transaction.update(invoiceRef, {
+          [statusField]: "posted",
+          [referenceField]: payload.accounting_reference,
+          [actorField]: actor.uid,
+          [actorNameField]: actor.name,
+          [postedAtField]: timestamp,
+          participant_ids: [...new Set([
+            ...(Array.isArray(invoice.participant_ids) ? invoice.participant_ids : []),
+            actor.uid,
+          ])],
+          status: completed ? STATUS.postedToAccounting : STATUS.pendingDualAccounting,
+          revision,
+          last_updated: timestamp,
+          history: historyWithEvent(invoice, publicEvent),
+        });
+        writePublicEvent(transaction, firestore, {invoice, event: publicEvent, revision});
+        if (completed) {
+          writeNotifications(transaction, firestore, {
+            recipients: Array.isArray(invoice.participant_ids) ?
+              invoice.participant_ids : [],
+            invoice,
+            type: "inter_branch_v3_accounting_completed",
+            title: "اكتمل ترحيل فاتورة المناقلة",
+            message: `اكتمل ترحيل الصادر والوارد للفاتورة رقم ${invoice.invoice_number}.`,
+            revision,
+            timestamp,
+            excludeUid: actor.uid,
+          });
+        }
+        return {
+          statusCode: 200,
+          responseData: responseFor(
+              invoiceId,
+              null,
+              completed ? STATUS.postedToAccounting : STATUS.pendingDualAccounting,
+              revision,
+          ),
+        };
+      }
       requireStatusAndRevision(invoice, STATUS.pendingAccountingEntry, payload.expected_revision);
       const storedItems = await readV2PublicItems(transaction, invoiceRef, invoice);
       assertProtectedSnapshotMatchesInvoice(invoice, storedItems, priceSnapshot.data());
@@ -1634,6 +2585,38 @@ function createInterBranchInvoiceCommandRouter({
     validator: validatePostingPayload,
     execute: postToAccounting,
   }));
+  router.post("/inter-branch-invoices/:invoiceId/request-amendment", commandRoute({
+    admin,
+    firestore,
+    now,
+    randomUUID,
+    validator: validateAmendmentRequestPayload,
+    execute: requestAmendment,
+  }));
+  router.post("/inter-branch-invoices/:invoiceId/decide-amendment", commandRoute({
+    admin,
+    firestore,
+    now,
+    randomUUID,
+    validator: validateAmendmentDecisionPayload,
+    execute: decideAmendment,
+  }));
+  router.post("/inter-branch-invoices/:invoiceId/request-cancellation", commandRoute({
+    admin,
+    firestore,
+    now,
+    randomUUID,
+    validator: validateCancellationRequestPayload,
+    execute: requestCancellation,
+  }));
+  router.post("/inter-branch-invoices/:invoiceId/decide-cancellation", commandRoute({
+    admin,
+    firestore,
+    now,
+    randomUUID,
+    validator: validateAmendmentDecisionPayload,
+    execute: decideCancellation,
+  }));
   return router;
 }
 
@@ -1667,10 +2650,14 @@ module.exports = {
   assertProtectedSnapshotMatchesInvoice,
   createDirectInvoice,
   createInterBranchInvoiceCommandRouter,
+  decideAmendment,
+  decideCancellation,
   isOperationalProfile,
   notificationReference,
   postToAccounting,
   priceItemsForInvoice,
   receiptItemsForInvoice,
+  requestAmendment,
+  requestCancellation,
   safeJsonErrorHandler,
 };

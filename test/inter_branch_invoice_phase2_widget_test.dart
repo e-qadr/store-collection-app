@@ -127,7 +127,7 @@ void main() {
     expect(find.textContaining('3 علبة'), findsOneWidget);
   });
 
-  testWidgets('2b. كتالوج التحويل يتبع علامة الوجهة ويزيل المواد عند تغييرها', (
+  testWidgets('2b. كتالوج التحويل يتبع علامة الفرع المرسل ويحافظ على المواد عند تغيير الوجهة', (
     tester,
   ) async {
     await _pumpCreation(
@@ -141,7 +141,7 @@ void main() {
     await _chooseReceivingBranch(tester);
     await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
     await tester.pumpAndSettle();
-    expect(find.text('منتج العلامة أ'), findsOneWidget);
+    expect(find.text('منتج العلامة أ'), findsAtLeastNWidgets(1));
     expect(find.text('منتج العلامة ب'), findsNothing);
     await tester.tap(find.text('منتج العلامة أ'));
     await tester.pumpAndSettle();
@@ -161,35 +161,19 @@ void main() {
       tester,
       branchDisplayName: 'العلامة ب — الفرع المستلم 2',
     );
-    expect(
-      find.text(
-        'تم تغيير علامة الفرع المستلم، لذلك أزيلت مواد الفاتورة المختارة.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('منتج العلامة أ'), findsNothing);
+    expect(find.text('منتج العلامة أ'), findsOneWidget);
     await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
     await tester.pumpAndSettle();
-    expect(find.text('منتج العلامة ب'), findsOneWidget);
-    expect(find.text('منتج العلامة أ'), findsNothing);
-    await tester.tap(find.text('منتج العلامة ب'));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const Key('shared-catalog-unit-product-2-unit_1')),
-    );
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('purchase-item-quantity')),
-      '1',
-    );
-    await tester.tap(find.byKey(const Key('confirm-purchase-item')));
+    expect(find.text('منتج العلامة ب'), findsNothing);
+    expect(find.text('منتج العلامة أ'), findsAtLeastNWidgets(1));
+    await tester.tap(find.byTooltip('إغلاق'));
     await tester.pumpAndSettle();
 
     await _chooseReceivingBranch(
       tester,
       branchDisplayName: 'العلامة ب — الفرع الرئيسي',
     );
-    expect(find.text('منتج العلامة ب'), findsOneWidget);
+    expect(find.text('منتج العلامة أ'), findsOneWidget);
   });
 
   testWidgets('3. حد الخمسين سطرًا ظاهر ومطبق', (tester) async {
@@ -243,7 +227,7 @@ void main() {
       ),
     );
 
-    expect(find.text('فواتير بانتظار التسعير'), findsOneWidget);
+    expect(find.text('سجل فواتير المناقلات'), findsOneWidget);
     expect(find.text('وارد الفروع الرئيسية'), findsOneWidget);
     expect(find.text('فاتورة جديدة'), findsNothing);
     expect(find.text('فاتورة تحويل مباشرة'), findsNothing);
@@ -282,7 +266,7 @@ void main() {
     );
 
     expect(find.text('فاتورة جديدة'), findsOneWidget);
-    expect(find.text('فاتورة تحويل مباشرة'), findsOneWidget);
+    expect(find.text('فاتورة مناقلة جديدة'), findsOneWidget);
   });
 
   testWidgets('4. المدير المستلم يؤكد الكميات والفروقات', (tester) async {

@@ -274,11 +274,18 @@ function validatePostingPayload(body) {
   assertNoPriceLikeKeys(input);
   requireOnlyKeys(
       input,
-      new Set(["expected_revision", "accounting_reference", "accounting_notes"]),
+      new Set([
+        "expected_revision",
+        "posting_side",
+        "accounting_reference",
+        "accounting_notes",
+      ]),
       "body",
   );
   return {
     expected_revision: positiveRevision(input.expected_revision),
+    posting_side: input.posting_side === undefined ? undefined :
+      requiredString(input.posting_side, "posting_side", 16),
     accounting_reference: requiredString(
         input.accounting_reference,
         "accounting_reference",
@@ -289,6 +296,74 @@ function validatePostingPayload(body) {
         "accounting_notes",
         MAX_INVOICE_NOTES_BYTES,
     ),
+  };
+}
+
+function validateAmendmentRequestPayload(body) {
+  const input = requirePlainObject(body);
+  assertNoPriceLikeKeys(input);
+  requireOnlyKeys(
+      input,
+      new Set(['expected_revision', 'reason', 'invoice_notes', 'items']),
+      'body',
+  );
+  const items = boundedItems(input.items).map((raw, index) => {
+    const item = requirePlainObject(raw, `items[${index}]`);
+    requireOnlyKeys(
+        item,
+        new Set(['product_id', 'unit_id', 'supplied_quantity', 'line_notes']),
+        `items[${index}]`,
+    );
+    return {
+      product_id: documentId(item.product_id, `items[${index}].product_id`),
+      unit_id: documentId(item.unit_id, `items[${index}].unit_id`, MAX_UNIT_ID_BYTES),
+      supplied_quantity: finiteNumber(item.supplied_quantity, `items[${index}].supplied_quantity`, {
+        minimum: Number.MIN_VALUE,
+      }),
+      line_notes: optionalString(item.line_notes, `items[${index}].line_notes`, MAX_LINE_NOTES_BYTES),
+    };
+  });
+  const uniqueSelections = new Set();
+  for (const item of items) {
+    const key = `${item.product_id}\u001f${item.unit_id}`;
+    if (uniqueSelections.has(key)) {
+      throw new CommandError('duplicate-item', 400, 'A product and unit may appear only once.');
+    }
+    uniqueSelections.add(key);
+  }
+  return {
+    expected_revision: positiveRevision(input.expected_revision),
+    reason: requiredString(input.reason, 'reason', MAX_INVOICE_NOTES_BYTES),
+    invoice_notes: optionalString(input.invoice_notes, 'invoice_notes', MAX_INVOICE_NOTES_BYTES),
+    items,
+  };
+}
+
+function validateAmendmentDecisionPayload(body) {
+  const input = requirePlainObject(body);
+  assertNoPriceLikeKeys(input);
+  requireOnlyKeys(input, new Set(['expected_revision', 'approved', 'reason']), 'body');
+  if (typeof input.approved !== 'boolean') {
+    throw new CommandError('invalid-argument', 400, 'approved is invalid.');
+  }
+  const reason = optionalString(input.reason, 'reason', MAX_INVOICE_NOTES_BYTES);
+  if (!input.approved && !reason) {
+    throw new CommandError('invalid-argument', 400, 'A rejection reason is required.');
+  }
+  return {
+    expected_revision: positiveRevision(input.expected_revision),
+    approved: input.approved,
+    reason,
+  };
+}
+
+function validateCancellationRequestPayload(body) {
+  const input = requirePlainObject(body);
+  assertNoPriceLikeKeys(input);
+  requireOnlyKeys(input, new Set(['expected_revision', 'reason']), 'body');
+  return {
+    expected_revision: positiveRevision(input.expected_revision),
+    reason: requiredString(input.reason, 'reason', MAX_INVOICE_NOTES_BYTES),
   };
 }
 
@@ -426,6 +501,9 @@ module.exports = {
   publicError,
   utf8ByteLength,
   validateCreatePayload,
+  validateAmendmentDecisionPayload,
+  validateAmendmentRequestPayload,
+  validateCancellationRequestPayload,
   validateIdempotencyKey,
   validatePostingPayload,
   validatePricingPayload,

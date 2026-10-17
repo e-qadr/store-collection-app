@@ -190,17 +190,79 @@ void main() {
         isTrue,
       );
     });
+
+    test(
+      'version 3 exposes accounting only after receipt and never pricing',
+      () {
+        final transfer = _invoice(
+          status: InterBranchInvoiceStatus.pendingDualAccounting,
+          workflowVersion: 3,
+        );
+        expect(
+          InterBranchInvoicePolicy.actionsFor(
+            role: UserRole.accountant,
+            branchId: null,
+            invoice: transfer,
+          ),
+          contains(InterBranchInvoiceAction.postAccounting),
+        );
+        expect(
+          InterBranchInvoicePolicy.actionsFor(
+            role: UserRole.collector,
+            branchId: null,
+            invoice: transfer,
+          ),
+          isNot(contains(InterBranchInvoiceAction.confirmPrices)),
+        );
+      },
+    );
+
+    test('required task filtering keeps optional edits out of my tasks', () {
+      final transfer = _invoice(
+        status: InterBranchInvoiceStatus.pendingReceiverReview,
+        workflowVersion: 3,
+      );
+      final creatorActions = InterBranchInvoicePolicy.actionsFor(
+        role: UserRole.manager,
+        branchId: 'supplier',
+        actorId: 'supplier',
+        invoice: transfer,
+      );
+      expect(creatorActions, contains(InterBranchInvoiceAction.requestEdit));
+      expect(
+        InterBranchInvoicePolicy.hasRequiredAction(creatorActions),
+        isFalse,
+      );
+
+      final receiverActions = InterBranchInvoicePolicy.actionsFor(
+        role: UserRole.manager,
+        branchId: 'receiver',
+        actorId: 'receiver',
+        invoice: transfer,
+      );
+      expect(
+        receiverActions,
+        contains(InterBranchInvoiceAction.confirmReceipt),
+      );
+      expect(
+        InterBranchInvoicePolicy.hasRequiredAction(receiverActions),
+        isTrue,
+      );
+    });
   });
 }
 
 InterBranchInvoiceRead _invoice({
   required InterBranchInvoiceStatus status,
   bool receivingMainBranch = false,
+  int workflowVersion = 2,
 }) => InterBranchInvoiceRead(
   id: 'invoice-1',
   data: {
-    'schema_version': 2,
-    'workflow_version': 2,
+    'schema_version': workflowVersion,
+    'workflow_version': workflowVersion,
+    if (workflowVersion >= 3) 'participant_ids': const ['supplier'],
+    if (workflowVersion >= 3) 'created_by': 'supplier',
     'revision': 2,
     'status': status.value,
     'sending_branch_id': 'supplier',

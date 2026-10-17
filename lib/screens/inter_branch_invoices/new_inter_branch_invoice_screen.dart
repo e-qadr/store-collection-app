@@ -117,7 +117,10 @@ class _NewInterBranchInvoiceScreenState
   bool _saving = false;
   final Map<String, String> _canonicalBrandNames = <String, String>{};
   String? _receivingBranchId;
-  String? _receivingBrandId;
+  // A transfer moves material out of the current (sending) branch.  The
+  // destination affects who receives the invoice, never which catalogue is
+  // available to the sender.
+  String? _sendingBrandId;
   String? _selectedProductId;
   String? _selectedUnitId;
 
@@ -152,6 +155,7 @@ class _NewInterBranchInvoiceScreenState
     }
     final fixture = widget.fixture;
     if (fixture != null) {
+      _sendingBrandId = fixture.brandId;
       _branches = fixture.branches;
       _items.addAll(
         fixture.initialItems.take(InterBranchInvoiceApiService.maxItems),
@@ -174,6 +178,7 @@ class _NewInterBranchInvoiceScreenState
     if (brandId.isEmpty) {
       throw StateError('الفرع المورد غير مرتبط بعلامة تجارية.');
     }
+    _sendingBrandId = brandId;
     await _loadBranches(reset: true);
     return const _CreationContext();
   }
@@ -277,15 +282,15 @@ class _NewInterBranchInvoiceScreenState
   }
 
   Future<void> _loadProducts({required bool reset}) async {
-    final receivingBrandId = _receivingBrandId;
-    if (_loadingProducts || receivingBrandId == null || !mounted) return;
+    final sendingBrandId = _sendingBrandId;
+    if (_loadingProducts || sendingBrandId == null || !mounted) return;
     setState(() => _loadingProducts = true);
     try {
       final fixture = widget.fixture;
       if (fixture != null) {
         final loaded = filterCatalogProducts(
           fixture.products
-              .where((product) => product.brandId == receivingBrandId)
+              .where((product) => product.brandId == sendingBrandId)
               .toList(growable: false),
           _searchController.text,
         );
@@ -302,7 +307,7 @@ class _NewInterBranchInvoiceScreenState
       }
       final page = await (_catalogService ??= ProductCatalogService())
           .fetchActiveProductsPage(
-            brandId: receivingBrandId,
+            brandId: sendingBrandId,
             search: _searchController.text,
             offset: reset ? 0 : _products.length,
             pageSize: 30,
@@ -347,34 +352,13 @@ class _NewInterBranchInvoiceScreenState
 
   Future<void> _changeReceivingBranch(String? branchId) async {
     final selectedBranch = _branchById(branchId);
-    final nextBrandId = selectedBranch?.brandId;
-    if (branchId == _receivingBranchId || nextBrandId == null) return;
-
-    final previousBrandId = _receivingBrandId;
-    final changedBrand =
-        previousBrandId != null && previousBrandId != nextBrandId;
-    final clearItems = changedBrand && _items.isNotEmpty;
+    if (branchId == _receivingBranchId || selectedBranch == null) return;
     setState(() {
       _receivingBranchId = branchId;
-      _receivingBrandId = nextBrandId;
-      _products = const [];
-      _hasMoreProducts = false;
-      _selectedProductId = null;
-      _selectedUnitId = null;
-      if (clearItems) _items.clear();
     });
-
-    if (clearItems) {
-      _showSnack(
-        'تم تغيير علامة الفرع المستلم، لذلك أزيلت مواد الفاتورة المختارة.',
-      );
-    }
-    // Fixtures model the same destination-scoped catalog behavior without a
-    // network read. Production catalog data is fetched lazily by the picker
-    // for this one receiving-brand scope and cached by ProductCatalogService.
-    if (widget.fixture != null) {
-      await _loadProducts(reset: true);
-    }
+    // The selected products stay valid: they always belong to the sender's
+    // catalogue, even when the receiving branch belongs to another brand.
+    if (_products.isEmpty) await _loadProducts(reset: true);
   }
 
   Future<void> _addItem() async {
@@ -428,14 +412,16 @@ class _NewInterBranchInvoiceScreenState
       );
       return;
     }
-    final receivingBrandId = _receivingBrandId;
-    if (_receivingBranchId == null || receivingBrandId == null) {
-      _showSnack('اختر الفرع المستلم أولاً لعرض كتالوج علامته التجارية.');
+    final sendingBrandId = _sendingBrandId;
+    if (_receivingBranchId == null || sendingBrandId == null) {
+      _showSnack(
+        'اختر الفرع المستلم أولاً؛ المواد تُعرض من كتالوج الفرع المرسل.',
+      );
       return;
     }
     final selection = await showCatalogPicker(
       context,
-      brandId: receivingBrandId,
+      brandId: sendingBrandId,
       service: _catalogService,
       products: widget.fixture == null ? null : _products,
       mode: CatalogPickerMode.transfer,

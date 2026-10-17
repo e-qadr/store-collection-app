@@ -199,6 +199,7 @@ class InterBranchInvoiceApiService {
     required int expectedRevision,
     required String accountingReference,
     required String idempotencyKey,
+    String? postingSide,
     String? accountingNotes,
   }) {
     if (invoiceId.trim().isEmpty ||
@@ -213,9 +214,116 @@ class InterBranchInvoiceApiService {
       idempotencyKey: idempotencyKey,
       body: {
         'expected_revision': expectedRevision,
+        if (postingSide != null) 'posting_side': postingSide,
         'accounting_reference': accountingReference.trim(),
         if ((accountingNotes ?? '').trim().isNotEmpty)
           'accounting_notes': accountingNotes!.trim(),
+      },
+    );
+  }
+
+  Future<InterBranchInvoiceCommandResult> requestAmendment({
+    required String invoiceId,
+    required int expectedRevision,
+    required String reason,
+    required List<InterBranchInvoiceItem> items,
+    required String idempotencyKey,
+    String? invoiceNotes,
+  }) {
+    if (invoiceId.trim().isEmpty ||
+        expectedRevision <= 0 ||
+        reason.trim().isEmpty ||
+        !_withinUtf8Limit(reason, 1000) ||
+        !_withinUtf8Limit(invoiceNotes, 1000) ||
+        items.isEmpty ||
+        items.length > maxItems ||
+        items.any(
+          (item) =>
+              item.productId.trim().isEmpty ||
+              item.unitId.trim().isEmpty ||
+              !item.suppliedQuantity.isFinite ||
+              item.suppliedQuantity <= 0 ||
+              !_withinUtf8Limit(item.lineNotes, 100) ||
+              item.unitPrice != null,
+        )) {
+      throw ArgumentError('Amendment data is invalid.');
+    }
+    return _command(
+      '/v1/inter-branch-invoices/${Uri.encodeComponent(invoiceId)}/request-amendment',
+      idempotencyKey: idempotencyKey,
+      body: {
+        'expected_revision': expectedRevision,
+        'reason': reason.trim(),
+        if ((invoiceNotes ?? '').trim().isNotEmpty)
+          'invoice_notes': invoiceNotes!.trim(),
+        'items': items.map((item) => item.toDirectCommandMap()).toList(),
+      },
+    );
+  }
+
+  Future<InterBranchInvoiceCommandResult> decideAmendment({
+    required String invoiceId,
+    required int expectedRevision,
+    required bool approved,
+    required String idempotencyKey,
+    String? reason,
+  }) {
+    if (invoiceId.trim().isEmpty ||
+        expectedRevision <= 0 ||
+        (!_withinUtf8Limit(reason, 1000)) ||
+        (!approved && (reason ?? '').trim().isEmpty)) {
+      throw ArgumentError('Amendment decision is invalid.');
+    }
+    return _command(
+      '/v1/inter-branch-invoices/${Uri.encodeComponent(invoiceId)}/decide-amendment',
+      idempotencyKey: idempotencyKey,
+      body: {
+        'expected_revision': expectedRevision,
+        'approved': approved,
+        if ((reason ?? '').trim().isNotEmpty) 'reason': reason!.trim(),
+      },
+    );
+  }
+
+  Future<InterBranchInvoiceCommandResult> requestCancellation({
+    required String invoiceId,
+    required int expectedRevision,
+    required String reason,
+    required String idempotencyKey,
+  }) {
+    if (invoiceId.trim().isEmpty ||
+        expectedRevision <= 0 ||
+        reason.trim().isEmpty ||
+        !_withinUtf8Limit(reason, 1000)) {
+      throw ArgumentError('Cancellation request is invalid.');
+    }
+    return _command(
+      '/v1/inter-branch-invoices/${Uri.encodeComponent(invoiceId)}/request-cancellation',
+      idempotencyKey: idempotencyKey,
+      body: {'expected_revision': expectedRevision, 'reason': reason.trim()},
+    );
+  }
+
+  Future<InterBranchInvoiceCommandResult> decideCancellation({
+    required String invoiceId,
+    required int expectedRevision,
+    required bool approved,
+    required String idempotencyKey,
+    String? reason,
+  }) {
+    if (invoiceId.trim().isEmpty ||
+        expectedRevision <= 0 ||
+        !_withinUtf8Limit(reason, 1000) ||
+        (!approved && (reason ?? '').trim().isEmpty)) {
+      throw ArgumentError('Cancellation decision is invalid.');
+    }
+    return _command(
+      '/v1/inter-branch-invoices/${Uri.encodeComponent(invoiceId)}/decide-cancellation',
+      idempotencyKey: idempotencyKey,
+      body: {
+        'expected_revision': expectedRevision,
+        'approved': approved,
+        if ((reason ?? '').trim().isNotEmpty) 'reason': reason!.trim(),
       },
     );
   }
@@ -318,6 +426,14 @@ class InterBranchInvoiceApiService {
       'stale-revision' =>
         'تم تحديث الفاتورة من مستخدم آخر. أعد فتحها ثم حاول مجدداً.',
       'invalid-state' => 'هذه العملية لم تعد متاحة في حالة الفاتورة الحالية.',
+      'amendment-already-pending' => 'يوجد طلب تعديل معلق لهذه الفاتورة.',
+      'amendment-not-found' =>
+        'طلب التعديل لم يعد متاحاً. حدّث الفاتورة وحاول مجدداً.',
+      'cancellation-not-found' =>
+        'طلب الإلغاء لم يعد متاحاً. حدّث الفاتورة وحاول مجدداً.',
+      'shared-request-already-pending' =>
+        'يوجد طلب تعديل أو إلغاء معلق لهذه الفاتورة.',
+      'decision-already-recorded' => 'تم تسجيل قرارك على هذا التعديل مسبقاً.',
       'unauthenticated' => 'انتهت جلسة الدخول. سجل الدخول مجدداً.',
       'forbidden' => 'لا تملك صلاحية تنفيذ هذه العملية.',
       'payload-too-large' => 'حجم بيانات الفاتورة أكبر من الحد الآمن المسموح.',

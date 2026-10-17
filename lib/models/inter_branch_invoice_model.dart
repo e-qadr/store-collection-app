@@ -11,6 +11,7 @@ enum InterBranchInvoiceStatus {
   pendingPriceEntry,
   pricesEnteredByCollector,
   pendingAccountingEntry,
+  pendingDualAccounting,
   postedToAccounting,
   cancellationRequested,
   cancellationPendingApprovals,
@@ -45,6 +46,8 @@ extension InterBranchInvoiceStatusX on InterBranchInvoiceStatus {
         return 'تم إدخال الأسعار';
       case InterBranchInvoiceStatus.pendingAccountingEntry:
         return 'بانتظار الإدخال المحاسبي';
+      case InterBranchInvoiceStatus.pendingDualAccounting:
+        return 'بانتظار ترحيل الصادر والوارد';
       case InterBranchInvoiceStatus.postedToAccounting:
         return 'مرحلة محاسبياً';
       case InterBranchInvoiceStatus.cancellationRequested:
@@ -72,6 +75,7 @@ extension InterBranchInvoiceStatusX on InterBranchInvoiceStatus {
       case InterBranchInvoiceStatus.pendingReceiverReview:
       case InterBranchInvoiceStatus.pendingPriceEntry:
       case InterBranchInvoiceStatus.pendingAccountingEntry:
+      case InterBranchInvoiceStatus.pendingDualAccounting:
         return const Color(0xFFF57C00);
       case InterBranchInvoiceStatus.approvedBySupplier:
       case InterBranchInvoiceStatus.invoiceCreated:
@@ -103,6 +107,7 @@ extension InterBranchInvoiceStatusX on InterBranchInvoiceStatus {
       case InterBranchInvoiceStatus.pendingPriceEntry:
       case InterBranchInvoiceStatus.pricesEnteredByCollector:
       case InterBranchInvoiceStatus.pendingAccountingEntry:
+      case InterBranchInvoiceStatus.pendingDualAccounting:
       case InterBranchInvoiceStatus.postedToAccounting:
       case InterBranchInvoiceStatus.cancellationRequested:
       case InterBranchInvoiceStatus.cancellationPendingApprovals:
@@ -202,6 +207,11 @@ class InterBranchInvoiceFields {
   static const cancellationApprovals = 'cancellation_approvals';
   static const editRequest = 'edit_request';
   static const editApprovals = 'edit_approvals';
+  static const participantIds = 'participant_ids';
+  static const amendmentRequest = 'amendment_request';
+  static const amendmentApprovals = 'amendment_approvals';
+  static const lastAmendment = 'last_amendment';
+  static const lastCancellation = 'last_cancellation';
   static const previousStatus = 'previous_status';
   static const createdBy = 'created_by';
   static const createdAt = 'created_at';
@@ -225,6 +235,7 @@ class InterBranchInvoiceRead {
   int get workflowVersion =>
       _positiveInt(data[InterBranchInvoiceFields.workflowVersion], 1);
   bool get isVersion2 => workflowVersion >= 2;
+  bool get isVersion3 => workflowVersion >= 3;
   String get creationMode =>
       data[InterBranchInvoiceFields.creationMode]?.toString() ??
       (isVersion2 ? 'direct_supplier_invoice' : 'legacy_request');
@@ -278,6 +289,17 @@ class InterBranchInvoiceRead {
       data[InterBranchInvoiceFields.receivingBranchId]?.toString() ?? '';
   String get sendingBranchId =>
       data[InterBranchInvoiceFields.sendingBranchId]?.toString() ?? '';
+
+  String get sourceAccountingStatus =>
+      data['source_accounting_status']?.toString().trim() ?? '';
+  String get receivingAccountingStatus =>
+      data['receiving_accounting_status']?.toString().trim() ?? '';
+  bool get sourceAccountingPosted => sourceAccountingStatus == 'posted';
+  bool get receivingAccountingPosted => receivingAccountingStatus == 'posted';
+  String get sourceAccountingReference =>
+      data['source_accounting_reference']?.toString().trim() ?? '';
+  String get receivingAccountingReference =>
+      data['receiving_accounting_reference']?.toString().trim() ?? '';
   String get receivingBrandId =>
       data[InterBranchInvoiceFields.receivingBrandId]?.toString() ?? '';
   String get sendingBrandId =>
@@ -298,6 +320,8 @@ class InterBranchInvoiceRead {
 
   String get invoiceNumber =>
       data[InterBranchInvoiceFields.invoiceNumber]?.toString() ?? '-';
+  String get createdBy =>
+      data[InterBranchInvoiceFields.createdBy]?.toString().trim() ?? '';
   String get accountingReference =>
       data[InterBranchInvoiceFields.accountingReference]?.toString() ?? '';
   String get rejectionReason =>
@@ -423,6 +447,50 @@ class InterBranchInvoiceRead {
       _map(data[InterBranchInvoiceFields.cancellationRequest]);
   Map<String, dynamic> get editRequest =>
       _map(data[InterBranchInvoiceFields.editRequest]);
+  Map<String, dynamic> get amendmentRequest =>
+      _map(data[InterBranchInvoiceFields.amendmentRequest]);
+  Map<String, dynamic> get amendmentApprovals =>
+      _map(data[InterBranchInvoiceFields.amendmentApprovals]);
+  Map<String, dynamic> get lastAmendment =>
+      _map(data[InterBranchInvoiceFields.lastAmendment]);
+  Map<String, dynamic> get lastCancellation =>
+      _map(data[InterBranchInvoiceFields.lastCancellation]);
+  List<String> get participantIds {
+    final value = data[InterBranchInvoiceFields.participantIds];
+    if (value is! List) return const [];
+    return value
+        .map((entry) => entry.toString().trim())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  List<String> get amendmentApproverIds {
+    final value = amendmentRequest['required_approver_ids'];
+    if (value is! List) return const [];
+    return value
+        .map((entry) => entry.toString().trim())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  List<String> get cancellationApproverIds {
+    final value = cancellationRequest['required_approver_ids'];
+    if (value is! List) return const [];
+    return value
+        .map((entry) => entry.toString().trim())
+        .where((entry) => entry.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  bool get hasPendingAmendment =>
+      isVersion3 && status == InterBranchInvoiceStatus.editPendingApprovals;
+
+  bool get hasPendingCancellation =>
+      isVersion3 &&
+      status == InterBranchInvoiceStatus.cancellationPendingApprovals;
 
   static DateTime? _date(dynamic value) {
     if (value is Timestamp) return value.toDate();

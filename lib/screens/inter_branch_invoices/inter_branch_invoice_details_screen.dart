@@ -11,6 +11,8 @@ import 'package:store_collection_app/models/inter_branch_invoice_model.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_detail_diagnostic.dart';
 import 'package:store_collection_app/models/inter_branch_invoice_price_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_catalog_picker.dart';
+import 'package:store_collection_app/screens/purchase_invoices/purchase_item_editor_dialog.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_api_service.dart';
 import 'package:store_collection_app/services/inter_branch_invoice_service.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
@@ -318,6 +320,14 @@ class _InterBranchInvoiceDetailsScreenState
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
           children: [
             _invoiceDocument(invoice, priceSnapshot: priceSnapshot.data),
+            if (invoice.isVersion3 && invoice.lastAmendment.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _amendmentOutcome(invoice),
+            ],
+            if (invoice.isVersion3 && invoice.lastCancellation.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _cancellationOutcome(invoice),
+            ],
             if (actions != null) ...[const SizedBox(height: 12), actions],
             const SizedBox(height: 12),
             _statusTimeline(invoice),
@@ -326,6 +336,74 @@ class _InterBranchInvoiceDetailsScreenState
           ],
         );
       },
+    );
+  }
+
+  Widget _amendmentOutcome(InterBranchInvoiceRead invoice) {
+    final amendment = invoice.lastAmendment;
+    final state = amendment['state']?.toString() ?? '';
+    final rejected = state == 'rejected';
+    final text = rejected
+        ? 'تم رفض طلب التعديل وعادت الفاتورة إلى مسارها السابق.'
+        : state == 'applied' || state == 'applied_directly'
+        ? 'تم تطبيق آخر تعديل على الفاتورة.'
+        : 'يوجد سجل تعديل على الفاتورة.';
+    final reason = amendment['rejection_reason']?.toString().trim() ?? '';
+    return _panel(
+      child: Row(
+        children: [
+          Icon(
+            rejected ? Icons.cancel_outlined : Icons.edit_note_rounded,
+            color: rejected ? AppTheme.errorColor : AppTheme.warningColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$text${reason.isEmpty ? '' : '\nسبب الرفض: $reason'}',
+              style: TextStyle(
+                color: rejected ? AppTheme.errorColor : AppTheme.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _cancellationOutcome(InterBranchInvoiceRead invoice) {
+    final cancellation = invoice.lastCancellation;
+    final state = cancellation['state']?.toString() ?? '';
+    final rejected = state == 'rejected';
+    final cancelled = state == 'applied' || state == 'applied_directly';
+    final reason = cancellation['rejection_reason']?.toString().trim() ?? '';
+    return _panel(
+      child: Row(
+        children: [
+          Icon(
+            rejected
+                ? Icons.cancel_outlined
+                : cancelled
+                ? Icons.cancel_rounded
+                : Icons.info_outline_rounded,
+            color: rejected ? AppTheme.errorColor : AppTheme.warningColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${rejected
+                  ? 'تم رفض طلب الإلغاء وعادت الفاتورة لمسارها السابق.'
+                  : cancelled
+                  ? 'تم إلغاء فاتورة المناقلة.'
+                  : 'يوجد سجل إلغاء على الفاتورة.'}${reason.isEmpty ? '' : '\nسبب الرفض: $reason'}',
+              style: TextStyle(
+                color: rejected ? AppTheme.errorColor : AppTheme.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -744,7 +822,7 @@ class _InterBranchInvoiceDetailsScreenState
                     const DataColumn(label: Text('تالف')),
                     const DataColumn(label: Text('ناقص')),
                   ],
-                  if (_showsPrices) ...[
+                  if (!invoice.isVersion3 && _showsPrices) ...[
                     DataColumn(
                       label: Text(
                         priceSnapshot?.currency.isNotEmpty ?? false
@@ -822,7 +900,7 @@ class _InterBranchInvoiceDetailsScreenState
                         DataCell(Text(_formatNumber(item.damagedQuantity))),
                         DataCell(Text(_formatNumber(item.missingQuantity))),
                       ],
-                      if (_showsPrices) ...[
+                      if (!invoice.isVersion3 && _showsPrices) ...[
                         DataCell(
                           Text(
                             unitPrice == null ? '-' : _formatNumber(unitPrice),
@@ -913,7 +991,33 @@ class _InterBranchInvoiceDetailsScreenState
                 Icons.inventory_2_rounded,
                 AppTheme.collectorColor,
               ),
-              if (_showsPrices)
+              if (invoice.isVersion3) ...[
+                _summaryTile(
+                  'ترحيل الصادر',
+                  invoice.sourceAccountingPosted
+                      ? (invoice.sourceAccountingReference.isEmpty
+                            ? 'تم الترحيل'
+                            : invoice.sourceAccountingReference)
+                      : 'بانتظار الترحيل',
+                  Icons.outbox_rounded,
+                  invoice.sourceAccountingPosted
+                      ? AppTheme.successColor
+                      : AppTheme.warningColor,
+                ),
+                _summaryTile(
+                  'ترحيل الوارد',
+                  invoice.receivingAccountingPosted
+                      ? (invoice.receivingAccountingReference.isEmpty
+                            ? 'تم الترحيل'
+                            : invoice.receivingAccountingReference)
+                      : 'بانتظار الترحيل',
+                  Icons.move_to_inbox_rounded,
+                  invoice.receivingAccountingPosted
+                      ? AppTheme.successColor
+                      : AppTheme.warningColor,
+                ),
+              ],
+              if (!invoice.isVersion3 && _showsPrices)
                 _summaryTile(
                   priceSnapshot?.currency.isNotEmpty ?? false
                       ? 'إجمالي سعر الفاتورة (${priceSnapshot!.currency})'
@@ -1224,6 +1328,34 @@ class _InterBranchInvoiceDetailsScreenState
   }
 
   List<_InvoiceTimelineStep> _timelineSteps(InterBranchInvoiceRead invoice) {
+    if (invoice.isVersion3) {
+      return const [
+        _InvoiceTimelineStep(
+          title: 'إنشاء فاتورة المناقلة',
+          subtitle: 'أنشأ الفرع المورّد الفاتورة وأرسلها للمستلم',
+          icon: Icons.receipt_long_rounded,
+          color: AppTheme.managerColor,
+        ),
+        _InvoiceTimelineStep(
+          title: 'تأكيد الاستلام',
+          subtitle: 'تسجيل الكميات المستلمة والفروقات',
+          icon: Icons.inventory_rounded,
+          color: AppTheme.collectorColor,
+        ),
+        _InvoiceTimelineStep(
+          title: 'ترحيل الصادر',
+          subtitle: 'تسجيل حركة خروج المواد من الفرع المورّد',
+          icon: Icons.outbox_rounded,
+          color: AppTheme.accountantColor,
+        ),
+        _InvoiceTimelineStep(
+          title: 'ترحيل الوارد',
+          subtitle: 'تسجيل حركة دخول المواد إلى الفرع المستلم',
+          icon: Icons.move_to_inbox_rounded,
+          color: AppTheme.successColor,
+        ),
+      ];
+    }
     if (invoice.isVersion2) {
       return const [
         _InvoiceTimelineStep(
@@ -1305,6 +1437,18 @@ class _InterBranchInvoiceDetailsScreenState
     InterBranchInvoiceStatus status,
     int workflowVersion,
   ) {
+    if (workflowVersion >= 3) {
+      switch (status) {
+        case InterBranchInvoiceStatus.pendingReceiverReview:
+          return 0;
+        case InterBranchInvoiceStatus.pendingDualAccounting:
+          return 1;
+        case InterBranchInvoiceStatus.postedToAccounting:
+          return 3;
+        default:
+          return 0;
+      }
+    }
     if (workflowVersion >= 2) {
       switch (status) {
         case InterBranchInvoiceStatus.pendingReceiverReview:
@@ -1334,6 +1478,7 @@ class _InterBranchInvoiceDetailsScreenState
         return 2;
       case InterBranchInvoiceStatus.pricesEnteredByCollector:
       case InterBranchInvoiceStatus.pendingAccountingEntry:
+      case InterBranchInvoiceStatus.pendingDualAccounting:
         return 3;
       case InterBranchInvoiceStatus.postedToAccounting:
         return 4;
@@ -1368,6 +1513,7 @@ class _InterBranchInvoiceDetailsScreenState
       case InterBranchInvoiceStatus.pendingPriceEntry:
       case InterBranchInvoiceStatus.pricesEnteredByCollector:
       case InterBranchInvoiceStatus.pendingAccountingEntry:
+      case InterBranchInvoiceStatus.pendingDualAccounting:
       case InterBranchInvoiceStatus.postedToAccounting:
       case InterBranchInvoiceStatus.editApproved:
         return false;
@@ -1379,6 +1525,7 @@ class _InterBranchInvoiceDetailsScreenState
       role: widget.role,
       branchId: widget.branchId,
       invoice: invoice,
+      actorId: _firebaseUid(),
     );
     final buttons = <Widget>[];
 
@@ -1424,49 +1571,80 @@ class _InterBranchInvoiceDetailsScreenState
     }
 
     if (allowed.contains(InterBranchInvoiceAction.postAccounting)) {
-      buttons.add(
-        _actionButton(
-          'ترحيل محاسبي',
-          Icons.verified_rounded,
-          AppTheme.accountantColor,
-          () => _showAccounting(invoice),
-        ),
-      );
+      if (invoice.isVersion3 && !invoice.sourceAccountingPosted) {
+        buttons.add(
+          _actionButton(
+            'ترحيل الصادر',
+            Icons.outbox_rounded,
+            AppTheme.accountantColor,
+            () => _showAccounting(invoice, postingSide: 'source'),
+          ),
+        );
+      }
+      if (invoice.isVersion3 && !invoice.receivingAccountingPosted) {
+        buttons.add(
+          _actionButton(
+            'ترحيل الوارد',
+            Icons.move_to_inbox_rounded,
+            AppTheme.accountantColor,
+            () => _showAccounting(invoice, postingSide: 'receiving'),
+          ),
+        );
+      }
+      if (!invoice.isVersion3) {
+        buttons.add(
+          _actionButton(
+            'ترحيل محاسبي',
+            Icons.verified_rounded,
+            AppTheme.accountantColor,
+            () => _showAccounting(invoice),
+          ),
+        );
+      }
     }
 
     if (allowed.contains(InterBranchInvoiceAction.requestEdit)) {
       buttons.add(
         _actionButton(
-          'طلب تعديل',
+          invoice.isVersion3 &&
+                  invoice.status ==
+                      InterBranchInvoiceStatus.pendingReceiverReview
+              ? 'تعديل الفاتورة'
+              : 'طلب تعديل',
           Icons.edit_note_rounded,
           AppTheme.warningColor,
-          () => _showReason(
-            title: 'طلب تعديل الفاتورة',
-            label: 'سبب طلب التعديل',
-            onSubmit: (reason) => _invoiceService.requestEdit(
-              invoiceId: invoice.id,
-              reason: reason,
-            ),
-          ),
+          () => invoice.isVersion3
+              ? _showDirectAmendment(invoice)
+              : _showReason(
+                  title: 'طلب تعديل الفاتورة',
+                  label: 'سبب طلب التعديل',
+                  onSubmit: (reason) => _invoiceService.requestEdit(
+                    invoiceId: invoice.id,
+                    reason: reason,
+                  ),
+                ),
         ),
       );
-      if (allowed.contains(InterBranchInvoiceAction.requestCancellation)) {
-        buttons.add(
-          _actionButton(
-            'طلب إلغاء',
-            Icons.cancel_schedule_send_rounded,
-            AppTheme.errorColor,
-            () => _showReason(
-              title: 'طلب رفض أو إلغاء الفاتورة',
-              label: 'سبب الرفض أو الإلغاء',
-              onSubmit: (reason) => _invoiceService.requestCancellation(
-                invoiceId: invoice.id,
-                reason: reason,
-              ),
-            ),
-          ),
-        );
-      }
+    }
+
+    if (allowed.contains(InterBranchInvoiceAction.requestCancellation)) {
+      buttons.add(
+        _actionButton(
+          'طلب إلغاء',
+          Icons.cancel_schedule_send_rounded,
+          AppTheme.errorColor,
+          () => invoice.isVersion3
+              ? _showDirectCancellation(invoice)
+              : _showReason(
+                  title: 'طلب رفض أو إلغاء الفاتورة',
+                  label: 'سبب الرفض أو الإلغاء',
+                  onSubmit: (reason) => _invoiceService.requestCancellation(
+                    invoiceId: invoice.id,
+                    reason: reason,
+                  ),
+                ),
+        ),
+      );
     }
 
     if (allowed.contains(InterBranchInvoiceAction.approveSharedRequest)) {
@@ -1478,13 +1656,21 @@ class _InterBranchInvoiceDetailsScreenState
           'اعتماد الطلب',
           Icons.done_all_rounded,
           AppTheme.successColor,
-          () => _approveShared(invoice, isCancel, true),
+          () => invoice.isVersion3
+              ? (isCancel
+                    ? _decideDirectCancellation(invoice, approved: true)
+                    : _decideDirectAmendment(invoice, approved: true))
+              : _approveShared(invoice, isCancel, true),
         ),
         _actionButton(
           'رفض الطلب',
           Icons.highlight_off_rounded,
           AppTheme.errorColor,
-          () => _approveShared(invoice, isCancel, false),
+          () => invoice.isVersion3
+              ? (isCancel
+                    ? _decideDirectCancellation(invoice, approved: false)
+                    : _decideDirectAmendment(invoice, approved: false))
+              : _approveShared(invoice, isCancel, false),
         ),
       ]);
     }
@@ -1747,14 +1933,21 @@ class _InterBranchInvoiceDetailsScreenState
     );
   }
 
-  Future<void> _showAccounting(InterBranchInvoiceRead invoice) async {
+  Future<void> _showAccounting(
+    InterBranchInvoiceRead invoice, {
+    String? postingSide,
+  }) async {
     final reference = TextEditingController();
     final notes = TextEditingController();
     final idempotencyKey = invoice.isVersion2
         ? InterBranchInvoiceApiService.generateIdempotencyKey()
         : '';
     await _dialog(
-      title: 'ترحيل الفاتورة محاسبياً',
+      title: postingSide == 'source'
+          ? 'ترحيل حركة الصادر'
+          : postingSide == 'receiving'
+          ? 'ترحيل حركة الوارد'
+          : 'ترحيل الفاتورة محاسبياً',
       children: [
         TextField(
           controller: reference,
@@ -1774,7 +1967,16 @@ class _InterBranchInvoiceDetailsScreenState
         if (reference.text.trim().isEmpty) {
           throw Exception('رقم الفاتورة في النظام المحاسبي مطلوب');
         }
-        if (invoice.isVersion2) {
+        if (invoice.isVersion3) {
+          await _invoiceService.postDirectAccounting(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            accountingReference: reference.text,
+            idempotencyKey: idempotencyKey,
+            postingSide: postingSide,
+            accountingNotes: notes.text,
+          );
+        } else if (invoice.isVersion2) {
           final submitter = widget.directAccountingSubmitter;
           if (submitter != null) {
             await submitter(
@@ -1903,12 +2105,10 @@ class _InterBranchInvoiceDetailsScreenState
             if (damaged > received) {
               throw Exception('الكمية التالفة لا يمكن أن تتجاوز المستلمة.');
             }
-            final maximumMissing = (item.suppliedQuantity - received).clamp(
-              0,
-              double.infinity,
-            );
-            if (missing > maximumMissing) {
-              throw Exception('الكمية الناقصة لا تتوافق مع الكمية الموردة.');
+            if ((received + missing - item.suppliedQuantity).abs() > 0.000001) {
+              throw Exception(
+                'يجب أن تساوي الكمية المستلمة مع الناقصة الكمية الموردة.',
+              );
             }
             confirmedItems.add(
               item.copyWith(
@@ -2142,6 +2342,314 @@ class _InterBranchInvoiceDetailsScreenState
         await onSubmit(reason.text);
       },
     );
+  }
+
+  Future<InterBranchInvoiceItem?> _pickAmendmentItem({
+    required String sendingBrandId,
+    InterBranchInvoiceItem? existing,
+  }) async {
+    if (sendingBrandId.isEmpty) {
+      throw Exception('كتالوج الفرع المرسل غير محدد لهذه الفاتورة.');
+    }
+    final selection = await showCatalogPicker(
+      context,
+      brandId: sendingBrandId,
+      mode: CatalogPickerMode.transfer,
+      title: existing == null
+          ? 'إضافة مادة من كتالوج الفرع المرسل'
+          : 'تغيير مادة الفاتورة',
+    );
+    if (!mounted || selection == null) return null;
+    final result = await showDialog<PurchaseItemEditorResult>(
+      context: context,
+      builder: (_) => PurchaseItemEditorDialog.catalog(
+        productName: selection.product.name,
+        unitValue: selection.unit.displayValue,
+        catalogUnits: selection.product.units,
+        initialCatalogUnitId: selection.unit.id,
+        initialQuantity: existing?.suppliedQuantity ?? 1,
+        initialLineNotes: existing?.lineNotes ?? '',
+        showPricing: false,
+        confirmLabel: existing == null ? 'إضافة' : 'حفظ التعديل',
+      ),
+    );
+    if (!mounted || result == null) return null;
+    final unit = selection.product.unitById(result.catalogUnitId ?? '');
+    if (unit == null) return null;
+    return InterBranchInvoiceItem(
+      productId: selection.product.id,
+      productVersion: selection.product.version,
+      groupId: selection.product.groupId,
+      legacyCode: selection.product.legacyCode,
+      name: selection.product.name,
+      unitId: unit.id,
+      unit: unit.displayValue,
+      rawUnit: unit.rawValue,
+      requestedQuantity: result.quantity,
+      hasReceivedQuantity: false,
+      lineNotes: result.lineNotes,
+    );
+  }
+
+  Future<void> _showDirectAmendment(InterBranchInvoiceRead invoice) async {
+    final reason = TextEditingController();
+    final notes = TextEditingController(text: invoice.invoiceNotes);
+    final draftItems = invoice.items
+        .map((item) => item.copyWith(hasReceivedQuantity: false))
+        .toList(growable: true);
+    try {
+      await _dialog(
+        title: invoice.status == InterBranchInvoiceStatus.pendingReceiverReview
+            ? 'تعديل فاتورة المناقلة'
+            : 'طلب تعديل فاتورة المناقلة',
+        children: [
+          TextField(
+            controller: reason,
+            inputFormatters: const [
+              _Utf8LengthLimitingTextInputFormatter(1000),
+            ],
+            maxLines: 2,
+            decoration: const InputDecoration(labelText: 'سبب التعديل'),
+          ),
+          TextField(
+            controller: notes,
+            inputFormatters: const [
+              _Utf8LengthLimitingTextInputFormatter(1000),
+            ],
+            maxLines: 2,
+            decoration: const InputDecoration(
+              labelText: 'ملاحظات الفاتورة (اختيارية)',
+            ),
+          ),
+          StatefulBuilder(
+            builder: (context, setDraftState) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'المواد تُختار دائماً من كتالوج الفرع المرسل. بعد اعتماد التعديل سيُعاد تأكيد الاستلام ثم الترحيل.',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                for (final entry in draftItems.asMap().entries)
+                  Card(
+                    child: ListTile(
+                      title: Text(entry.value.name),
+                      subtitle: Text(
+                        '${_formatNumber(entry.value.suppliedQuantity)} ${entry.value.unit}',
+                      ),
+                      trailing: Wrap(
+                        spacing: 0,
+                        children: [
+                          IconButton(
+                            tooltip: 'تعديل المادة أو الكمية',
+                            icon: const Icon(Icons.edit_outlined),
+                            onPressed: () async {
+                              final replacement = await _pickAmendmentItem(
+                                sendingBrandId: invoice.sendingBrandId,
+                                existing: entry.value,
+                              );
+                              if (replacement == null || !mounted) return;
+                              if (draftItems.asMap().entries.any(
+                                (other) =>
+                                    other.key != entry.key &&
+                                    other.value.productId ==
+                                        replacement.productId &&
+                                    other.value.unitId == replacement.unitId,
+                              )) {
+                                _showSnack('هذه المادة والوحدة موجودة بالفعل.');
+                                return;
+                              }
+                              setDraftState(
+                                () => draftItems[entry.key] = replacement,
+                              );
+                            },
+                          ),
+                          IconButton(
+                            tooltip: 'إزالة المادة',
+                            color: AppTheme.errorColor,
+                            icon: const Icon(Icons.delete_outline_rounded),
+                            onPressed: draftItems.length == 1
+                                ? null
+                                : () => setDraftState(
+                                    () => draftItems.removeAt(entry.key),
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                OutlinedButton.icon(
+                  onPressed:
+                      draftItems.length >= InterBranchInvoiceApiService.maxItems
+                      ? null
+                      : () async {
+                          final item = await _pickAmendmentItem(
+                            sendingBrandId: invoice.sendingBrandId,
+                          );
+                          if (item == null || !mounted) return;
+                          if (draftItems.any(
+                            (existing) =>
+                                existing.productId == item.productId &&
+                                existing.unitId == item.unitId,
+                          )) {
+                            _showSnack('هذه المادة والوحدة موجودة بالفعل.');
+                            return;
+                          }
+                          setDraftState(() => draftItems.add(item));
+                        },
+                  icon: const Icon(Icons.add_circle_outline_rounded),
+                  label: const Text('إضافة مادة'),
+                ),
+              ],
+            ),
+          ),
+        ],
+        onSubmit: () async {
+          if (reason.text.trim().isEmpty) {
+            throw Exception('سبب التعديل مطلوب.');
+          }
+          if (draftItems.isEmpty) {
+            throw Exception('يجب أن تحتوي الفاتورة على مادة واحدة على الأقل.');
+          }
+          await _invoiceService.requestDirectAmendment(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            reason: reason.text,
+            items: List<InterBranchInvoiceItem>.unmodifiable(draftItems),
+            invoiceNotes: notes.text,
+            idempotencyKey:
+                InterBranchInvoiceApiService.generateIdempotencyKey(),
+          );
+        },
+      );
+    } finally {
+      await WidgetsBinding.instance.endOfFrame;
+      reason.dispose();
+      notes.dispose();
+    }
+  }
+
+  Future<void> _decideDirectAmendment(
+    InterBranchInvoiceRead invoice, {
+    required bool approved,
+  }) async {
+    final reason = TextEditingController();
+    try {
+      await _dialog(
+        title: approved ? 'اعتماد تعديل الفاتورة' : 'رفض تعديل الفاتورة',
+        children: [
+          if (invoice.amendmentRequest['reason']?.toString().isNotEmpty == true)
+            Text('سبب الطلب: ${invoice.amendmentRequest['reason']}'),
+          TextField(
+            controller: reason,
+            inputFormatters: const [
+              _Utf8LengthLimitingTextInputFormatter(1000),
+            ],
+            maxLines: 3,
+            decoration: InputDecoration(
+              labelText: approved ? 'ملاحظة (اختيارية)' : 'سبب الرفض',
+            ),
+          ),
+        ],
+        onSubmit: () async {
+          if (!approved && reason.text.trim().isEmpty) {
+            throw Exception('سبب رفض التعديل مطلوب.');
+          }
+          await _invoiceService.decideDirectAmendment(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            approved: approved,
+            reason: reason.text,
+            idempotencyKey:
+                InterBranchInvoiceApiService.generateIdempotencyKey(),
+          );
+        },
+      );
+    } finally {
+      await WidgetsBinding.instance.endOfFrame;
+      reason.dispose();
+    }
+  }
+
+  Future<void> _showDirectCancellation(InterBranchInvoiceRead invoice) async {
+    final reason = TextEditingController();
+    try {
+      await _dialog(
+        title: 'طلب إلغاء فاتورة المناقلة',
+        children: [
+          const Text(
+            'لن تُلغى الفاتورة بعد الاستلام أو الترحيل إلا بعد موافقة جميع المشاركين فيها.',
+            style: TextStyle(color: AppTheme.textSecondary),
+          ),
+          TextField(
+            controller: reason,
+            inputFormatters: const [
+              _Utf8LengthLimitingTextInputFormatter(1000),
+            ],
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'سبب الإلغاء'),
+          ),
+        ],
+        onSubmit: () async {
+          if (reason.text.trim().isEmpty) {
+            throw Exception('سبب الإلغاء مطلوب.');
+          }
+          await _invoiceService.requestDirectCancellation(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            reason: reason.text,
+            idempotencyKey:
+                InterBranchInvoiceApiService.generateIdempotencyKey(),
+          );
+        },
+      );
+    } finally {
+      await WidgetsBinding.instance.endOfFrame;
+      reason.dispose();
+    }
+  }
+
+  Future<void> _decideDirectCancellation(
+    InterBranchInvoiceRead invoice, {
+    required bool approved,
+  }) async {
+    final reason = TextEditingController();
+    try {
+      await _dialog(
+        title: approved ? 'اعتماد إلغاء الفاتورة' : 'رفض إلغاء الفاتورة',
+        children: [
+          if (invoice.cancellationRequest['reason']?.toString().isNotEmpty ==
+              true)
+            Text('سبب الطلب: ${invoice.cancellationRequest['reason']}'),
+          TextField(
+            controller: reason,
+            inputFormatters: const [
+              _Utf8LengthLimitingTextInputFormatter(1000),
+            ],
+            maxLines: 3,
+            decoration: InputDecoration(
+              labelText: approved ? 'ملاحظة (اختيارية)' : 'سبب الرفض',
+            ),
+          ),
+        ],
+        onSubmit: () async {
+          if (!approved && reason.text.trim().isEmpty) {
+            throw Exception('سبب رفض الإلغاء مطلوب.');
+          }
+          await _invoiceService.decideDirectCancellation(
+            invoiceId: invoice.id,
+            expectedRevision: invoice.revision,
+            approved: approved,
+            reason: reason.text,
+            idempotencyKey:
+                InterBranchInvoiceApiService.generateIdempotencyKey(),
+          );
+        },
+      );
+    } finally {
+      await WidgetsBinding.instance.endOfFrame;
+      reason.dispose();
+    }
   }
 
   Future<void> _approveShared(

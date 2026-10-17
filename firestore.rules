@@ -1163,6 +1163,10 @@ service cloud.firestore {
       return value == 'pendingReceiverReview' ||
         value == 'pendingPriceEntry' ||
         value == 'pendingAccountingEntry' ||
+        value == 'pendingDualAccounting' ||
+        value == 'editPendingApprovals' ||
+        value == 'cancellationPendingApprovals' ||
+        value == 'cancelled' ||
         value == 'postedToAccounting';
     }
 
@@ -1177,7 +1181,7 @@ service cloud.firestore {
       return knownInterBranchUser() &&
         ((workflowVersion(data) == 1 &&
             (interBranchSupervisorRole() || managerParticipates(data))) ||
-          (workflowVersion(data) == 2 &&
+          ((workflowVersion(data) == 2 || workflowVersion(data) == 3) &&
             validV2PublicInvoice(invoiceId, data) &&
             (interBranchSupervisorRole() || managerParticipates(data))));
     }
@@ -1237,8 +1241,10 @@ service cloud.firestore {
       ]) &&
         item.id == item.item_id &&
         item.invoice_id == invoiceId &&
-        item.schema_version == 2 && item.workflow_version == 2 &&
-        item.creation_mode == 'direct_supplier_invoice' &&
+        ((item.schema_version == 2 && item.workflow_version == 2 &&
+          item.creation_mode == 'direct_supplier_invoice') ||
+          (item.schema_version == 3 && item.workflow_version == 3 &&
+            item.creation_mode == 'direct_transfer_invoice')) &&
         item.invoice_revision is int && item.invoice_revision > 0 &&
         item.branch_ids is list && item.branch_ids.size() == 2 &&
         item.branch_ids[0] == item.sending_branch_id &&
@@ -1310,7 +1316,7 @@ service cloud.firestore {
 
     function validV2PublicHistory(events) {
       let eventCount = events.size();
-      return events is list && eventCount > 0 && eventCount <= 4 &&
+      return events is list && eventCount > 0 && eventCount <= 20 &&
         (eventCount < 1 || validV2PublicHistoryEvent(events[0])) &&
         (eventCount < 2 || validV2PublicHistoryEvent(events[1])) &&
         (eventCount < 3 || validV2PublicHistoryEvent(events[2])) &&
@@ -1364,12 +1370,30 @@ service cloud.firestore {
           'history'
         ]) &&
         data.id is string && data.id.size() > 0 &&
-        data.schema_version == 2 &&
-        data.workflow_version == 2 &&
-        data.creation_mode == 'direct_supplier_invoice' &&
+        ((data.schema_version == 2 &&
+          data.workflow_version == 2 &&
+          data.creation_mode == 'direct_supplier_invoice') ||
+          (data.schema_version == 3 &&
+            data.workflow_version == 3 &&
+            data.creation_mode == 'direct_transfer_invoice' &&
+            data.participant_ids is list && data.participant_ids.size() > 0 &&
+            data.status in [
+              'pendingReceiverReview',
+              'pendingDualAccounting',
+              'editPendingApprovals',
+              'cancellationPendingApprovals',
+              'cancelled',
+              'postedToAccounting'
+            ] &&
+            (!data.keys().hasAny(['source_accounting_status']) ||
+              data.source_accounting_status in ['pending', 'posted']) &&
+            (!data.keys().hasAny(['receiving_accounting_status']) ||
+              data.receiving_accounting_status in ['pending', 'posted']))) &&
         (!data.keys().hasAny(['receiving_branch_type']) ||
           data.receiving_branch_type == 'branch' ||
           data.receiving_branch_type == 'main') &&
+        (!data.keys().hasAny(['catalog_branch_side']) ||
+          data.catalog_branch_side == 'sending') &&
         v2Status(data.status) &&
         data.sending_branch_id != data.receiving_branch_id &&
         data.branch_ids is list && data.branch_ids.size() == 2 &&
@@ -1631,7 +1655,7 @@ service cloud.firestore {
           'created_at'
         ]) &&
         data.id == eventId &&
-        data.workflow_version == 2 &&
+        (data.workflow_version == 2 || data.workflow_version == 3) &&
         data.invoice_id is string && data.invoice_id.size() > 0 &&
         data.branch_ids is list && data.branch_ids.size() == 2 &&
         data.revision is int && data.revision > 0 &&

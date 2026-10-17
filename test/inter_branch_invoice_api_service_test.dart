@@ -179,6 +179,32 @@ void main() {
     expect(result.status, InterBranchInvoiceStatus.pendingAccountingEntry);
   });
 
+  test(
+    'accounting command identifies the source or receiving posting side',
+    () async {
+      late Map<String, dynamic> body;
+      final service = _service((request) {
+        body = jsonDecode(request.body) as Map<String, dynamic>;
+        return {
+          'invoice_id': 'invoice-1',
+          'status': 'pendingDualAccounting',
+          'revision': 3,
+        };
+      });
+
+      await service.postAccounting(
+        invoiceId: 'invoice-1',
+        expectedRevision: 2,
+        postingSide: 'source',
+        accountingReference: 'OUT-42',
+        idempotencyKey: 'posting:source:1234',
+      );
+
+      expect(body['posting_side'], 'source');
+      expect(body['accounting_reference'], 'OUT-42');
+    },
+  );
+
   test('direct invoice line cap accepts 50 and rejects 51', () async {
     var requestCount = 0;
     final service = InterBranchInvoiceApiService(

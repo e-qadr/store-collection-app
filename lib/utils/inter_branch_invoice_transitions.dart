@@ -61,6 +61,17 @@ class InterBranchInvoiceTransitions {
         },
       };
 
+  static const _directTransferCoreTransitions =
+      <InterBranchInvoiceStatus, Set<InterBranchInvoiceStatus>>{
+        InterBranchInvoiceStatus.pendingReceiverReview: {
+          InterBranchInvoiceStatus.pendingDualAccounting,
+        },
+        InterBranchInvoiceStatus.pendingDualAccounting: {
+          InterBranchInvoiceStatus.pendingDualAccounting,
+          InterBranchInvoiceStatus.postedToAccounting,
+        },
+      };
+
   static bool isLegacyRequestStatus(InterBranchInvoiceStatus status) =>
       legacyRequestStatuses.contains(status);
 
@@ -69,7 +80,9 @@ class InterBranchInvoiceTransitions {
     InterBranchInvoiceStatus next, {
     int workflowVersion = 1,
   }) {
-    final transitions = workflowVersion >= 2
+    final transitions = workflowVersion >= 3
+        ? _directTransferCoreTransitions
+        : workflowVersion >= 2
         ? _directCoreTransitions
         : _legacyCoreTransitions;
     return transitions[current]?.contains(next) ?? false;

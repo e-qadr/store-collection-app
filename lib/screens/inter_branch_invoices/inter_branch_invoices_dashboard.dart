@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:store_collection_app/models/enums.dart';
@@ -12,7 +13,27 @@ import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
-enum _InvoiceBox { incoming, outgoing, mainBranchIncoming }
+enum _InvoiceBox { incoming, outgoing, mainBranchIncoming, myTasks }
+
+enum _GlobalDirection { all, incoming, outgoing }
+
+enum _PostingFilter {
+  all,
+  awaitingAny,
+  sourcePending,
+  receivingPending,
+  complete,
+}
+
+extension on _PostingFilter {
+  String get label => switch (this) {
+    _PostingFilter.all => 'كل حالات الترحيل',
+    _PostingFilter.awaitingAny => 'بانتظار ترحيل',
+    _PostingFilter.sourcePending => 'ترحيل الصادر بانتظار الإجراء',
+    _PostingFilter.receivingPending => 'ترحيل الوارد بانتظار الإجراء',
+    _PostingFilter.complete => 'اكتمل الترحيلان',
+  };
+}
 
 class _BranchFilterOption {
   final String id;
@@ -107,6 +128,7 @@ class _InterBranchInvoicesDashboardState
                     final incoming = _incomingInvoices(invoices);
                     final outgoing = _outgoingInvoices(invoices);
                     final mainBranchIncoming = _mainBranchIncoming(invoices);
+                    final tasks = _requiredTasks(invoices);
                     final dashboardInvoices = widget.role == UserRole.manager
                         ? [...incoming, ...outgoing]
                         : outgoing;
@@ -124,9 +146,9 @@ class _InterBranchInvoicesDashboardState
                         const SizedBox(height: 14),
                         if (_canCreateInvoice) ...[
                           _controlCard(
-                            title: 'فاتورة تحويل مباشرة',
+                            title: 'فاتورة مناقلة جديدة',
                             subtitle:
-                                'إنشاء فاتورة من منتجات علامة فرعك وإرسالها للفرع المستلم.',
+                                'إنشاء مناقلة بدون أسعار وإرسالها للفرع المستلم.',
                             countLabel: 'جديد',
                             icon: Icons.add_circle_outline_rounded,
                             color: AppTheme.managerColor,
@@ -134,6 +156,16 @@ class _InterBranchInvoicesDashboardState
                           ),
                           const SizedBox(height: 12),
                         ],
+                        _controlCard(
+                          title: 'مهامي في المناقلات',
+                          subtitle:
+                              'تعرض فقط الفواتير التي تتطلب إجراءً منك الآن.',
+                          countLabel: '${tasks.length}',
+                          icon: Icons.task_alt_rounded,
+                          color: AppTheme.warningColor,
+                          onTap: () => _openBox(_InvoiceBox.myTasks),
+                        ),
+                        const SizedBox(height: 12),
                         if (widget.role == UserRole.manager) ...[
                           _controlCard(
                             title: 'الوارد إلى فرعي',
@@ -163,13 +195,13 @@ class _InterBranchInvoicesDashboardState
                           title: widget.role == UserRole.manager
                               ? 'فواتير فرعي الصادرة'
                               : widget.role == UserRole.collector
-                              ? 'فواتير بانتظار التسعير'
+                              ? 'سجل فواتير المناقلات'
                               : widget.role == UserRole.accountant
-                              ? 'فواتير بانتظار الترحيل'
+                              ? 'سجل فواتير المناقلات'
                               : 'كل فواتير الفروع',
                           subtitle: widget.role == UserRole.manager
                               ? 'فواتير أنشأها فرعك بصفته المورد.'
-                              : 'قائمة عامة بالفواتير التي تحتاج إجراء دورك.',
+                              : 'سجل جميع الفواتير مع إمكانية الفلترة حسب الفرع والحالة.',
                           countLabel: '${outgoing.length}',
                           icon: Icons.outbox_rounded,
                           color: const Color(0xFF0277BD),
@@ -236,7 +268,7 @@ class _InterBranchInvoicesDashboardState
     if (fixtureStream != null) return fixtureStream;
     final snapshotStream = switch (widget.role) {
       UserRole.collector => _invoiceService.watchInvoices(role: widget.role),
-      UserRole.accountant => _invoiceService.watchAccountingQueue(),
+      UserRole.accountant => _invoiceService.watchInvoices(role: widget.role),
       UserRole.manager || UserRole.admin => _invoiceService.watchInvoices(
         role: widget.role,
         branchId: widget.branchId,
@@ -436,16 +468,7 @@ class _InterBranchInvoicesDashboardState
   ) {
     final branchId = widget.branchId;
     if (branchId == null || branchId.isEmpty) {
-      return invoices.where((invoice) {
-        return switch (widget.role) {
-          UserRole.collector =>
-            invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
-          UserRole.accountant =>
-            invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
-          UserRole.admin => true,
-          UserRole.manager => false,
-        };
-      }).toList();
+      return widget.role == UserRole.manager ? const [] : invoices;
     }
     if (widget.role == UserRole.manager) {
       return invoices
@@ -457,7 +480,8 @@ class _InterBranchInvoicesDashboardState
         UserRole.collector =>
           invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
         UserRole.accountant =>
-          invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
+          invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry ||
+              invoice.status == InterBranchInvoiceStatus.pendingDualAccounting,
         UserRole.admin => true,
         UserRole.manager => false,
       };
@@ -473,6 +497,34 @@ class _InterBranchInvoicesDashboardState
             invoice.status == InterBranchInvoiceStatus.pendingReceiverReview,
       )
       .toList(growable: false);
+
+  List<InterBranchInvoiceRead> _requiredTasks(
+    List<InterBranchInvoiceRead> invoices,
+  ) {
+    final actorId = _currentActorId();
+    return invoices
+        .where((invoice) {
+          final actions = InterBranchInvoicePolicy.actionsFor(
+            role: widget.role,
+            branchId: widget.branchId,
+            invoice: invoice,
+            actorId: actorId,
+          );
+          return InterBranchInvoicePolicy.hasRequiredAction(actions);
+        })
+        .toList(growable: false);
+  }
+
+  String? _currentActorId() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      // Widget tests and the unauthenticated shell intentionally have no
+      // Firebase app. In that state a task list must expose no user-specific
+      // action rather than failing to render the register.
+      return null;
+    }
+  }
 
   List<InterBranchInvoiceRead> _invoiceList(
     QuerySnapshot<Map<String, dynamic>>? snapshot,
@@ -555,14 +607,25 @@ class _InterBranchInvoicesBoxScreenState
   final _dateFormat = DateFormat('yyyy/MM/dd');
 
   String _branchFilter = _allFilterValue;
+  _GlobalDirection _globalDirection = _GlobalDirection.all;
+  _PostingFilter _postingFilter = _PostingFilter.all;
   InterBranchInvoiceStatus? _statusFilter;
   DateTime? _fromDate;
   DateTime? _toDate;
+  List<InterBranchInvoiceBranchOption> _registerBranches = const [];
   List<InterBranchInvoiceRead> _loadedInvoices = const [];
   DocumentSnapshot<Map<String, dynamic>>? _pageCursor;
   bool _loadingPage = false;
   bool _hasMorePages = true;
   bool _pageFailed = false;
+
+  String? get _actorId {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
 
   bool get _showsPrices =>
       widget.role == UserRole.accountant ||
@@ -572,6 +635,7 @@ class _InterBranchInvoicesBoxScreenState
   Color get _roleColor => _roleColorFor(widget.role);
 
   String get _boxTitle {
+    if (widget.box == _InvoiceBox.myTasks) return 'مهامي في فواتير المناقلات';
     if (widget.box == _InvoiceBox.mainBranchIncoming) {
       return 'وارد الفروع الرئيسية';
     }
@@ -579,8 +643,8 @@ class _InterBranchInvoicesBoxScreenState
       return 'الوارد إلى فرعي';
     }
     if (widget.role == UserRole.manager) return 'فواتير فرعي الصادرة';
-    if (widget.role == UserRole.collector) return 'قائمة التسعير العامة';
-    if (widget.role == UserRole.accountant) return 'قائمة الترحيل العامة';
+    if (widget.role == UserRole.collector) return 'سجل فواتير المناقلات';
+    if (widget.role == UserRole.accountant) return 'سجل فواتير المناقلات';
     return 'كل فواتير الفروع';
   }
 
@@ -595,7 +659,22 @@ class _InterBranchInvoicesBoxScreenState
   @override
   void initState() {
     super.initState();
+    if (widget.role != UserRole.manager && widget.branchId.isNotEmpty) {
+      _branchFilter = widget.branchId;
+    }
+    _loadRegisterBranches();
     _loadPage(reset: true);
+  }
+
+  Future<void> _loadRegisterBranches() async {
+    if (widget.role == UserRole.manager) return;
+    try {
+      final branches = await _service.fetchRegisterBranches();
+      if (mounted) setState(() => _registerBranches = branches);
+    } catch (_) {
+      // The current-page branch choices are still usable if branch metadata
+      // is temporarily unavailable.
+    }
   }
 
   Future<void> _loadPage({required bool reset}) async {
@@ -607,6 +686,11 @@ class _InterBranchInvoicesBoxScreenState
     try {
       final after = reset ? null : _pageCursor;
       final page = switch (widget.role) {
+        UserRole.manager when widget.box == _InvoiceBox.myTasks =>
+          await _service.fetchParticipantBranchPage(
+            branchId: widget.branchId,
+            after: after,
+          ),
         UserRole.manager => await _service.fetchBranchPage(
           branchId: widget.branchId,
           sent: widget.box == _InvoiceBox.outgoing,
@@ -615,7 +699,7 @@ class _InterBranchInvoicesBoxScreenState
         UserRole.collector when widget.box == _InvoiceBox.mainBranchIncoming =>
           await _service.fetchMainBranchReceiptPage(),
         UserRole.collector || UserRole.accountant =>
-          await _service.fetchQueuePage(role: widget.role, after: after),
+          await _service.fetchAllPage(role: widget.role, after: after),
         UserRole.admin => await _service.fetchAllPage(
           role: widget.role,
           after: after,
@@ -664,6 +748,12 @@ class _InterBranchInvoicesBoxScreenState
     }
     final scoped = _scopedInvoices(_loadedInvoices);
     final visibleInvoices = _visibleInvoices(scoped);
+    final selectedBranch = _effectiveBranchFilter(scoped);
+    final splitByDirection =
+        widget.role != UserRole.manager &&
+        widget.box != _InvoiceBox.myTasks &&
+        selectedBranch != _allFilterValue &&
+        _globalDirection == _GlobalDirection.all;
     return RefreshIndicator(
       onRefresh: () => _loadPage(reset: true),
       child: ListView(
@@ -691,7 +781,9 @@ class _InterBranchInvoicesBoxScreenState
           const SizedBox(height: 14),
           SectionHeader(
             title: _boxTitle,
-            icon: widget.box == _InvoiceBox.incoming
+            icon: widget.box == _InvoiceBox.myTasks
+                ? Icons.task_alt_rounded
+                : widget.box == _InvoiceBox.incoming
                 ? Icons.move_to_inbox_rounded
                 : Icons.outbox_rounded,
             color: _roleColor,
@@ -704,7 +796,9 @@ class _InterBranchInvoicesBoxScreenState
               subtitle: 'لا توجد نتائج مطابقة لهذا الصندوق أو الفلاتر.',
             )
           else
-            _buildInvoicesList(visibleInvoices),
+            splitByDirection
+                ? _buildDirectionSections(visibleInvoices, selectedBranch)
+                : _buildInvoicesList(visibleInvoices),
           if (_hasMorePages) ...[
             const SizedBox(height: 14),
             OutlinedButton.icon(
@@ -724,6 +818,81 @@ class _InterBranchInvoicesBoxScreenState
     );
   }
 
+  Widget _buildDirectionSections(
+    List<InterBranchInvoiceRead> invoices,
+    String branchId,
+  ) {
+    final incoming = invoices
+        .where((invoice) => invoice.receivingBranchId == branchId)
+        .toList(growable: false);
+    final outgoing = invoices
+        .where((invoice) => invoice.sendingBranchId == branchId)
+        .toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _directionLabel(
+          title: 'فواتير واردة للفرع',
+          count: incoming.length,
+          icon: Icons.move_to_inbox_rounded,
+        ),
+        const SizedBox(height: 8),
+        if (incoming.isEmpty)
+          _compactEmptyDirection('لا توجد فواتير واردة مطابقة للفلاتر.')
+        else
+          _buildInvoicesList(incoming),
+        const SizedBox(height: 12),
+        _directionLabel(
+          title: 'فواتير صادرة من الفرع',
+          count: outgoing.length,
+          icon: Icons.outbox_rounded,
+        ),
+        const SizedBox(height: 8),
+        if (outgoing.isEmpty)
+          _compactEmptyDirection('لا توجد فواتير صادرة مطابقة للفلاتر.')
+        else
+          _buildInvoicesList(outgoing),
+      ],
+    );
+  }
+
+  Widget _directionLabel({
+    required String title,
+    required int count,
+    required IconData icon,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, color: _roleColor, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        Text('$count', style: TextStyle(color: _roleColor)),
+      ],
+    );
+  }
+
+  Widget _compactEmptyDirection(String message) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(color: AppTheme.textSecondary),
+      ),
+    );
+  }
+
   Widget _boxSummary(
     List<InterBranchInvoiceRead> scoped,
     List<InterBranchInvoiceRead> visible,
@@ -731,9 +900,10 @@ class _InterBranchInvoicesBoxScreenState
     final pending = scoped.where((invoice) {
       return switch (widget.role) {
         UserRole.collector =>
-          invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
+          invoice.status == InterBranchInvoiceStatus.pendingReceiverReview,
         UserRole.accountant =>
-          invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
+          invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry ||
+              invoice.status == InterBranchInvoiceStatus.pendingDualAccounting,
         UserRole.admin =>
           invoice.status == InterBranchInvoiceStatus.pendingReceiverReview ||
               invoice.status == InterBranchInvoiceStatus.pendingPriceEntry ||
@@ -807,19 +977,45 @@ class _InterBranchInvoicesBoxScreenState
   ) {
     final effectiveBranchFilter = _effectiveBranchFilter(invoices);
     return invoices.where((invoice) {
-      final branchMatches =
+      final branchMatches = _matchesSelectedBranch(
+        invoice,
+        effectiveBranchFilter,
+      );
+      final directionMatches =
+          widget.role == UserRole.manager ||
           effectiveBranchFilter == _allFilterValue ||
-          _counterpartBranchId(invoice) == effectiveBranchFilter;
+          _globalDirection == _GlobalDirection.all ||
+          (_globalDirection == _GlobalDirection.incoming &&
+              invoice.receivingBranchId == effectiveBranchFilter) ||
+          (_globalDirection == _GlobalDirection.outgoing &&
+              invoice.sendingBranchId == effectiveBranchFilter);
       final statusMatches =
           _statusFilter == null || invoice.status == _statusFilter;
       final dateMatches = _dateMatches(invoice);
-      return branchMatches && statusMatches && dateMatches;
+      return branchMatches && directionMatches && statusMatches && dateMatches;
     }).toList();
+  }
+
+  bool _matchesSelectedBranch(
+    InterBranchInvoiceRead invoice,
+    String selectedBranchId,
+  ) {
+    if (selectedBranchId == _allFilterValue) return true;
+    if (widget.role == UserRole.manager) {
+      return _counterpartBranchId(invoice) == selectedBranchId;
+    }
+    return invoice.sendingBranchId == selectedBranchId ||
+        invoice.receivingBranchId == selectedBranchId;
   }
 
   List<InterBranchInvoiceRead> _scopedInvoices(
     List<InterBranchInvoiceRead> invoices,
   ) {
+    if (widget.box == _InvoiceBox.myTasks) {
+      return invoices
+          .where((invoice) => _hasRequiredAction(invoice))
+          .toList(growable: false);
+    }
     if (widget.box == _InvoiceBox.mainBranchIncoming) {
       return invoices
           .where(
@@ -830,24 +1026,23 @@ class _InterBranchInvoicesBoxScreenState
           )
           .toList(growable: false);
     }
-    if (widget.role != UserRole.manager) {
-      return invoices.where((invoice) {
-        return switch (widget.role) {
-          UserRole.collector =>
-            invoice.status == InterBranchInvoiceStatus.pendingPriceEntry,
-          UserRole.accountant =>
-            invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
-          UserRole.admin => true,
-          UserRole.manager => false,
-        };
-      }).toList();
-    }
+    if (widget.role != UserRole.manager) return invoices;
     return invoices.where((invoice) {
       if (widget.box == _InvoiceBox.incoming) {
         return invoice.receivingBranchId == widget.branchId;
       }
       return invoice.sendingBranchId == widget.branchId;
     }).toList();
+  }
+
+  bool _hasRequiredAction(InterBranchInvoiceRead invoice) {
+    final actions = InterBranchInvoicePolicy.actionsFor(
+      role: widget.role,
+      branchId: widget.branchId,
+      invoice: invoice,
+      actorId: _actorId,
+    );
+    return InterBranchInvoicePolicy.hasRequiredAction(actions);
   }
 
   String _counterpartBranchId(InterBranchInvoiceRead invoice) {
@@ -877,10 +1072,30 @@ class _InterBranchInvoicesBoxScreenState
     List<InterBranchInvoiceRead> invoices,
   ) {
     final options = <String, String>{};
+    if (widget.role != UserRole.manager) {
+      for (final branch in _registerBranches) {
+        options[branch.id] = branch.isMain
+            ? '${branch.name} (رئيسي)'
+            : branch.name;
+      }
+      if (widget.branchId.isNotEmpty && !options.containsKey(widget.branchId)) {
+        options[widget.branchId] = widget.branchName;
+      }
+    }
     for (final invoice in invoices) {
-      final id = _counterpartBranchId(invoice);
-      if (id.isEmpty) continue;
-      options[id] = _counterpartBranchName(invoice);
+      if (widget.role == UserRole.manager) {
+        final id = _counterpartBranchId(invoice);
+        if (id.isEmpty) continue;
+        options[id] = _counterpartBranchName(invoice);
+      } else {
+        if (invoice.sendingBranchId.isNotEmpty) {
+          options[invoice.sendingBranchId] = invoice.sendingBranchName;
+        }
+        if (invoice.receivingBranchId.isNotEmpty) {
+          options[invoice.receivingBranchId] =
+              invoice.receivingBranchDisplayName;
+        }
+      }
     }
 
     final result =
@@ -969,10 +1184,27 @@ class _InterBranchInvoicesBoxScreenState
         }),
       );
     }
+    if (_globalDirection != _GlobalDirection.all) {
+      final label = _globalDirection == _GlobalDirection.incoming
+          ? 'وارد للفرع المختار'
+          : 'صادر من الفرع المختار';
+      chips.add(
+        _filterChip(label, () {
+          setState(() => _globalDirection = _GlobalDirection.all);
+        }),
+      );
+    }
     if (_statusFilter != null) {
       chips.add(
         _filterChip(_statusFilter!.label, () {
           setState(() => _statusFilter = null);
+        }),
+      );
+    }
+    if (_postingFilter != _PostingFilter.all) {
+      chips.add(
+        _filterChip(_postingFilter.label, () {
+          setState(() => _postingFilter = _PostingFilter.all);
         }),
       );
     }
@@ -1081,6 +1313,37 @@ class _InterBranchInvoicesBoxScreenState
                         setSheetState(() {});
                       },
                     ),
+                    if (widget.role != UserRole.manager) ...[
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<_GlobalDirection>(
+                        key: ValueKey(
+                          'sheet-direction-${_globalDirection.name}',
+                        ),
+                        initialValue: _globalDirection,
+                        isExpanded: true,
+                        decoration: _filterDecoration('اتجاه الحركة'),
+                        items: const [
+                          DropdownMenuItem(
+                            value: _GlobalDirection.all,
+                            child: Text('وارد وصادر'),
+                          ),
+                          DropdownMenuItem(
+                            value: _GlobalDirection.incoming,
+                            child: Text('وارد إلى الفرع المختار'),
+                          ),
+                          DropdownMenuItem(
+                            value: _GlobalDirection.outgoing,
+                            child: Text('صادر من الفرع المختار'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _globalDirection = value ?? _GlobalDirection.all;
+                          });
+                          setSheetState(() {});
+                        },
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       key: ValueKey(
@@ -1112,6 +1375,27 @@ class _InterBranchInvoicesBoxScreenState
                               : InterBranchInvoiceStatus.values.firstWhere(
                                   (status) => status.name == value,
                                 );
+                        });
+                        setSheetState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<_PostingFilter>(
+                      key: ValueKey('sheet-posting-${_postingFilter.name}'),
+                      initialValue: _postingFilter,
+                      isExpanded: true,
+                      decoration: _filterDecoration('حالة الترحيل'),
+                      items: _PostingFilter.values
+                          .map(
+                            (filter) => DropdownMenuItem(
+                              value: filter,
+                              child: Text(filter.label),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        setState(() {
+                          _postingFilter = value ?? _PostingFilter.all;
                         });
                         setSheetState(() {});
                       },
@@ -1199,7 +1483,9 @@ class _InterBranchInvoicesBoxScreenState
 
   bool get _hasActiveFilters =>
       _branchFilter != _allFilterValue ||
+      _globalDirection != _GlobalDirection.all ||
       _statusFilter != null ||
+      _postingFilter != _PostingFilter.all ||
       _fromDate != null ||
       _toDate != null;
 
@@ -1234,7 +1520,9 @@ class _InterBranchInvoicesBoxScreenState
   void _clearFilters() {
     setState(() {
       _branchFilter = _allFilterValue;
+      _globalDirection = _GlobalDirection.all;
       _statusFilter = null;
+      _postingFilter = _PostingFilter.all;
       _fromDate = null;
       _toDate = null;
     });
@@ -1369,7 +1657,7 @@ class _InterBranchInvoicesBoxScreenState
                             ),
                           ),
                         ),
-                        if (_showsPrices)
+                        if (_showsPrices && !invoice.isVersion3)
                           Text(
                             invoice.isVersion2
                                 ? 'الأسعار محمية'
