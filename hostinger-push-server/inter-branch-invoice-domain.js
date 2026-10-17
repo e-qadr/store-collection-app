@@ -99,6 +99,13 @@ function positiveRevision(value) {
   return value;
 }
 
+function nonNegativeRevision(value) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new CommandError("invalid-argument", 400, "expected_revision is invalid.");
+  }
+  return value;
+}
+
 function boundedItems(value, fieldName = "items") {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_ITEMS) {
     throw new CommandError(
@@ -295,6 +302,37 @@ function validatePostingPayload(body) {
         input.accounting_notes,
         "accounting_notes",
         MAX_INVOICE_NOTES_BYTES,
+    ),
+  };
+}
+
+function validateLegacyDualAccountingSetupPayload(body) {
+  const input = requirePlainObject(body);
+  assertNoPriceLikeKeys(input);
+  requireOnlyKeys(
+      input,
+      new Set([
+        "expected_revision",
+        "existing_posting_side",
+        "existing_accounting_reference",
+      ]),
+      "body",
+  );
+  const existingPostingSide = requiredString(
+      input.existing_posting_side,
+      "existing_posting_side",
+      16,
+  );
+  if (!["none", "source", "receiving"].includes(existingPostingSide)) {
+    throw new CommandError("invalid-argument", 400, "existing_posting_side is invalid.");
+  }
+  return {
+    expected_revision: nonNegativeRevision(input.expected_revision),
+    existing_posting_side: existingPostingSide,
+    existing_accounting_reference: optionalString(
+        input.existing_accounting_reference,
+        "existing_accounting_reference",
+        MAX_ACCOUNTING_REFERENCE_BYTES,
     ),
   };
 }
@@ -505,6 +543,7 @@ module.exports = {
   validateAmendmentRequestPayload,
   validateCancellationRequestPayload,
   validateIdempotencyKey,
+  validateLegacyDualAccountingSetupPayload,
   validatePostingPayload,
   validatePricingPayload,
   validateReceiptPayload,

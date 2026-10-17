@@ -458,34 +458,24 @@ void main() {
     expect(find.textContaining('token'), findsNothing);
   });
 
-  testWidgets('7. المحاسب يرحل الفاتورة بمرجع محاسبي', (tester) async {
-    String? submittedReference;
+  testWidgets('7. المحاسب يجهز الفاتورة التاريخية لترحيلين منفصلين', (
+    tester,
+  ) async {
     await _pumpDetails(
       tester,
       role: UserRole.accountant,
       header: _v2Header(status: 'pendingAccountingEntry', revision: 3),
       item: _v2Item(receivedQuantity: 5),
-      directAccountingSubmitter:
-          ({
-            required invoiceId,
-            required expectedRevision,
-            required accountingReference,
-            required idempotencyKey,
-            accountingNotes,
-          }) async {
-            submittedReference = accountingReference;
-          },
     );
 
-    await tester.tap(find.text('ترحيل محاسبي'));
+    await tester.tap(find.text('تحديد الترحيل السابق'));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.widgetWithText(TextField, 'رقم الفاتورة في النظام المحاسبي'),
-      'ACC-2026-51',
-    );
-    await tester.tap(find.text('حفظ'));
+    expect(find.text('تحديد حالة الترحيل السابقة'), findsOneWidget);
+    await tester.tap(find.text('حالة الترحيل السابقة'));
     await tester.pumpAndSettle();
-    expect(submittedReference, 'ACC-2026-51');
+    expect(find.text('لم تُرحّل سابقاً'), findsOneWidget);
+    expect(find.text('رُحّلت في الفرع المرسل'), findsOneWidget);
+    expect(find.text('رُحّلت في الفرع المستلم'), findsOneWidget);
   });
 
   testWidgets('8. أخطاء API تظهر بنص عربي آمن', (tester) async {
@@ -588,12 +578,60 @@ void main() {
     );
 
     expect(find.text('الوارد إلى فرعي'), findsOneWidget);
-    expect(find.text('فواتير فرعي الصادرة'), findsOneWidget);
-    expect(find.textContaining('بصفته المورد'), findsOneWidget);
+    expect(find.text('سجل فواتير فرعي'), findsOneWidget);
+    expect(find.textContaining('اختر الوارد أو الصادر'), findsOneWidget);
     expect(
       Directionality.of(tester.element(find.byType(Scaffold).first)),
       TextDirection.rtl,
     );
+  });
+
+  testWidgets('10b. بطاقات الملخص تفتح الصندوق الذي تمثله', (tester) async {
+    await _pumpApp(
+      tester,
+      InterBranchInvoicesDashboard(
+        role: UserRole.manager,
+        branchId: 'branch-a',
+        branchName: 'فرع أ',
+        invoiceStream: _valueStream(const []),
+        showAppBarActions: false,
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('transfer-stat-all')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('كل فواتير فرعي'), findsWidgets);
+  });
+
+  testWidgets('10c. سجل المناقلات يختار الفرع ثم اتجاه الفواتير', (
+    tester,
+  ) async {
+    await _pumpApp(
+      tester,
+      InterBranchInvoicesDashboard(
+        role: UserRole.manager,
+        branchId: 'branch-a',
+        branchName: 'فرع أ',
+        invoiceStream: _valueStream(const []),
+        showAppBarActions: false,
+      ),
+    );
+
+    await tester.tap(find.text('سجل فواتير فرعي'));
+    await tester.pumpAndSettle();
+    expect(find.text('اختيار فرع المناقلات'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const Key('transfer-register-branch-branch-a')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('فواتير واردة إلى الفرع'), findsOneWidget);
+    expect(find.text('فواتير صادرة من الفرع'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('transfer-register-incoming')));
+    await tester.pumpAndSettle();
+    expect(find.text('فواتير واردة إلى الفرع'), findsWidgets);
   });
 }
 

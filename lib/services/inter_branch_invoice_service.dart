@@ -404,6 +404,20 @@ class InterBranchInvoiceService {
     accountingNotes: accountingNotes,
   );
 
+  Future<InterBranchInvoiceCommandResult> initializeLegacyDualAccounting({
+    required String invoiceId,
+    required int expectedRevision,
+    required String existingPostingSide,
+    required String idempotencyKey,
+    String? existingAccountingReference,
+  }) => commandApi.initializeLegacyDualAccounting(
+    invoiceId: invoiceId,
+    expectedRevision: expectedRevision,
+    existingPostingSide: existingPostingSide,
+    idempotencyKey: idempotencyKey,
+    existingAccountingReference: existingAccountingReference,
+  );
+
   Future<InterBranchInvoiceCommandResult> requestDirectAmendment({
     required String invoiceId,
     required int expectedRevision,

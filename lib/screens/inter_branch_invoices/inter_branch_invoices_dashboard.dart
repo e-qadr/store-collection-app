@@ -13,7 +13,7 @@ import 'package:store_collection_app/utils/logout_confirmation.dart';
 import 'package:store_collection_app/widgets/dashboard_widgets.dart';
 import 'package:store_collection_app/widgets/notification_bell.dart';
 
-enum _InvoiceBox { incoming, outgoing, mainBranchIncoming, myTasks }
+enum _InvoiceBox { all, incoming, outgoing, mainBranchIncoming, myTasks }
 
 enum _GlobalDirection { all, incoming, outgoing }
 
@@ -193,19 +193,19 @@ class _InterBranchInvoicesDashboardState
                         ],
                         _controlCard(
                           title: widget.role == UserRole.manager
-                              ? 'فواتير فرعي الصادرة'
+                              ? 'سجل فواتير فرعي'
                               : widget.role == UserRole.collector
                               ? 'سجل فواتير المناقلات'
                               : widget.role == UserRole.accountant
                               ? 'سجل فواتير المناقلات'
                               : 'كل فواتير الفروع',
                           subtitle: widget.role == UserRole.manager
-                              ? 'فواتير أنشأها فرعك بصفته المورد.'
+                              ? 'اختر الوارد أو الصادر لفرعك ثم اعرض الفواتير.'
                               : 'سجل جميع الفواتير مع إمكانية الفلترة حسب الفرع والحالة.',
-                          countLabel: '${outgoing.length}',
+                          countLabel: '${dashboardInvoices.length}',
                           icon: Icons.outbox_rounded,
                           color: const Color(0xFF0277BD),
-                          onTap: () => _openBox(_InvoiceBox.outgoing),
+                          onTap: _openRegisterEntry,
                         ),
                         if (!_hasBranch && widget.role == UserRole.manager) ...[
                           const SizedBox(height: 16),
@@ -290,7 +290,11 @@ class _InterBranchInvoicesDashboardState
     final awaitingAccounting = invoices
         .where(
           (invoice) =>
-              invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry,
+              invoice.status ==
+                  InterBranchInvoiceStatus.pendingAccountingEntry ||
+              invoice.status ==
+                  InterBranchInvoiceStatus.pendingDualAccounting ||
+              invoice.needsLegacyDualAccountingSetup,
         )
         .length;
     final posted = invoices
@@ -304,26 +308,32 @@ class _InterBranchInvoicesDashboardState
       children: [
         Expanded(
           child: StatCard(
+            key: const Key('transfer-stat-all'),
             label: 'المعروض حالياً',
             value: '${invoices.length}',
             icon: Icons.receipt_long_rounded,
             color: const Color(0xFF0277BD),
             bgColor: const Color(0xFFE1F5FE),
+            onTap: () => _openBox(_InvoiceBox.all),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: StatCard(
+            key: const Key('transfer-stat-tasks'),
             label: 'بانتظار قرار',
             value: '$pending',
             icon: Icons.pending_actions_rounded,
             color: AppTheme.warningColor,
             bgColor: const Color(0xFFFFF3E0),
+            onTap: () =>
+                _openBox(_InvoiceBox.all, initialStatus: pendingStatus),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: StatCard(
+            key: const Key('transfer-stat-posting'),
             label: widget.role == UserRole.manager ? 'مرحلة' : 'بانتظار ترحيل',
             value: widget.role == UserRole.manager
                 ? '$posted'
@@ -337,6 +347,15 @@ class _InterBranchInvoicesDashboardState
             bgColor: widget.role == UserRole.manager
                 ? const Color(0xFFE8F5E9)
                 : const Color(0xFFEDE7F6),
+            onTap: () => _openBox(
+              _InvoiceBox.all,
+              initialStatus: widget.role == UserRole.manager
+                  ? InterBranchInvoiceStatus.postedToAccounting
+                  : null,
+              initialPostingFilter: widget.role == UserRole.manager
+                  ? _PostingFilter.all
+                  : _PostingFilter.awaitingAny,
+            ),
           ),
         ),
       ],
@@ -437,7 +456,11 @@ class _InterBranchInvoicesDashboardState
     );
   }
 
-  void _openBox(_InvoiceBox box) {
+  void _openBox(
+    _InvoiceBox box, {
+    InterBranchInvoiceStatus? initialStatus,
+    _PostingFilter? initialPostingFilter,
+  }) {
     final branchId = widget.branchId?.trim() ?? '';
     if (branchId.isEmpty && widget.role == UserRole.manager) return;
     Navigator.push(
@@ -448,6 +471,23 @@ class _InterBranchInvoicesDashboardState
           branchId: branchId,
           branchName: widget.branchName,
           box: box,
+          initialStatus: initialStatus,
+          initialPostingFilter: initialPostingFilter,
+          showAppBarActions: widget.showAppBarActions,
+        ),
+      ),
+    );
+  }
+
+  void _openRegisterEntry() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _InterBranchInvoiceRegisterEntryScreen(
+          role: widget.role,
+          initialBranchId: widget.branchId?.trim() ?? '',
+          initialBranchName: widget.branchName,
+          showAppBarActions: widget.showAppBarActions,
         ),
       ),
     );
@@ -580,17 +620,441 @@ class _InterBranchInvoicesDashboardState
   }
 }
 
+class _InterBranchInvoiceRegisterEntryScreen extends StatefulWidget {
+  final UserRole role;
+  final String initialBranchId;
+  final String initialBranchName;
+  final bool showAppBarActions;
+
+  const _InterBranchInvoiceRegisterEntryScreen({
+    required this.role,
+    required this.initialBranchId,
+    required this.initialBranchName,
+    required this.showAppBarActions,
+  });
+
+  @override
+  State<_InterBranchInvoiceRegisterEntryScreen> createState() =>
+      _InterBranchInvoiceRegisterEntryScreenState();
+}
+
+class _InterBranchInvoiceRegisterEntryScreenState
+    extends State<_InterBranchInvoiceRegisterEntryScreen> {
+  InterBranchInvoiceService? _service;
+  InterBranchInvoiceService get _invoiceService =>
+      _service ??= InterBranchInvoiceService();
+
+  List<InterBranchInvoiceBranchOption> _branches = const [];
+  bool _loading = true;
+  bool _failed = false;
+
+  Color get _roleColor => _roleColorFor(widget.role);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBranches();
+  }
+
+  Future<void> _loadBranches() async {
+    if (widget.role == UserRole.manager) {
+      final branchId = widget.initialBranchId.trim();
+      if (branchId.isEmpty) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+      if (mounted) {
+        setState(() {
+          _branches = [
+            InterBranchInvoiceBranchOption(
+              id: branchId,
+              name: widget.initialBranchName,
+              isMain: false,
+            ),
+          ];
+          _loading = false;
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final branches = await _invoiceService.fetchRegisterBranches();
+      if (!mounted) return;
+      setState(() {
+        _branches = branches;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: AppTheme.surfaceColor,
+        appBar: AppBar(
+          title: const Text('اختيار فرع المناقلات'),
+          backgroundColor: _roleColor,
+          actions: widget.showAppBarActions ? const [NotificationBell()] : null,
+        ),
+        body: RefreshIndicator(
+          onRefresh: _loadBranches,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 32),
+            children: [
+              _buildIntro(),
+              const SizedBox(height: 20),
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.all(36),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_failed)
+                _buildLoadFailure()
+              else if (_branches.isEmpty)
+                _buildNoBranchState()
+              else ...[
+                const Text(
+                  'اختر الفرع',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ..._branches.map(_buildBranchCard),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIntro() {
+    final manager = widget.role == UserRole.manager;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _roleColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.account_tree_rounded, color: _roleColor, size: 30),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              manager
+                  ? 'اختر فرعك ثم حدد إن كانت الفواتير واردة إليه أو صادرة منه.'
+                  : 'اختر الفرع أولاً، ثم حدد إن كانت الفواتير واردة إليه أو صادرة منه.',
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBranchCard(InterBranchInvoiceBranchOption branch) {
+    final title = branch.isMain ? '${branch.name} (رئيسي)' : branch.name;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: AppTheme.cardShadow(),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          key: Key('transfer-register-branch-${branch.id}'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openDirection(branch),
+          child: Padding(
+            padding: const EdgeInsets.all(17),
+            child: Row(
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: _roleColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.storefront_rounded, color: _roleColor),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'عرض فواتير المناقلات الخاصة بالفرع',
+                        style: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_left_rounded, color: _roleColor),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadFailure() => Container(
+    padding: const EdgeInsets.all(22),
+    decoration: AppTheme.cardShadow(),
+    child: Column(
+      children: [
+        const Icon(
+          Icons.cloud_off_rounded,
+          size: 42,
+          color: AppTheme.errorColor,
+        ),
+        const SizedBox(height: 10),
+        const Text('تعذر تحميل الفروع'),
+        TextButton.icon(
+          onPressed: _loadBranches,
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('إعادة المحاولة'),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildNoBranchState() => Container(
+    padding: const EdgeInsets.all(22),
+    decoration: AppTheme.cardShadow(),
+    child: const Column(
+      children: [
+        Icon(Icons.storefront_outlined, size: 42, color: AppTheme.textHint),
+        SizedBox(height: 10),
+        Text('لا يوجد فرع متاح'),
+        SizedBox(height: 4),
+        Text(
+          'اختر فرعاً من شاشة الفروع ثم افتح سجل المناقلات.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+      ],
+    ),
+  );
+
+  void _openDirection(InterBranchInvoiceBranchOption branch) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _InterBranchInvoiceRegisterDirectionScreen(
+          role: widget.role,
+          branchId: branch.id,
+          branchName: branch.isMain ? '${branch.name} (رئيسي)' : branch.name,
+          showAppBarActions: widget.showAppBarActions,
+        ),
+      ),
+    );
+  }
+}
+
+class _InterBranchInvoiceRegisterDirectionScreen extends StatelessWidget {
+  final UserRole role;
+  final String branchId;
+  final String branchName;
+  final bool showAppBarActions;
+
+  const _InterBranchInvoiceRegisterDirectionScreen({
+    required this.role,
+    required this.branchId,
+    required this.branchName,
+    required this.showAppBarActions,
+  });
+
+  Color get _roleColor => _roleColorFor(role);
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: AppTheme.surfaceColor,
+        appBar: AppBar(
+          title: const Text('اختيار اتجاه العرض'),
+          backgroundColor: _roleColor,
+          actions: showAppBarActions ? const [NotificationBell()] : null,
+        ),
+        body: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                branchName,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'اختر نوع الفواتير المطلوب عرضها لهذا الفرع.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 28),
+              _directionCard(
+                context,
+                key: const Key('transfer-register-incoming'),
+                title: 'فواتير واردة إلى الفرع',
+                subtitle: 'فواتير أُرسلت إلى هذا الفرع بصفته المستلم.',
+                icon: Icons.move_to_inbox_rounded,
+                direction: _GlobalDirection.incoming,
+              ),
+              const SizedBox(height: 14),
+              _directionCard(
+                context,
+                key: const Key('transfer-register-outgoing'),
+                title: 'فواتير صادرة من الفرع',
+                subtitle: 'فواتير أنشأها هذا الفرع بصفته المرسل.',
+                icon: Icons.outbox_rounded,
+                direction: _GlobalDirection.outgoing,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _directionCard(
+    BuildContext context, {
+    required Key key,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required _GlobalDirection direction,
+  }) {
+    return Container(
+      decoration: AppTheme.cardShadow(),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          key: key,
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _openRegister(context, direction),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: _roleColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: Icon(icon, color: _roleColor, size: 28),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          color: AppTheme.textPrimary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_left_rounded, color: _roleColor),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openRegister(BuildContext context, _GlobalDirection direction) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _InterBranchInvoicesBoxScreen(
+          role: role,
+          branchId: branchId,
+          branchName: branchName,
+          box: direction == _GlobalDirection.incoming
+              ? _InvoiceBox.incoming
+              : _InvoiceBox.outgoing,
+          initialDirection: direction,
+          showAppBarActions: showAppBarActions,
+        ),
+      ),
+    );
+  }
+}
+
 class _InterBranchInvoicesBoxScreen extends StatefulWidget {
   final UserRole role;
   final String branchId;
   final String branchName;
   final _InvoiceBox box;
+  final InterBranchInvoiceStatus? initialStatus;
+  final _PostingFilter? initialPostingFilter;
+  final _GlobalDirection? initialDirection;
+  final bool showAppBarActions;
 
   const _InterBranchInvoicesBoxScreen({
     required this.role,
     required this.branchId,
     required this.branchName,
     required this.box,
+    this.initialStatus,
+    this.initialPostingFilter,
+    this.initialDirection,
+    required this.showAppBarActions,
   });
 
   @override
@@ -602,7 +1066,9 @@ class _InterBranchInvoicesBoxScreenState
     extends State<_InterBranchInvoicesBoxScreen> {
   static const _allFilterValue = '__all__';
 
-  final _service = InterBranchInvoiceService();
+  InterBranchInvoiceService? _service;
+  InterBranchInvoiceService get _invoiceService =>
+      _service ??= InterBranchInvoiceService();
   final _numberFormat = NumberFormat('#,##0.##');
   final _dateFormat = DateFormat('yyyy/MM/dd');
 
@@ -635,9 +1101,20 @@ class _InterBranchInvoicesBoxScreenState
   Color get _roleColor => _roleColorFor(widget.role);
 
   String get _boxTitle {
+    if (widget.box == _InvoiceBox.all) {
+      return widget.role == UserRole.manager
+          ? 'كل فواتير فرعي'
+          : 'سجل فواتير المناقلات';
+    }
     if (widget.box == _InvoiceBox.myTasks) return 'مهامي في فواتير المناقلات';
     if (widget.box == _InvoiceBox.mainBranchIncoming) {
       return 'وارد الفروع الرئيسية';
+    }
+    if (widget.branchId.isNotEmpty && widget.box == _InvoiceBox.incoming) {
+      return 'فواتير واردة إلى الفرع';
+    }
+    if (widget.branchId.isNotEmpty && widget.box == _InvoiceBox.outgoing) {
+      return 'فواتير صادرة من الفرع';
     }
     if (widget.role == UserRole.manager && widget.box == _InvoiceBox.incoming) {
       return 'الوارد إلى فرعي';
@@ -659,6 +1136,9 @@ class _InterBranchInvoicesBoxScreenState
   @override
   void initState() {
     super.initState();
+    _statusFilter = widget.initialStatus;
+    _postingFilter = widget.initialPostingFilter ?? _PostingFilter.all;
+    _globalDirection = widget.initialDirection ?? _GlobalDirection.all;
     if (widget.role != UserRole.manager && widget.branchId.isNotEmpty) {
       _branchFilter = widget.branchId;
     }
@@ -669,7 +1149,7 @@ class _InterBranchInvoicesBoxScreenState
   Future<void> _loadRegisterBranches() async {
     if (widget.role == UserRole.manager) return;
     try {
-      final branches = await _service.fetchRegisterBranches();
+      final branches = await _invoiceService.fetchRegisterBranches();
       if (mounted) setState(() => _registerBranches = branches);
     } catch (_) {
       // The current-page branch choices are still usable if branch metadata
@@ -687,20 +1167,25 @@ class _InterBranchInvoicesBoxScreenState
       final after = reset ? null : _pageCursor;
       final page = switch (widget.role) {
         UserRole.manager when widget.box == _InvoiceBox.myTasks =>
-          await _service.fetchParticipantBranchPage(
+          await _invoiceService.fetchParticipantBranchPage(
             branchId: widget.branchId,
             after: after,
           ),
-        UserRole.manager => await _service.fetchBranchPage(
+        UserRole.manager when widget.box == _InvoiceBox.all =>
+          await _invoiceService.fetchParticipantBranchPage(
+            branchId: widget.branchId,
+            after: after,
+          ),
+        UserRole.manager => await _invoiceService.fetchBranchPage(
           branchId: widget.branchId,
           sent: widget.box == _InvoiceBox.outgoing,
           after: after,
         ),
         UserRole.collector when widget.box == _InvoiceBox.mainBranchIncoming =>
-          await _service.fetchMainBranchReceiptPage(),
+          await _invoiceService.fetchMainBranchReceiptPage(),
         UserRole.collector || UserRole.accountant =>
-          await _service.fetchAllPage(role: widget.role, after: after),
-        UserRole.admin => await _service.fetchAllPage(
+          await _invoiceService.fetchAllPage(role: widget.role, after: after),
+        UserRole.admin => await _invoiceService.fetchAllPage(
           role: widget.role,
           after: after,
         ),
@@ -735,7 +1220,7 @@ class _InterBranchInvoicesBoxScreenState
         appBar: AppBar(
           title: Text(_boxTitle),
           backgroundColor: _roleColor,
-          actions: const [NotificationBell()],
+          actions: widget.showAppBarActions ? const [NotificationBell()] : null,
         ),
         body: _buildPagedBody(),
       ),
@@ -783,6 +1268,8 @@ class _InterBranchInvoicesBoxScreenState
             title: _boxTitle,
             icon: widget.box == _InvoiceBox.myTasks
                 ? Icons.task_alt_rounded
+                : widget.box == _InvoiceBox.all
+                ? Icons.all_inbox_rounded
                 : widget.box == _InvoiceBox.incoming
                 ? Icons.move_to_inbox_rounded
                 : Icons.outbox_rounded,
@@ -991,9 +1478,37 @@ class _InterBranchInvoicesBoxScreenState
               invoice.sendingBranchId == effectiveBranchFilter);
       final statusMatches =
           _statusFilter == null || invoice.status == _statusFilter;
+      final postingMatches = _matchesPostingFilter(invoice);
       final dateMatches = _dateMatches(invoice);
-      return branchMatches && directionMatches && statusMatches && dateMatches;
+      return branchMatches &&
+          directionMatches &&
+          statusMatches &&
+          postingMatches &&
+          dateMatches;
     }).toList();
+  }
+
+  bool _matchesPostingFilter(InterBranchInvoiceRead invoice) {
+    final isDual = invoice.usesDualAccounting;
+    final awaitingAny =
+        invoice.needsLegacyDualAccountingSetup ||
+        (isDual &&
+            (!invoice.sourceAccountingPosted ||
+                !invoice.receivingAccountingPosted)) ||
+        (!isDual &&
+            invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry);
+    return switch (_postingFilter) {
+      _PostingFilter.all => true,
+      _PostingFilter.awaitingAny => awaitingAny,
+      _PostingFilter.sourcePending => isDual && !invoice.sourceAccountingPosted,
+      _PostingFilter.receivingPending =>
+        isDual && !invoice.receivingAccountingPosted,
+      _PostingFilter.complete =>
+        isDual
+            ? invoice.sourceAccountingPosted &&
+                  invoice.receivingAccountingPosted
+            : invoice.status == InterBranchInvoiceStatus.postedToAccounting,
+    };
   }
 
   bool _matchesSelectedBranch(
@@ -1027,6 +1542,7 @@ class _InterBranchInvoicesBoxScreenState
           .toList(growable: false);
     }
     if (widget.role != UserRole.manager) return invoices;
+    if (widget.box == _InvoiceBox.all) return invoices;
     return invoices.where((invoice) {
       if (widget.box == _InvoiceBox.incoming) {
         return invoice.receivingBranchId == widget.branchId;

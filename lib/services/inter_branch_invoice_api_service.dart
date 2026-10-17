@@ -222,6 +222,35 @@ class InterBranchInvoiceApiService {
     );
   }
 
+  /// Converts one historical accounting posting into the explicit source and
+  /// receiving-side workflow. The server preserves the original invoice and
+  /// only accepts this transition from the accountant role.
+  Future<InterBranchInvoiceCommandResult> initializeLegacyDualAccounting({
+    required String invoiceId,
+    required int expectedRevision,
+    required String existingPostingSide,
+    required String idempotencyKey,
+    String? existingAccountingReference,
+  }) {
+    const allowedSides = {'none', 'source', 'receiving'};
+    if (invoiceId.trim().isEmpty ||
+        expectedRevision < 0 ||
+        !allowedSides.contains(existingPostingSide) ||
+        !_withinUtf8Limit(existingAccountingReference, 200)) {
+      throw ArgumentError('Legacy accounting setup is invalid.');
+    }
+    return _command(
+      '/v1/inter-branch-invoices/${Uri.encodeComponent(invoiceId)}/initialize-legacy-dual-accounting',
+      idempotencyKey: idempotencyKey,
+      body: {
+        'expected_revision': expectedRevision,
+        'existing_posting_side': existingPostingSide,
+        if ((existingAccountingReference ?? '').trim().isNotEmpty)
+          'existing_accounting_reference': existingAccountingReference!.trim(),
+      },
+    );
+  }
+
   Future<InterBranchInvoiceCommandResult> requestAmendment({
     required String invoiceId,
     required int expectedRevision,
@@ -426,6 +455,10 @@ class InterBranchInvoiceApiService {
       'stale-revision' =>
         'تم تحديث الفاتورة من مستخدم آخر. أعد فتحها ثم حاول مجدداً.',
       'invalid-state' => 'هذه العملية لم تعد متاحة في حالة الفاتورة الحالية.',
+      'legacy-dual-accounting-already-initialized' =>
+        'تم تجهيز ترحيل الصادر والوارد لهذه الفاتورة مسبقاً. حدّث الفاتورة ثم أكمل الجانب المتبقي.',
+      'unsupported-legacy-accounting' =>
+        'هذه الفاتورة القديمة غير جاهزة للتحويل إلى ترحيل الصادر والوارد.',
       'amendment-already-pending' => 'يوجد طلب تعديل معلق لهذه الفاتورة.',
       'amendment-not-found' =>
         'طلب التعديل لم يعد متاحاً. حدّث الفاتورة وحاول مجدداً.',

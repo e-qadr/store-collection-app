@@ -353,7 +353,7 @@ test.skip("retired version-2 priced transfer workflow", async () => {
       key: "create-flow-0001",
       body: {...createBody, invoice_notes: "طلب مختلف"},
     });
-    assert.equal(response.status, 409);
+    assert.equal(response.status, 409, JSON.stringify(duplicatePosting));
     assert.equal((await response.json()).error.code, "idempotency-conflict");
 
     response = await post(
@@ -1161,6 +1161,160 @@ test("a 50-item transfer completes both accounting postings without prices", asy
     assert.equal(invoice.receiving_accounting_status, "posted");
     assert.equal(firestore.documents("inter_branch_invoice_prices").length, 0);
     assert.equal(firestore.documents("product_price_latest").length, 0);
+  });
+});
+
+test("a historical posted transfer records its prior side before only the remaining side is posted", async () => {
+  const database = seed();
+  database.inter_branch_invoices = {
+    "legacy-transfer-1": {
+      id: "legacy-transfer-1",
+      schema_version: 2,
+      workflow_version: 2,
+      creation_mode: "direct_supplier_invoice",
+      status: "postedToAccounting",
+      revision: 8,
+      invoice_number: "AA099",
+      sending_branch_id: "branch-s",
+      receiving_branch_id: "branch-r",
+      branch_ids: ["branch-s", "branch-r"],
+      accounting_reference: "LEGACY-POST-77",
+      posted_by: "accountant",
+      posted_by_name: "المحاسب",
+      history: [],
+      // Old public documents may retain prices. The migration intentionally
+      // preserves these historical fields instead of attempting to rewrite
+      // the invoice as a current price-free transfer.
+      total_price: 500,
+      currency: "YER",
+    },
+    "legacy-transfer-2": {
+      id: "legacy-transfer-2",
+      status: "pendingAccountingEntry",
+      invoice_number: "AA100",
+      sending_branch_id: "branch-s",
+      receiving_branch_id: "branch-r",
+      branch_ids: ["branch-s", "branch-r"],
+      history: [],
+    },
+  };
+  const firestore = new FakeFirestore(database);
+  await withServer(firestore, async (baseUrl) => {
+    let response = await post(
+        baseUrl,
+        "/v1/inter-branch-invoices/legacy-transfer-1/initialize-legacy-dual-accounting",
+        {
+          uid: "accountant",
+          key: "legacy-setup-0001",
+          body: {
+            expected_revision: 8,
+            existing_posting_side: "source",
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    let invoice = firestore.document("inter_branch_invoices", "legacy-transfer-1");
+    assert.equal(invoice.status, "pendingDualAccounting");
+    assert.equal(invoice.revision, 9);
+    assert.equal(invoice.source_accounting_status, "posted");
+    assert.equal(invoice.source_accounting_reference, "LEGACY-POST-77");
+    assert.equal(invoice.receiving_accounting_status, "pending");
+    assert.equal(invoice.legacy_dual_accounting.active, true);
+
+    response = await post(
+        baseUrl,
+        "/v1/inter-branch-invoices/legacy-transfer-1/post-accounting",
+        {
+          uid: "accountant",
+          key: "legacy-source-again-0001",
+          body: {
+            expected_revision: 9,
+            posting_side: "source",
+            accounting_reference: "DUPLICATE-SOURCE",
+          },
+        },
+    );
+    const duplicatePosting = await response.json();
+    assert.equal(response.status, 409);
+    assert.equal(duplicatePosting.error.code, "accounting-side-already-posted");
+
+    response = await post(
+        baseUrl,
+        "/v1/inter-branch-invoices/legacy-transfer-1/post-accounting",
+        {
+          uid: "accountant",
+          key: "legacy-receiving-0001",
+          body: {
+            expected_revision: 9,
+            posting_side: "receiving",
+            accounting_reference: "LEGACY-POST-78",
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    invoice = firestore.document("inter_branch_invoices", "legacy-transfer-1");
+    assert.equal(invoice.status, "postedToAccounting");
+    assert.equal(invoice.revision, 10);
+    assert.equal(invoice.receiving_accounting_status, "posted");
+    assert.equal(invoice.receiving_accounting_reference, "LEGACY-POST-78");
+    assert.equal(invoice.total_price, 500);
+
+    response = await post(
+        baseUrl,
+        "/v1/inter-branch-invoices/legacy-transfer-2/initialize-legacy-dual-accounting",
+        {
+          uid: "accountant",
+          key: "legacy-unposted-setup-0001",
+          body: {
+            expected_revision: 0,
+            existing_posting_side: "none",
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    invoice = firestore.document("inter_branch_invoices", "legacy-transfer-2");
+    assert.equal(invoice.revision, 1);
+    assert.equal(invoice.source_accounting_status, "pending");
+    assert.equal(invoice.receiving_accounting_status, "pending");
+
+    response = await post(
+        baseUrl,
+        "/v1/inter-branch-invoices/legacy-transfer-2/post-accounting",
+        {
+          uid: "accountant",
+          key: "legacy-unposted-source-0001",
+          body: {
+            expected_revision: 1,
+            posting_side: "source",
+            accounting_reference: "LEGACY-POST-79",
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    invoice = firestore.document("inter_branch_invoices", "legacy-transfer-2");
+    assert.equal(invoice.status, "pendingDualAccounting");
+    assert.equal(invoice.source_accounting_status, "posted");
+    assert.equal(invoice.receiving_accounting_status, "pending");
+
+    response = await post(
+        baseUrl,
+        "/v1/inter-branch-invoices/legacy-transfer-2/post-accounting",
+        {
+          uid: "accountant",
+          key: "legacy-unposted-receiving-0001",
+          body: {
+            expected_revision: 2,
+            posting_side: "receiving",
+            accounting_reference: "LEGACY-POST-80",
+          },
+        },
+    );
+    assert.equal(response.status, 200);
+    invoice = firestore.document("inter_branch_invoices", "legacy-transfer-2");
+    assert.equal(invoice.status, "postedToAccounting");
+    assert.equal(invoice.source_accounting_status, "posted");
+    assert.equal(invoice.receiving_accounting_status, "posted");
+
   });
 });
 

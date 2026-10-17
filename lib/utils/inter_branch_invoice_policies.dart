@@ -140,7 +140,8 @@ class InterBranchInvoicePolicy {
     }
     if (role == UserRole.accountant &&
         (invoice.status == InterBranchInvoiceStatus.pendingAccountingEntry ||
-            invoice.status == InterBranchInvoiceStatus.pendingDualAccounting)) {
+            invoice.status == InterBranchInvoiceStatus.pendingDualAccounting ||
+            invoice.needsLegacyDualAccountingSetup)) {
       actions.add(InterBranchInvoiceAction.postAccounting);
     }
     return actions;

@@ -70,6 +70,20 @@ typedef LatestProductPriceLoader =
       required String currency,
     });
 
+class _TransferInvoiceAction {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+
+  const _TransferInvoiceAction({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+}
+
 class InterBranchInvoiceDetailsScreen extends StatefulWidget {
   final String invoiceId;
   final UserRole role;
@@ -215,6 +229,7 @@ class _InterBranchInvoiceDetailsScreenState
             ),
           ],
         ),
+        bottomNavigationBar: _invoiceActionFooter(),
         body: StreamBuilder<Map<String, dynamic>?>(
           stream: _invoiceDataStream,
           builder: (context, snapshot) {
@@ -315,9 +330,8 @@ class _InterBranchInvoiceDetailsScreenState
     return FutureBuilder<InterBranchInvoicePriceSnapshot?>(
       future: _loadProtectedPriceSnapshot(invoice),
       builder: (context, priceSnapshot) {
-        final actions = _actions(invoice);
         return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 142),
           children: [
             _invoiceDocument(invoice, priceSnapshot: priceSnapshot.data),
             if (invoice.isVersion3 && invoice.lastAmendment.isNotEmpty) ...[
@@ -328,12 +342,45 @@ class _InterBranchInvoiceDetailsScreenState
               const SizedBox(height: 12),
               _cancellationOutcome(invoice),
             ],
-            if (actions != null) ...[const SizedBox(height: 12), actions],
             const SizedBox(height: 12),
             _statusTimeline(invoice),
             const SizedBox(height: 12),
             _history(invoice),
           ],
+        );
+      },
+    );
+  }
+
+  /// Mirrors the purchase-invoice action area: the action is always visible at
+  /// the bottom of the screen and is derived from the same authorized invoice
+  /// snapshot as the page body. This keeps the action out of a long scroll.
+  Widget _invoiceActionFooter() {
+    return StreamBuilder<Map<String, dynamic>?>(
+      stream: _invoiceDataStream,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        if (snapshot.hasError || data == null) {
+          return const SizedBox.shrink();
+        }
+        final header = InterBranchInvoiceRead(id: widget.invoiceId, data: data);
+        if (!_canViewInvoice(header)) return const SizedBox.shrink();
+        if (!header.isVersion2) return _footerActions(header);
+        return StreamBuilder<List<Map<String, dynamic>>>(
+          stream: _itemDataStream,
+          builder: (context, itemSnapshot) {
+            if (itemSnapshot.hasError ||
+                itemSnapshot.connectionState == ConnectionState.waiting) {
+              return const SizedBox.shrink();
+            }
+            final invoice = header.withItemDocuments(
+              itemSnapshot.data ?? const [],
+            );
+            if (invoice.items.length != invoice.itemCount) {
+              return const SizedBox.shrink();
+            }
+            return _footerActions(invoice);
+          },
         );
       },
     );
@@ -991,7 +1038,7 @@ class _InterBranchInvoiceDetailsScreenState
                 Icons.inventory_2_rounded,
                 AppTheme.collectorColor,
               ),
-              if (invoice.isVersion3) ...[
+              if (invoice.usesDualAccounting) ...[
                 _summaryTile(
                   'ترحيل الصادر',
                   invoice.sourceAccountingPosted
@@ -1328,7 +1375,7 @@ class _InterBranchInvoiceDetailsScreenState
   }
 
   List<_InvoiceTimelineStep> _timelineSteps(InterBranchInvoiceRead invoice) {
-    if (invoice.isVersion3) {
+    if (invoice.usesDualAccounting) {
       return const [
         _InvoiceTimelineStep(
           title: 'إنشاء فاتورة المناقلة',
@@ -1420,6 +1467,15 @@ class _InterBranchInvoiceDetailsScreenState
 
   int _timelineIndex(InterBranchInvoiceRead invoice) {
     final status = invoice.status;
+    if (invoice.usesDualAccounting && !_isExceptionStatus(status)) {
+      return switch (status) {
+        InterBranchInvoiceStatus.pendingReceiverReview => 0,
+        InterBranchInvoiceStatus.pendingDualAccounting =>
+          invoice.sourceAccountingPosted ? 3 : 2,
+        InterBranchInvoiceStatus.postedToAccounting => 3,
+        _ => 0,
+      };
+    }
     if (_isExceptionStatus(status)) {
       final rawPrevious = invoice.data[InterBranchInvoiceFields.previousStatus]
           ?.toString();
@@ -1520,14 +1576,14 @@ class _InterBranchInvoiceDetailsScreenState
     }
   }
 
-  Widget? _actions(InterBranchInvoiceRead invoice) {
+  Widget _footerActions(InterBranchInvoiceRead invoice) {
     final allowed = InterBranchInvoicePolicy.actionsFor(
       role: widget.role,
       branchId: widget.branchId,
       invoice: invoice,
       actorId: _firebaseUid(),
     );
-    final buttons = <Widget>[];
+    final buttons = <_TransferInvoiceAction>[];
 
     if (allowed.contains(InterBranchInvoiceAction.legacySupplierApprove)) {
       buttons.addAll([
@@ -1571,7 +1627,17 @@ class _InterBranchInvoiceDetailsScreenState
     }
 
     if (allowed.contains(InterBranchInvoiceAction.postAccounting)) {
-      if (invoice.isVersion3 && !invoice.sourceAccountingPosted) {
+      if (invoice.needsLegacyDualAccountingSetup) {
+        buttons.add(
+          _actionButton(
+            'تحديد الترحيل السابق',
+            Icons.compare_arrows_rounded,
+            AppTheme.accountantColor,
+            () => _showLegacyDualAccountingSetup(invoice),
+          ),
+        );
+      } else if (invoice.usesDualAccounting &&
+          !invoice.sourceAccountingPosted) {
         buttons.add(
           _actionButton(
             'ترحيل الصادر',
@@ -1581,7 +1647,9 @@ class _InterBranchInvoiceDetailsScreenState
           ),
         );
       }
-      if (invoice.isVersion3 && !invoice.receivingAccountingPosted) {
+      if (!invoice.needsLegacyDualAccountingSetup &&
+          invoice.usesDualAccounting &&
+          !invoice.receivingAccountingPosted) {
         buttons.add(
           _actionButton(
             'ترحيل الوارد',
@@ -1591,7 +1659,8 @@ class _InterBranchInvoiceDetailsScreenState
           ),
         );
       }
-      if (!invoice.isVersion3) {
+      if (!invoice.needsLegacyDualAccountingSetup &&
+          !invoice.usesDualAccounting) {
         buttons.add(
           _actionButton(
             'ترحيل محاسبي',
@@ -1675,42 +1744,138 @@ class _InterBranchInvoiceDetailsScreenState
       ]);
     }
 
-    if (buttons.isEmpty) return null;
-    return _panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.tune_rounded, color: _roleColor, size: 18),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'إجراءات الفاتورة',
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+    if (buttons.isEmpty) return const SizedBox.shrink();
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        decoration: const BoxDecoration(
+          color: AppTheme.cardColor,
+          border: Border(top: BorderSide(color: AppTheme.dividerColor)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.task_alt_rounded,
+                  size: 18,
+                  color: invoice.status.color,
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    _actionPrompt(invoice, buttons),
+                    style: const TextStyle(
+                      color: AppTheme.textHint,
+                      height: 1.35,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final button in buttons) ...[
-                  button,
-                  if (button != buttons.last) const SizedBox(width: 8),
-                ],
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 9),
+            _footerActionButtons(buttons),
+          ],
+        ),
       ),
+    );
+  }
+
+  String _actionPrompt(
+    InterBranchInvoiceRead invoice,
+    List<_TransferInvoiceAction> actions,
+  ) {
+    if (invoice.needsLegacyDualAccountingSetup) {
+      return 'حدد أين تم الترحيل السابق لهذه الفاتورة القديمة، ثم أكمل فقط الترحيل المتبقي.';
+    }
+    if (invoice.status == InterBranchInvoiceStatus.pendingDualAccounting) {
+      if (!invoice.sourceAccountingPosted &&
+          !invoice.receivingAccountingPosted) {
+        return 'يلزم ترحيل حركة الصادر وحركة الوارد كلٌ على حدة.';
+      }
+      if (!invoice.sourceAccountingPosted) {
+        return 'تم ترحيل الوارد؛ أكمل الآن ترحيل الصادر.';
+      }
+      return 'تم ترحيل الصادر؛ أكمل الآن ترحيل الوارد.';
+    }
+    if (invoice.status == InterBranchInvoiceStatus.pendingReceiverReview) {
+      return 'راجع الكميات المستلمة وسجل أي فروقات قبل تأكيد الاستلام.';
+    }
+    if (invoice.status == InterBranchInvoiceStatus.editPendingApprovals) {
+      return 'راجع طلب التعديل ثم اعتمده أو ارفضه مع توثيق القرار.';
+    }
+    if (invoice.status ==
+        InterBranchInvoiceStatus.cancellationPendingApprovals) {
+      return 'راجع طلب الإلغاء ثم اعتمده أو ارفضه مع توثيق القرار.';
+    }
+    if (actions.length > 1) {
+      return 'يوجد أكثر من إجراء متاح لك على هذه الفاتورة.';
+    }
+    return 'يوجد إجراء مطلوب منك على هذه الفاتورة.';
+  }
+
+  Widget _footerActionButtons(List<_TransferInvoiceAction> actions) {
+    if (actions.length == 1) {
+      return SizedBox(
+        width: double.infinity,
+        child: _footerActionButton(actions.first),
+      );
+    }
+    if (actions.length == 2) {
+      return Row(
+        children: [
+          Expanded(child: _footerActionButton(actions.first)),
+          const SizedBox(width: 8),
+          Expanded(child: _footerActionButton(actions.last, outlined: true)),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final action in actions) ...[
+          _footerActionButton(action),
+          if (action != actions.last) const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
+  Widget _footerActionButton(
+    _TransferInvoiceAction action, {
+    bool outlined = false,
+  }) {
+    final content = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(action.icon, size: 19),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            action.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+    if (outlined) {
+      return OutlinedButton(
+        onPressed: action.onPressed,
+        style: OutlinedButton.styleFrom(foregroundColor: action.color),
+        child: content,
+      );
+    }
+    return ElevatedButton(
+      onPressed: action.onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: action.color,
+        foregroundColor: Colors.white,
+      ),
+      child: content,
     );
   }
 
@@ -1967,10 +2132,10 @@ class _InterBranchInvoiceDetailsScreenState
         if (reference.text.trim().isEmpty) {
           throw Exception('رقم الفاتورة في النظام المحاسبي مطلوب');
         }
-        if (invoice.isVersion3) {
+        if (invoice.usesDualAccounting) {
           await _invoiceService.postDirectAccounting(
             invoiceId: invoice.id,
-            expectedRevision: invoice.revision,
+            expectedRevision: invoice.accountingRevision,
             accountingReference: reference.text,
             idempotencyKey: idempotencyKey,
             postingSide: postingSide,
@@ -2005,6 +2170,119 @@ class _InterBranchInvoiceDetailsScreenState
         }
       },
     );
+  }
+
+  /// Historical invoices used a single accounting state. Before the remaining
+  /// branch can be posted, the accountant explicitly records whether neither,
+  /// the source, or the receiving branch had already been posted. This avoids
+  /// guessing from the old status and prevents duplicate journal entries.
+  Future<void> _showLegacyDualAccountingSetup(
+    InterBranchInvoiceRead invoice,
+  ) async {
+    var selectedSide = '';
+    final reference = TextEditingController(text: invoice.accountingReference);
+    var saving = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('تحديد حالة الترحيل السابقة'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'هذه فاتورة قديمة. اختر بدقة أين تم ترحيلها سابقاً، ثم سيظهر لك فقط الترحيل المتبقي.',
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedSide.isEmpty ? null : selectedSide,
+                  decoration: const InputDecoration(
+                    labelText: 'حالة الترحيل السابقة',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'none',
+                      child: Text('لم تُرحّل سابقاً'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'source',
+                      child: Text('رُحّلت في الفرع المرسل'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'receiving',
+                      child: Text('رُحّلت في الفرع المستلم'),
+                    ),
+                  ],
+                  onChanged: saving
+                      ? null
+                      : (value) =>
+                            setDialogState(() => selectedSide = value ?? ''),
+                ),
+                if (selectedSide.isNotEmpty && selectedSide != 'none')
+                  TextField(
+                    controller: reference,
+                    inputFormatters: const [
+                      _Utf8LengthLimitingTextInputFormatter(200),
+                    ],
+                    decoration: const InputDecoration(
+                      labelText: 'مرجع الترحيل السابق (اختياري)',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(dialogContext),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton.icon(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      if (selectedSide.isEmpty) {
+                        _showSnack('اختر حالة الترحيل السابقة أولاً.');
+                        return;
+                      }
+                      setDialogState(() => saving = true);
+                      try {
+                        await _invoiceService.initializeLegacyDualAccounting(
+                          invoiceId: invoice.id,
+                          expectedRevision: invoice.accountingRevision,
+                          existingPostingSide: selectedSide,
+                          existingAccountingReference: reference.text,
+                          idempotencyKey:
+                              InterBranchInvoiceApiService.generateIdempotencyKey(),
+                        );
+                        if (!mounted || !dialogContext.mounted) return;
+                        Navigator.pop(dialogContext);
+                        _showSnack('تم تجهيز ترحيل الصادر والوارد');
+                      } catch (error) {
+                        setDialogState(() => saving = false);
+                        _showSnack(
+                          error.toString().replaceFirst('Exception: ', ''),
+                        );
+                      }
+                    },
+              icon: saving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.save_rounded),
+              label: const Text('تأكيد الحالة'),
+            ),
+          ],
+        ),
+      ),
+    );
+    reference.dispose();
   }
 
   Future<void> _showDirectReceive(InterBranchInvoiceRead invoice) async {
@@ -2747,29 +3025,17 @@ class _InterBranchInvoiceDetailsScreenState
     );
   }
 
-  Widget _actionButton(
+  _TransferInvoiceAction _actionButton(
     String label,
     IconData icon,
     Color color,
     VoidCallback onPressed,
-  ) {
-    return ElevatedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 16),
-      label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: color,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        minimumSize: const Size(0, 36),
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        visualDensity: VisualDensity.compact,
-        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ),
-    );
-  }
+  ) => _TransferInvoiceAction(
+    label: label,
+    icon: icon,
+    color: color,
+    onPressed: onPressed,
+  );
 
   String _statusLabel(InterBranchInvoiceRead invoice) {
     if (invoice.isReceivingMainBranch &&

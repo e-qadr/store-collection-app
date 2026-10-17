@@ -17,6 +17,7 @@ const {
   validateAmendmentRequestPayload,
   validateCancellationRequestPayload,
   validateIdempotencyKey,
+  validateLegacyDualAccountingSetupPayload,
   validatePostingPayload,
   validatePricingPayload,
   validateReceiptPayload,
@@ -425,6 +426,57 @@ function requireV2Invoice(snapshot, expectedId) {
   }
   assertClosedPublicInvoice(invoice);
   return invoice;
+}
+
+/// Returns only the minimum stable identity needed to migrate a historical
+/// transfer. Older records can contain price fields and other legacy shapes,
+/// so they must never pass through the closed public-invoice validator.
+function requireLegacyAccountingInvoice(snapshot, expectedId, {
+  requireMigration = false,
+} = {}) {
+  if (!snapshot.exists) {
+    throw new CommandError("invoice-not-found", 404, "The invoice was not found.");
+  }
+  const raw = snapshot.data();
+  const dualInitialized = raw?.legacy_dual_accounting?.active === true;
+  const expectedState = requireMigration ?
+    (raw.status === STATUS.pendingAccountingEntry ||
+     raw.status === STATUS.postedToAccounting) :
+    raw.status === STATUS.pendingDualAccounting;
+  if (!raw || typeof raw !== "object" ||
+      Number(raw.workflow_version || 1) >= 3 ||
+      (requireMigration ? dualInitialized : !dualInitialized) ||
+      !expectedState) {
+    throw new CommandError(
+        "unsupported-legacy-accounting",
+        409,
+        "This historical invoice cannot be converted to dual accounting.",
+    );
+  }
+  const sendingBranchId = String(raw.sending_branch_id || "").trim();
+  const receivingBranchId = String(raw.receiving_branch_id || "").trim();
+  if (!sendingBranchId || !receivingBranchId) {
+    throw new CommandError(
+        "unsupported-legacy-accounting",
+        409,
+        "The historical invoice does not have both branches.",
+    );
+  }
+  const storedId = String(raw.id || "").trim();
+  if (storedId && storedId !== expectedId) {
+    throw new CommandError("invoice-malformed", 409, "The invoice identity is invalid.");
+  }
+  const revision = Number.isSafeInteger(raw.revision) && raw.revision >= 0 ?
+    raw.revision : 0;
+  return {
+    ...raw,
+    id: expectedId,
+    revision,
+    sending_branch_id: sendingBranchId,
+    receiving_branch_id: receivingBranchId,
+    invoice_number: String(raw.invoice_number || expectedId).trim() || expectedId,
+    history: Array.isArray(raw.history) ? raw.history : [],
+  };
 }
 
 function requireStatusAndRevision(invoice, status, revision) {
@@ -2316,6 +2368,91 @@ async function decideCancellation({
   });
 }
 
+async function initializeLegacyDualAccounting({
+  admin,
+  firestore,
+  actorUid,
+  invoiceId,
+  payload,
+  idempotencyKey,
+  timestamp,
+}) {
+  const invoiceRef = firestore.collection(COLLECTIONS.invoices).doc(invoiceId);
+  const requestHash = canonicalRequestHash({invoice_id: invoiceId, ...payload});
+  return runIdempotentTransaction({
+    admin,
+    firestore,
+    command: "initialize_legacy_dual_accounting",
+    actorUid,
+    expectedRole: "accountant",
+    idempotencyKey,
+    requestHash,
+    timestamp,
+    execute: async (transaction, actor) => {
+      const invoice = requireLegacyAccountingInvoice(
+          await transaction.get(invoiceRef), invoiceId, {requireMigration: true});
+      if (invoice.revision !== payload.expected_revision) {
+        throw new CommandError("stale-revision", 409, "The invoice revision has changed.");
+      }
+      const existingSide = payload.existing_posting_side;
+      const existingReference = payload.existing_accounting_reference ||
+        String(invoice.accounting_reference || "").trim();
+      const existingIsSource = existingSide === "source";
+      const existingIsReceiving = existingSide === "receiving";
+      const revision = invoice.revision + 1;
+      const event = eventData(
+          "legacy_dual_accounting_initialized",
+          existingSide === "none" ?
+            "تم تجهيز الفاتورة القديمة لترحيل الصادر والوارد." :
+            "تم تسجيل الترحيل السابق وتجهيز الجانب المحاسبي المتبقي.",
+          actor,
+          timestamp,
+      );
+      const participants = [...new Set([
+        ...(Array.isArray(invoice.participant_ids) ? invoice.participant_ids : []),
+        actor.uid,
+      ])];
+      transaction.update(invoiceRef, {
+        id: invoice.id,
+        status: STATUS.pendingDualAccounting,
+        revision,
+        participant_ids: participants,
+        legacy_dual_accounting: {
+          active: true,
+          initialized_by: actor.uid,
+          initialized_by_name: actor.name,
+          initialized_at: timestamp,
+          existing_posting_side: existingSide,
+        },
+        source_accounting_status: existingIsSource ? "posted" : "pending",
+        receiving_accounting_status: existingIsReceiving ? "posted" : "pending",
+        ...(existingIsSource ? {
+          source_accounting_reference: existingReference || "ترحيل سابق",
+          source_accounting_posted_by: String(invoice.posted_by || "").trim() || actor.uid,
+          source_accounting_posted_by_name:
+            String(invoice.posted_by_name || "").trim() || actor.name,
+          source_accounting_posted_at: invoice.posted_at || timestamp,
+        } : {}),
+        ...(existingIsReceiving ? {
+          receiving_accounting_reference: existingReference || "ترحيل سابق",
+          receiving_accounting_posted_by: String(invoice.posted_by || "").trim() || actor.uid,
+          receiving_accounting_posted_by_name:
+            String(invoice.posted_by_name || "").trim() || actor.name,
+          receiving_accounting_posted_at: invoice.posted_at || timestamp,
+        } : {}),
+        last_updated: timestamp,
+        history: historyWithEvent(invoice, event),
+      });
+      writePublicEvent(transaction, firestore, {invoice, event, revision});
+      return {
+        statusCode: 200,
+        responseData: responseFor(
+            invoiceId, invoice.invoice_number, STATUS.pendingDualAccounting, revision),
+      };
+    },
+  });
+}
+
 async function postToAccounting({
   admin,
   firestore,
@@ -2342,8 +2479,12 @@ async function postToAccounting({
         transaction.get(invoiceRef),
         transaction.get(snapshotRef),
       ]);
-      const invoice = requireV2Invoice(invoiceSnapshot, invoiceId);
-      if (invoice.workflow_version >= 3) {
+      const rawInvoice = invoiceSnapshot.data();
+      const isLegacyDual = rawInvoice?.legacy_dual_accounting?.active === true;
+      const invoice = isLegacyDual ?
+        requireLegacyAccountingInvoice(invoiceSnapshot, invoiceId) :
+        requireV2Invoice(invoiceSnapshot, invoiceId);
+      if (invoice.workflow_version >= 3 || isLegacyDual) {
         requireStatusAndRevision(
             invoice,
             STATUS.pendingDualAccounting,
@@ -2577,6 +2718,14 @@ function createInterBranchInvoiceCommandRouter({
     validator: validatePricingPayload,
     execute: confirmPrices,
   }));
+  router.post("/inter-branch-invoices/:invoiceId/initialize-legacy-dual-accounting", commandRoute({
+    admin,
+    firestore,
+    now,
+    randomUUID,
+    validator: validateLegacyDualAccountingSetupPayload,
+    execute: initializeLegacyDualAccounting,
+  }));
   router.post("/inter-branch-invoices/:invoiceId/post-accounting", commandRoute({
     admin,
     firestore,
@@ -2653,6 +2802,7 @@ module.exports = {
   decideAmendment,
   decideCancellation,
   isOperationalProfile,
+  initializeLegacyDualAccounting,
   notificationReference,
   postToAccounting,
   priceItemsForInvoice,

@@ -217,6 +217,7 @@ class InterBranchInvoiceFields {
   static const createdAt = 'created_at';
   static const lastUpdated = 'last_updated';
   static const history = 'history';
+  static const legacyDualAccounting = 'legacy_dual_accounting';
 }
 
 class InterBranchInvoiceRead {
@@ -241,6 +242,10 @@ class InterBranchInvoiceRead {
       (isVersion2 ? 'direct_supplier_invoice' : 'legacy_request');
   int get revision =>
       _positiveInt(data[InterBranchInvoiceFields.revision], isVersion2 ? 1 : 0);
+
+  /// Historical invoices without a stored revision begin at zero. The
+  /// migration command accepts that value and creates the first revision.
+  int get accountingRevision => revision;
   String get itemDigest =>
       data[InterBranchInvoiceFields.itemDigest]?.toString().trim() ?? '';
   int get itemCount => isVersion2
@@ -296,6 +301,15 @@ class InterBranchInvoiceRead {
       data['receiving_accounting_status']?.toString().trim() ?? '';
   bool get sourceAccountingPosted => sourceAccountingStatus == 'posted';
   bool get receivingAccountingPosted => receivingAccountingStatus == 'posted';
+  Map<String, dynamic> get legacyDualAccounting =>
+      _map(data[InterBranchInvoiceFields.legacyDualAccounting]);
+  bool get usesDualAccounting =>
+      isVersion3 || legacyDualAccounting['active'] == true;
+  bool get needsLegacyDualAccountingSetup =>
+      !usesDualAccounting &&
+      !isVersion3 &&
+      (status == InterBranchInvoiceStatus.pendingAccountingEntry ||
+          status == InterBranchInvoiceStatus.postedToAccounting);
   String get sourceAccountingReference =>
       data['source_accounting_reference']?.toString().trim() ?? '';
   String get receivingAccountingReference =>
