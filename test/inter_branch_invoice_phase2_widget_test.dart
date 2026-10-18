@@ -127,54 +127,55 @@ void main() {
     expect(find.textContaining('3 علبة'), findsOneWidget);
   });
 
-  testWidgets('2b. كتالوج التحويل يتبع علامة الفرع المرسل ويحافظ على المواد عند تغيير الوجهة', (
-    tester,
-  ) async {
-    await _pumpCreation(
-      tester,
-      products: [
-        _product(1, 'منتج العلامة أ'),
-        _product(2, 'منتج العلامة ب', brandId: 'brand-b', groupId: 'group-b'),
-      ],
-    );
+  testWidgets(
+    '2b. كتالوج التحويل يتبع علامة الفرع المرسل ويحافظ على المواد عند تغيير الوجهة',
+    (tester) async {
+      await _pumpCreation(
+        tester,
+        products: [
+          _product(1, 'منتج العلامة أ'),
+          _product(2, 'منتج العلامة ب', brandId: 'brand-b', groupId: 'group-b'),
+        ],
+      );
 
-    await _chooseReceivingBranch(tester);
-    await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
-    await tester.pumpAndSettle();
-    expect(find.text('منتج العلامة أ'), findsAtLeastNWidgets(1));
-    expect(find.text('منتج العلامة ب'), findsNothing);
-    await tester.tap(find.text('منتج العلامة أ'));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const Key('shared-catalog-unit-product-1-unit_1')),
-    );
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('purchase-item-quantity')),
-      '1',
-    );
-    await tester.tap(find.byKey(const Key('confirm-purchase-item')));
-    await tester.pumpAndSettle();
-    expect(find.text('منتج العلامة أ'), findsOneWidget);
+      await _chooseReceivingBranch(tester);
+      await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
+      await tester.pumpAndSettle();
+      expect(find.text('منتج العلامة أ'), findsAtLeastNWidgets(1));
+      expect(find.text('منتج العلامة ب'), findsNothing);
+      await tester.tap(find.text('منتج العلامة أ'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('shared-catalog-unit-product-1-unit_1')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('purchase-item-quantity')),
+        '1',
+      );
+      await tester.tap(find.byKey(const Key('confirm-purchase-item')));
+      await tester.pumpAndSettle();
+      expect(find.text('منتج العلامة أ'), findsOneWidget);
 
-    await _chooseReceivingBranch(
-      tester,
-      branchDisplayName: 'العلامة ب — الفرع المستلم 2',
-    );
-    expect(find.text('منتج العلامة أ'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
-    await tester.pumpAndSettle();
-    expect(find.text('منتج العلامة ب'), findsNothing);
-    expect(find.text('منتج العلامة أ'), findsAtLeastNWidgets(1));
-    await tester.tap(find.byTooltip('إغلاق'));
-    await tester.pumpAndSettle();
+      await _chooseReceivingBranch(
+        tester,
+        branchDisplayName: 'العلامة ب — الفرع المستلم 2',
+      );
+      expect(find.text('منتج العلامة أ'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('transfer-add-catalog-item')));
+      await tester.pumpAndSettle();
+      expect(find.text('منتج العلامة ب'), findsNothing);
+      expect(find.text('منتج العلامة أ'), findsAtLeastNWidgets(1));
+      await tester.tap(find.byTooltip('إغلاق'));
+      await tester.pumpAndSettle();
 
-    await _chooseReceivingBranch(
-      tester,
-      branchDisplayName: 'العلامة ب — الفرع الرئيسي',
-    );
-    expect(find.text('منتج العلامة أ'), findsOneWidget);
-  });
+      await _chooseReceivingBranch(
+        tester,
+        branchDisplayName: 'العلامة ب — الفرع الرئيسي',
+      );
+      expect(find.text('منتج العلامة أ'), findsOneWidget);
+    },
+  );
 
   testWidgets('3. حد الخمسين سطرًا ظاهر ومطبق', (tester) async {
     await _pumpCreation(tester, initialItems: List.generate(50, _commandItem));
@@ -456,6 +457,50 @@ void main() {
     expect(find.textContaining('فرع الاستلام: branch-b'), findsOneWidget);
     expect(find.textContaining('رمز الخطأ: permission-denied'), findsOneWidget);
     expect(find.textContaining('token'), findsNothing);
+  });
+
+  testWidgets('6d. طلب تعديل المناقلة يعرض المواد قبل وبعد الاعتماد', (
+    tester,
+  ) async {
+    final proposedItem = _v2Item()
+      ..['item_id'] = 'proposal-line-1'
+      ..['product_name'] = 'أرز بسمتي'
+      ..['supplied_quantity'] = 8;
+    final header = _v2Header(status: 'editPendingApprovals', revision: 4)
+      ..['schema_version'] = 3
+      ..['workflow_version'] = 3
+      ..['creation_mode'] = 'direct_transfer_invoice'
+      ..['participant_ids'] = const ['manager-a', 'manager-b']
+      ..['amendment_request'] = {
+        'state': 'pending',
+        'reason': 'تصحيح الكمية والمادة',
+        'requested_by_name': 'مدير المورد',
+        'required_approver_ids': const ['manager-a', 'manager-b'],
+        'proposed_items': [proposedItem],
+      }
+      ..['amendment_approvals'] = {
+        'manager-a': {'approved': true, 'actor_name': 'مدير المورد'},
+      };
+
+    await _pumpDetails(
+      tester,
+      role: UserRole.manager,
+      branchId: 'branch-b',
+      header: header,
+    );
+
+    expect(
+      find.byKey(const Key('transfer-pending-amendment-review')),
+      findsOneWidget,
+    );
+    expect(find.text('طلب تعديل قيد الموافقة'), findsOneWidget);
+    expect(find.text('قبل التعديل'), findsOneWidget);
+    expect(find.text('بعد التعديل المقترح'), findsOneWidget);
+    expect(find.textContaining('أرز فاخر — 5 علبة'), findsOneWidget);
+    expect(find.textContaining('أرز بسمتي — 8 علبة'), findsOneWidget);
+    expect(find.text('الموافقات المسجلة: 1 من 2'), findsOneWidget);
+    expect(find.text('مقدم الطلب: مدير المورد'), findsOneWidget);
+    expect(find.text('وافق: مدير المورد'), findsOneWidget);
   });
 
   testWidgets('7. المحاسب يجهز الفاتورة التاريخية لترحيلين منفصلين', (

@@ -334,6 +334,10 @@ class _InterBranchInvoiceDetailsScreenState
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 142),
           children: [
             _invoiceDocument(invoice, priceSnapshot: priceSnapshot.data),
+            if (invoice.hasPendingAmendment) ...[
+              const SizedBox(height: 12),
+              _pendingAmendmentReview(invoice),
+            ],
             if (invoice.isVersion3 && invoice.lastAmendment.isNotEmpty) ...[
               const SizedBox(height: 12),
               _amendmentOutcome(invoice),
@@ -413,6 +417,154 @@ class _InterBranchInvoiceDetailsScreenState
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// A pending proposal never replaces the authoritative invoice snapshot.
+  /// Show both snapshots before a participant can make a decision, so an
+  /// approval means approving a visible, concrete change rather than merely
+  /// approving a request title.
+  Widget _pendingAmendmentReview(InterBranchInvoiceRead invoice) {
+    final request = invoice.amendmentRequest;
+    final proposedItems = _proposedAmendmentItems(request);
+    final requiredApprovers = invoice.amendmentApproverIds;
+    final approvedCount = requiredApprovers
+        .where((id) => invoice.amendmentApprovals[id]?['approved'] == true)
+        .length;
+    final reason = request['reason']?.toString().trim() ?? '';
+    final requesterName = request['requested_by_name']?.toString().trim() ?? '';
+    final approvedNames = requiredApprovers
+        .map((id) => invoice.amendmentApprovals[id])
+        .whereType<Map>()
+        .where((approval) => approval['approved'] == true)
+        .map((approval) => approval['actor_name']?.toString().trim() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toList(growable: false);
+    final currentNotes = invoice.invoiceNotes.trim();
+    final proposedNotes = request.containsKey('proposed_invoice_notes')
+        ? request['proposed_invoice_notes']?.toString().trim() ?? ''
+        : currentNotes;
+
+    return _panel(
+      child: Column(
+        key: const Key('transfer-pending-amendment-review'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.fact_check_outlined,
+                color: AppTheme.warningColor,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'طلب تعديل قيد الموافقة',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (reason.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('سبب التعديل: $reason'),
+          ],
+          if (requesterName.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text('مقدم الطلب: $requesterName'),
+          ],
+          const SizedBox(height: 6),
+          Text(
+            'الموافقات المسجلة: $approvedCount من ${requiredApprovers.length}',
+            style: const TextStyle(color: AppTheme.textSecondary),
+          ),
+          if (approvedNames.isNotEmpty)
+            Text(
+              'وافق: ${approvedNames.join('، ')}',
+              style: const TextStyle(color: AppTheme.textSecondary),
+            ),
+          const SizedBox(height: 12),
+          _amendmentItemsSnapshot(
+            title: 'قبل التعديل',
+            items: invoice.items,
+            color: AppTheme.textSecondary,
+          ),
+          const SizedBox(height: 8),
+          _amendmentItemsSnapshot(
+            title: 'بعد التعديل المقترح',
+            items: proposedItems,
+            color: AppTheme.warningColor,
+          ),
+          if (currentNotes != proposedNotes) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'تغيير ملاحظات الفاتورة',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text('قبل: ${currentNotes.isEmpty ? '—' : currentNotes}'),
+            Text('بعد: ${proposedNotes.isEmpty ? '—' : proposedNotes}'),
+          ],
+          const SizedBox(height: 10),
+          const Text(
+            'لن تتغير الفاتورة إلا بعد موافقة جميع المشاركين المسجلين فيها.',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<InterBranchInvoiceItem> _proposedAmendmentItems(
+    Map<String, dynamic> request,
+  ) {
+    final rawItems = request['proposed_items'];
+    if (rawItems is! List) return const [];
+    return rawItems
+        .whereType<Map>()
+        .map((rawItem) {
+          return InterBranchInvoiceItem.fromMap(
+            Map<String, dynamic>.from(rawItem),
+            allowLegacyPrices: false,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  Widget _amendmentItemsSnapshot({
+    required String title,
+    required List<InterBranchInvoiceItem> items,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: TextStyle(color: color, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          if (items.isEmpty)
+            const Text('لا توجد مواد في هذا السجل.')
+          else
+            for (final item in items)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text(
+                  '• ${item.name} — ${_formatNumber(item.suppliedQuantity)} ${item.unit}',
+                ),
+              ),
         ],
       ),
     );
@@ -2816,8 +2968,7 @@ class _InterBranchInvoiceDetailsScreenState
       await _dialog(
         title: approved ? 'اعتماد تعديل الفاتورة' : 'رفض تعديل الفاتورة',
         children: [
-          if (invoice.amendmentRequest['reason']?.toString().isNotEmpty == true)
-            Text('سبب الطلب: ${invoice.amendmentRequest['reason']}'),
+          _pendingAmendmentReview(invoice),
           TextField(
             controller: reason,
             inputFormatters: const [
