@@ -8,6 +8,7 @@ import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/services/cash_expense_service.dart';
 import 'package:store_collection_app/services/pdf_service.dart';
 import 'package:store_collection_app/widgets/pdf_print_format_picker.dart';
+import 'package:store_collection_app/widgets/invoice_attachment_source_picker.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -1013,19 +1014,25 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
           builder: (context, setLocalState) {
             return OutlinedButton.icon(
               onPressed: () async {
-                final result = await FilePicker.pickFiles(
-                  type: FileType.custom,
-                  allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
-                  withData: true,
-                );
-                if (result == null || result.files.isEmpty) return;
-                setLocalState(() => pickedFile = result.files.single);
+                try {
+                  final file = await InvoiceAttachmentSourcePicker.pick(
+                    context,
+                  );
+                  if (file == null) return;
+                  setLocalState(() => pickedFile = file);
+                } catch (error) {
+                  if (context.mounted) {
+                    _showSnack(
+                      error.toString().replaceFirst('Exception: ', ''),
+                    );
+                  }
+                }
               },
               icon: const Icon(Icons.attach_file_rounded),
               label: Align(
                 alignment: AlignmentDirectional.centerStart,
                 child: Text(
-                  pickedFile?.name ?? 'اختيار ملف PDF أو صورة',
+                  pickedFile?.name ?? 'التقاط صورة أو اختيار من المعرض/الملفات',
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -1185,16 +1192,26 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
                   onPressed: !isManager
                       ? null
                       : () async {
-                          final result = await FilePicker.pickFiles(
-                            type: FileType.custom,
-                            allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
-                            withData: true,
-                          );
-                          if (result == null || result.files.isEmpty) return;
-                          setLocalState(() {
-                            pickedFile = result.files.single;
-                            removeExistingInvoice = false;
-                          });
+                          try {
+                            final file =
+                                await InvoiceAttachmentSourcePicker.pick(
+                                  context,
+                                );
+                            if (file == null) return;
+                            setLocalState(() {
+                              pickedFile = file;
+                              removeExistingInvoice = false;
+                            });
+                          } catch (error) {
+                            if (context.mounted) {
+                              _showSnack(
+                                error.toString().replaceFirst(
+                                  'Exception: ',
+                                  '',
+                                ),
+                              );
+                            }
+                          }
                         },
                   icon: const Icon(Icons.attach_file_rounded),
                   label: Align(
@@ -1202,7 +1219,7 @@ class _CashExpenseDetailsScreenState extends State<CashExpenseDetailsScreen> {
                     child: Text(
                       pickedFile?.name ??
                           (request.invoiceUrl.isEmpty
-                              ? 'إرفاق ملف أو صورة (اختياري)'
+                              ? 'التقاط صورة أو اختيار مرفق (اختياري)'
                               : 'استبدال الملف المرفق'),
                       overflow: TextOverflow.ellipsis,
                     ),

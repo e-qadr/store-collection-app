@@ -24,6 +24,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>نستخدم الكاميرا لالتقاط صورة فاتورة المصروف وإرفاقها بالسند.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>نستخدم المعرض لاختيار صورة فاتورة المصروف وإرفاقها بالسند.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

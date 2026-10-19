@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:store_collection_app/services/cash_expense_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/widgets/collection_amount_input_formatter.dart';
+import 'package:store_collection_app/widgets/invoice_attachment_source_picker.dart';
 
 class NewCashExpenseRequestScreen extends StatefulWidget {
   final String branchId;
@@ -496,18 +497,13 @@ class _NewCashExpenseRequestScreenState
   }
 
   Future<void> _pickInvoiceFile() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) return;
-    final file = result.files.single;
-    if (file.bytes == null || file.bytes!.isEmpty) {
-      _showSnack('تعذر قراءة الملف المختار');
-      return;
+    try {
+      final file = await InvoiceAttachmentSourcePicker.pick(context);
+      if (!mounted || file == null) return;
+      setState(() => _invoiceFile = file);
+    } catch (error) {
+      if (mounted) _showSnack(error.toString().replaceFirst('Exception: ', ''));
     }
-    setState(() => _invoiceFile = file);
   }
 
   Future<void> _pickExpenseDate() async {
