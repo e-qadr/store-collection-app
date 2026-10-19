@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:store_collection_app/models/product_catalog_model.dart';
@@ -11,6 +10,7 @@ import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/product_price_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/catalog_operation_error.dart';
+import 'package:store_collection_app/utils/catalog_actor_access.dart';
 import 'package:store_collection_app/utils/material_management_access.dart';
 
 ({CatalogUnit? unit2, CatalogUnit? unit3}) catalogEditorSecondaryUnitSlots(
@@ -232,27 +232,7 @@ class _ProductCatalogManagementContentState
 
   void _refreshSearch() => setState(() {});
 
-  Future<CatalogActor> _currentActor() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) throw Exception('انتهت جلسة الدخول. سجل الدخول مجدداً.');
-    final profile = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-    final data = profile.data();
-    final role = data?['role']?.toString();
-    if (data == null || (role != 'collector' && role != 'accountant')) {
-      throw Exception('إدارة المواد متاحة للمدير العام والمحاسب فقط.');
-    }
-    return CatalogActor(
-      uid: user.uid,
-      name: data['name']?.toString().trim().isNotEmpty == true
-          ? data['name'].toString().trim()
-          : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
-      role: role!,
-      active: data['isActive'] != false,
-    );
-  }
+  Future<CatalogActor> _currentActor() => requireCurrentCatalogActor();
 
   @override
   Widget build(BuildContext context) {

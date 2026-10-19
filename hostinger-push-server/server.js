@@ -23,6 +23,13 @@ app.use(
     "/v1/purchase-invoices",
     express.json({limit: PURCHASE_JSON_LIMIT}),
 );
+// A catalog product can contain up to 50 dynamic units. Give this trusted
+// command route the same bounded payload allowance as purchase invoices rather
+// than the small generic API limit.
+app.use(
+    "/v1/catalog-products",
+    express.json({limit: PURCHASE_JSON_LIMIT}),
+);
 app.use(express.json({limit: "16kb"}));
 const port = Number(process.env.PORT || 3000);
 const pollIntervalMs = Number(process.env.POLL_INTERVAL_MS || 5000);

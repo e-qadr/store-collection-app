@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
+import 'package:store_collection_app/services/catalog_product_command_service.dart';
 import 'package:store_collection_app/utils/catalog_normalization.dart';
 
 class ProductCatalogPage {
@@ -75,6 +76,7 @@ bool _catalogTokensAppearInOrder(String name, List<String> tokens) {
 
 class ProductCatalogService {
   final FirebaseFirestore? _providedFirestore;
+  final CatalogProductCommandService _catalogCommands;
   // Catalog selection is public to the same signed-in session.  The default
   // Firestore client is shared by all screens, so share its per-brand cache as
   // well: reopening Purchase, Consumption, or Transfer does not re-download
@@ -93,8 +95,11 @@ class ProductCatalogService {
   final Map<String, Stream<List<ProductCatalogModel>>> _productStreams =
       <String, Stream<List<ProductCatalogModel>>>{};
 
-  ProductCatalogService({FirebaseFirestore? firestore})
-    : _providedFirestore = firestore;
+  ProductCatalogService({
+    FirebaseFirestore? firestore,
+    CatalogProductCommandService? catalogCommands,
+  }) : _providedFirestore = firestore,
+       _catalogCommands = catalogCommands ?? CatalogProductCommandService();
 
   FirebaseFirestore get _firestore =>
       _providedFirestore ?? FirebaseFirestore.instance;
@@ -353,7 +358,7 @@ class ProductCatalogService {
     final groupRef = _groups.doc(groupId);
     final auditRef = _auditEvents.doc();
 
-    await _firestore.runTransaction((transaction) async {
+    await _runCatalogTransaction((transaction) async {
       final brand = await transaction.get(brandRef);
       final existing = await transaction.get(groupRef);
       if (!brand.exists) throw StateError('The selected brand does not exist.');
@@ -412,7 +417,7 @@ class ProductCatalogService {
     final groupRef = _groups.doc(groupId);
     final auditRef = _auditEvents.doc();
 
-    await _firestore.runTransaction((transaction) async {
+    await _runCatalogTransaction((transaction) async {
       final brand = await transaction.get(brandRef);
       final existing = await transaction.get(groupRef);
       if (!brand.exists) throw StateError('The selected brand does not exist.');
@@ -492,6 +497,22 @@ class ProductCatalogService {
       creationGroupId: cleanGroupId,
     );
 
+    // Production catalog writes are validated by the trusted command API.
+    // The injected Firestore route remains only for isolated unit tests.
+    if (_providedFirestore == null) {
+      final productId = await _catalogCommands.createProduct(
+        brandId: cleanBrandId,
+        groupId: cleanGroupId,
+        name: cleanName,
+        legacyCode: _optional(legacyCode),
+        units: units,
+        primaryUnitId: cleanPrimaryUnitId,
+        sourceMetadata: cleanSourceMetadata,
+      );
+      _invalidateBrandCache(cleanBrandId);
+      return productId;
+    }
+
     final normalizedName = normalizeCatalogText(cleanName);
     final normalizedCode = normalizeLegacyCode(legacyCode);
     final nameKeyId = productUniqueKeyId(
@@ -513,7 +534,7 @@ class ProductCatalogService {
     final codeKeyRef = codeKeyId == null ? null : _uniqueKeys.doc(codeKeyId);
     final auditRef = _auditEvents.doc();
 
-    await _firestore.runTransaction((transaction) async {
+    await _runCatalogTransaction((transaction) async {
       final brand = await transaction.get(brandRef);
       final group = await transaction.get(groupRef);
       final nameKey = await transaction.get(nameKeyRef);
@@ -605,11 +626,27 @@ class ProductCatalogService {
     if (sourceMetadata != null) {
       _rejectProtectedPriceData(sourceMetadata);
     }
+    if (_providedFirestore == null) {
+      await _catalogCommands.updateProduct(
+        productId: cleanProductId,
+        groupId: cleanGroupId,
+        name: cleanName,
+        legacyCode: _optional(legacyCode),
+        units: units,
+        primaryUnitId: cleanPrimaryUnitId,
+        sourceMetadata: sourceMetadata,
+      );
+      // The server resolves the brand authoritatively. Clearing every shared
+      // catalog entry avoids a stale cross-brand editor cache after updates.
+      _sharedActiveCatalogCache.clear();
+      _sharedActiveGroupNamesCache.clear();
+      return;
+    }
     final productRef = _products.doc(cleanProductId);
     final auditRef = _auditEvents.doc();
 
     String? affectedBrandId;
-    await _firestore.runTransaction((transaction) async {
+    await _runCatalogTransaction((transaction) async {
       final product = await transaction.get(productRef);
       final current = product.data();
       if (current == null) throw StateError('Product was not found.');
@@ -737,10 +774,20 @@ class ProductCatalogService {
   }) async {
     _requireCatalogManager(actor);
     final cleanReason = _required(reason, 'Archive reason');
-    final productRef = _products.doc(_required(productId, 'Product ID'));
+    final cleanProductId = _required(productId, 'Product ID');
+    if (_providedFirestore == null) {
+      await _catalogCommands.archiveProduct(
+        productId: cleanProductId,
+        reason: cleanReason,
+      );
+      _sharedActiveCatalogCache.clear();
+      _sharedActiveGroupNamesCache.clear();
+      return;
+    }
+    final productRef = _products.doc(cleanProductId);
     final auditRef = _auditEvents.doc();
     String? affectedBrandId;
-    await _firestore.runTransaction((transaction) async {
+    await _runCatalogTransaction((transaction) async {
       final product = await transaction.get(productRef);
       final current = product.data();
       if (current == null) throw StateError('Product was not found.');
@@ -792,10 +839,20 @@ class ProductCatalogService {
   }) async {
     _requireCatalogManager(actor);
     final cleanReason = _required(reason, 'Reactivation reason');
-    final productRef = _products.doc(_required(productId, 'Product ID'));
+    final cleanProductId = _required(productId, 'Product ID');
+    if (_providedFirestore == null) {
+      await _catalogCommands.reactivateProduct(
+        productId: cleanProductId,
+        reason: cleanReason,
+      );
+      _sharedActiveCatalogCache.clear();
+      _sharedActiveGroupNamesCache.clear();
+      return;
+    }
+    final productRef = _products.doc(cleanProductId);
     final auditRef = _auditEvents.doc();
     String? affectedBrandId;
-    await _firestore.runTransaction((transaction) async {
+    await _runCatalogTransaction((transaction) async {
       final product = await transaction.get(productRef);
       final current = product.data();
       if (current == null) throw StateError('Product was not found.');
@@ -1167,6 +1224,28 @@ class ProductCatalogService {
       throw StateError(
         'Only the General Manager or accountant can manage the product catalog.',
       );
+    }
+  }
+
+  /// Firestore transactions are already atomic and internally retried for
+  /// contention. This adds one small, bounded retry only for transient
+  /// transport/capacity failures. It never retries permission or validation
+  /// failures, so it cannot turn a rejected write into a different mutation.
+  Future<void> _runCatalogTransaction(
+    Future<void> Function(Transaction transaction) operation,
+  ) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await _firestore.runTransaction(operation);
+        return;
+      } on FirebaseException catch (error) {
+        final retryable =
+            error.code == 'resource-exhausted' ||
+            error.code == 'unavailable' ||
+            error.code == 'deadline-exceeded';
+        if (!retryable || attempt == 1) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+      }
     }
   }
 

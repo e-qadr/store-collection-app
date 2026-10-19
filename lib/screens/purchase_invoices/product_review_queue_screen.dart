@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/purchase_invoice_model.dart';
@@ -11,6 +9,7 @@ import 'package:store_collection_app/services/product_catalog_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_api_service.dart';
 import 'package:store_collection_app/services/purchase_invoice_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/catalog_actor_access.dart';
 
 class ProductReviewQueueScreen extends StatefulWidget {
   final Stream<List<ProductReviewTask>>? taskStream;
@@ -578,27 +577,9 @@ class _ProductReviewQueueScreenState extends State<ProductReviewQueueScreen> {
     ProductReviewTask task,
     String name,
   ) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) throw StateError('انتهت جلسة الدخول. سجل الدخول مجدداً.');
-    final profile = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-    final data = profile.data();
-    final role = data?['role']?.toString() ?? '';
-    if (data == null ||
-        (role != 'collector' && role != 'accountant') ||
-        data['isActive'] == false) {
-      throw StateError('إنشاء مجموعة متاح للمدير العام والمحاسب فقط.');
-    }
+    final actor = await requireCurrentCatalogActor();
     final id = await _catalog.createGroup(
-      actor: CatalogActor(
-        uid: user.uid,
-        name: data['name']?.toString().trim().isNotEmpty == true
-            ? data['name'].toString().trim()
-            : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
-        role: role,
-      ),
+      actor: actor,
       brandId: task.brandId,
       name: name,
     );

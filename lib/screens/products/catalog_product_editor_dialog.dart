@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
+import 'package:store_collection_app/utils/catalog_operation_error.dart';
 import 'package:store_collection_app/utils/catalog_normalization.dart';
 
 /// The one material editor used by both Material Management and purchase
@@ -483,12 +484,13 @@ Future<ProductGroupModel?> _showCatalogGroupPicker(
                                   if (context.mounted && group != null) {
                                     Navigator.pop(context, group);
                                   }
-                                } catch (_) {
+                                } catch (error) {
                                   if (context.mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
+                                      SnackBar(
                                         content: Text(
-                                          'تعذر إنشاء المجموعة. تحقق من الاسم وحاول مرة أخرى.',
+                                          catalogOperationErrorText(error) ??
+                                              'تعذر إنشاء المجموعة. تحقق من الاسم وحاول مرة أخرى.',
                                         ),
                                       ),
                                     );

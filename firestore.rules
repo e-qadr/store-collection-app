@@ -1861,59 +1861,11 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow get, list: if mayReadCatalogDocument(resource.data);
-      allow create: if catalogEditorUser() &&
-        validFallbackSystemGroupCreateAssignment(request.resource.data) &&
-        validProduct(productId, request.resource.data) &&
-        request.resource.data.active == true &&
-        request.resource.data.version == 1 &&
-        request.resource.data.created_by == request.auth.uid &&
-        request.resource.data.updated_by == request.auth.uid &&
-        request.resource.data.created_at == request.time &&
-        request.resource.data.updated_at == request.time &&
-        linkedAuditMatches(
-          request.resource.data.last_audit_event_id,
-          'product',
-          productId,
-          request.resource.data.brand_id,
-          'created'
-        );
-      allow update: if catalogEditorUser() &&
-        validProductSourceProvenanceTransition() &&
-        validProduct(productId, request.resource.data) &&
-        validRecategorizationAuditSnapshot() &&
-        validProductArchiveTransition() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'group_id',
-          'name',
-          'normalized_name',
-          'legacy_code',
-          'units',
-          'primary_unit_id',
-          'active',
-          'version',
-          'name_unique_key_id',
-          'legacy_code_unique_key_id',
-          'source_metadata',
-          'updated_by',
-          'updated_by_name',
-          'updated_at',
-          'last_audit_event_id',
-          'archived_by',
-          'archived_by_name',
-          'archived_at'
-        ]) &&
-        request.resource.data.last_audit_event_id !=
-          resource.data.last_audit_event_id &&
-        request.resource.data.version == resource.data.version + 1 &&
-        request.resource.data.updated_by == request.auth.uid &&
-        request.resource.data.updated_at == request.time &&
-        linkedAuditMatches(
-          request.resource.data.last_audit_event_id,
-          'product',
-          productId,
-          request.resource.data.brand_id,
-          productMutationAction()
-        );
+      // Dynamic unit lists are inspected by the authenticated server command.
+      // Rules cannot iterate a list of up to 50 maps without exceeding their
+      // expression budget. Denying client writes keeps product documents and
+      // their price-free schema authoritative for every client platform.
+      allow create, update: if false;
       allow delete: if false;
     }
 
@@ -1922,29 +1874,16 @@ service cloud.firestore {
     // or transaction, as checked with getAfter().
     match /product_unique_keys/{keyId} {
       allow read: if catalogEditorUser();
-      allow create: if catalogEditorUser() &&
-        validUniqueKey(keyId, request.resource.data) &&
-        request.resource.data.created_by == request.auth.uid &&
-        request.resource.data.updated_by == request.auth.uid &&
-        request.resource.data.created_at == request.time &&
-        request.resource.data.updated_at == request.time &&
-        uniqueKeyReferencesProduct(keyId, request.resource.data);
-      allow update: if catalogEditorUser() &&
-        validUniqueKey(keyId, request.resource.data) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'active',
-          'updated_by',
-          'updated_at'
-        ]) &&
-        request.resource.data.updated_by == request.auth.uid &&
-        request.resource.data.updated_at == request.time &&
-        uniqueKeyReferencesProduct(keyId, request.resource.data);
+      // These records are written atomically with a product by the same
+      // trusted command; clients never reserve catalog identities directly.
+      allow create, update: if false;
       allow delete: if false;
     }
 
     match /product_audit_events/{eventId} {
       allow read: if catalogSupervisor();
       allow create: if catalogEditorUser() &&
+        request.resource.data.entity_type != 'product' &&
         validAuditEvent(eventId, request.resource.data) &&
         auditTargetPointsBack(eventId, request.resource.data);
       allow update, delete: if false;

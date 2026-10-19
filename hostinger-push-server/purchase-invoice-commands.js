@@ -1888,19 +1888,21 @@ function groupAuditSnapshot(data) {
       .map((field) => [field, data[field]]));
 }
 
-function auditData({id, entityType, entityId, brandId, action, actor, timestamp, after}) {
-  return {
+function auditData({id, entityType, entityId, brandId, action, actor, timestamp, before, after, reason}) {
+  return compact({
     id,
     entity_type: entityType,
     entity_id: entityId,
     brand_id: brandId,
     action,
+    before,
     after,
+    reason,
     actor_uid: actor.uid,
     actor_name: actor.name,
     actor_role: actor.role,
     created_at: timestamp,
-  };
+  });
 }
 
 function uniqueKeyData({id, brandId, keyType, normalizedValue, productId, actor, timestamp}) {
@@ -1916,6 +1918,320 @@ function uniqueKeyData({id, brandId, keyType, normalizedValue, productId, actor,
     updated_by: actor.uid,
     updated_at: timestamp,
   };
+}
+
+// Product units are deliberately validated in trusted server code. Firestore
+// Rules cannot safely iterate an arbitrary list of maps without exceeding the
+// Rules expression limit, while the product document supports up to 50 units.
+const CATALOG_UNIT_KEYS = new Set([
+  "unit_id", "display_value", "raw_value", "base_unit_factor", "normalized_value",
+]);
+const CATALOG_SOURCE_METADATA_KEYS = new Set([
+  "source_profile", "source_file_sha256", "source_sheet", "source_row",
+  "raw_material_value", "raw_group_value", "raw_primary_unit", "raw_unit_2",
+  "raw_unit_3", "source_fingerprint", "import_id", "original_group_missing",
+  "fallback_system_group_assigned", "fallback_system_group_key",
+  "fallback_system_group_id",
+]);
+
+function catalogPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function catalogString(value, field, maximum = 400) {
+  const clean = typeof value === "string" ? value.trim() : "";
+  if (!clean || Buffer.byteLength(clean, "utf8") > maximum || /[\u0000-\u001f\u007f]/.test(clean)) {
+    throw new PurchaseCommandError("invalid-catalog-product", 400, `${field} is invalid.`);
+  }
+  return clean;
+}
+
+function optionalCatalogString(value, field, maximum = 400) {
+  if (value === undefined || value === null || value === "") return undefined;
+  return catalogString(value, field, maximum);
+}
+
+function assertNoProtectedCatalogData(value) {
+  if (Array.isArray(value)) {
+    value.forEach(assertNoProtectedCatalogData);
+    return;
+  }
+  if (!catalogPlainObject(value)) return;
+  for (const [key, child] of Object.entries(value)) {
+    const normalizedKey = String(key).toLowerCase();
+    if (normalizedKey.includes("price") || normalizedKey.includes("cost") || normalizedKey.includes("سعر")) {
+      throw new PurchaseCommandError(
+          "protected-price-field-forbidden", 400,
+          "Protected price data cannot be stored in the catalog.",
+      );
+    }
+    assertNoProtectedCatalogData(child);
+  }
+}
+
+function validateCatalogUnits(value, primaryUnitId) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 50) {
+    throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog units are invalid.");
+  }
+  const ids = new Set();
+  const units = value.map((entry, index) => {
+    if (!catalogPlainObject(entry) || Object.keys(entry).some((key) => !CATALOG_UNIT_KEYS.has(key))) {
+      throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog unit fields are invalid.");
+    }
+    const unitId = catalogString(entry.unit_id, `units[${index}].unit_id`, 128);
+    const displayValue = catalogString(entry.display_value, `units[${index}].display_value`, 300);
+    const rawValue = catalogString(entry.raw_value, `units[${index}].raw_value`, 300);
+    // Older review tasks stored units before conversion factors were added;
+    // their implicit factor is one and remains compatible.
+    const factor = entry.base_unit_factor === undefined ? 1 : entry.base_unit_factor;
+    if (typeof factor !== "number" || !Number.isFinite(factor) || factor <= 0) {
+      throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog unit conversion is invalid.");
+    }
+    if (ids.has(unitId)) {
+      throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog unit IDs must be unique.");
+    }
+    ids.add(unitId);
+    const normalizedValue = optionalCatalogString(entry.normalized_value, `units[${index}].normalized_value`, 300);
+    return compact({
+      unit_id: unitId,
+      display_value: displayValue,
+      raw_value: rawValue,
+      base_unit_factor: factor,
+      normalized_value: normalizedValue,
+    });
+  });
+  const cleanPrimaryUnitId = catalogString(primaryUnitId, "primary_unit_id", 128);
+  if (!ids.has(cleanPrimaryUnitId)) {
+    throw new PurchaseCommandError("invalid-catalog-product", 400, "The primary catalog unit is missing.");
+  }
+  if (units.find((unit) => unit.unit_id === cleanPrimaryUnitId).base_unit_factor !== 1) {
+    throw new PurchaseCommandError("invalid-catalog-product", 400, "The primary unit factor must equal one.");
+  }
+  assertNoProtectedCatalogData(units);
+  return {units, primaryUnitId: cleanPrimaryUnitId};
+}
+
+function validateCatalogSourceMetadata(value) {
+  if (value === undefined || value === null) return undefined;
+  if (!catalogPlainObject(value) || Object.keys(value).some((key) => !CATALOG_SOURCE_METADATA_KEYS.has(key))) {
+    throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog source metadata is invalid.");
+  }
+  assertNoProtectedCatalogData(value);
+  for (const [key, entry] of Object.entries(value)) {
+    if (["original_group_missing", "fallback_system_group_assigned"].includes(key)) {
+      if (typeof entry !== "boolean") {
+        throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog source metadata is invalid.");
+      }
+    } else if (key === "source_row") {
+      if (!Number.isInteger(entry) || entry < 0) {
+        throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog source metadata is invalid.");
+      }
+    } else if (typeof entry !== "string") {
+      throw new PurchaseCommandError("invalid-catalog-product", 400, "Catalog source metadata is invalid.");
+    }
+  }
+  return value;
+}
+
+function validateCatalogProductPayload(payload, {mode}) {
+  if (!catalogPlainObject(payload)) {
+    throw new PurchaseCommandError("invalid-argument", 400, "The catalog product payload is invalid.");
+  }
+  const keys = mode === "create" ?
+    new Set(["brand_id", "group_id", "name", "legacy_code", "units", "primary_unit_id", "source_metadata"]) :
+    new Set(["group_id", "name", "legacy_code", "units", "primary_unit_id", "source_metadata"]);
+  if (Object.keys(payload).some((key) => !keys.has(key))) {
+    throw new PurchaseCommandError("invalid-argument", 400, "The catalog product payload has unknown fields.");
+  }
+  const normalizedUnits = validateCatalogUnits(payload.units, payload.primary_unit_id);
+  return compact({
+    brand_id: mode === "create" ? catalogString(payload.brand_id, "brand_id", 128) : undefined,
+    group_id: catalogString(payload.group_id, "group_id", 128),
+    name: catalogString(payload.name, "name", 400),
+    legacy_code: optionalCatalogString(payload.legacy_code, "legacy_code", 200),
+    units: normalizedUnits.units,
+    primary_unit_id: normalizedUnits.primaryUnitId,
+    source_metadata: validateCatalogSourceMetadata(payload.source_metadata),
+  });
+}
+
+function validateCatalogLifecyclePayload(payload) {
+  if (!catalogPlainObject(payload) || Object.keys(payload).some((key) => key !== "reason")) {
+    throw new PurchaseCommandError("invalid-argument", 400, "The catalog product payload is invalid.");
+  }
+  return {reason: catalogString(payload.reason, "reason", 1000)};
+}
+
+function catalogProductSnapshot(data) {
+  return productAuditSnapshot(data);
+}
+
+function assertCatalogGroup(group, brandId) {
+  if (!group?.exists || group.data()?.brand_id !== brandId || group.data()?.active !== true) {
+    throw new PurchaseCommandError("catalog-group-invalid", 409, "The selected product group is invalid.");
+  }
+}
+
+function assertCatalogBrand(brand, brandId) {
+  if (!brand?.exists || !activeDocument(brand.data()) ||
+      (brand.data()?.id !== undefined && brand.data()?.id !== brandId)) {
+    throw new PurchaseCommandError("catalog-brand-invalid", 409, "The selected brand is invalid.");
+  }
+}
+
+function assertCatalogKeyAvailable(snapshot, productId) {
+  if (snapshot.exists && String(snapshot.data()?.product_id || "") !== productId) {
+    throw new PurchaseCommandError("catalog-duplicate", 409, "A normalized duplicate product exists.");
+  }
+}
+
+function sameCanonicalJson(left, right) {
+  return JSON.stringify(left || {}) === JSON.stringify(right || {});
+}
+
+async function createCatalogProduct({firestore, actorUid, payload, idempotencyKey, timestamp, randomUUID}) {
+  const productRef = firestore.collection(COLLECTIONS.products).doc();
+  const requestHash = canonicalRequestHash(payload);
+  return runIdempotent({
+    firestore, command: "create_catalog_product", actorUid,
+    expectedRole: ["collector", "accountant"], idempotencyKey, requestHash, timestamp,
+    execute: async (transaction, actor) => {
+      const brandRef = firestore.collection(COLLECTIONS.brands).doc(payload.brand_id);
+      const groupRef = firestore.collection(COLLECTIONS.groups).doc(payload.group_id);
+      const normalizedName = normalizeCatalogText(payload.name);
+      const normalizedCode = normalizeLegacyCode(payload.legacy_code);
+      if (!normalizedName) throw new PurchaseCommandError("invalid-catalog-product", 400, "The product name is invalid.");
+      const nameKeyId = productUniqueKeyId({brandId: payload.brand_id, keyType: "name", normalizedValue: normalizedName});
+      const codeKeyId = normalizedCode ? productUniqueKeyId({brandId: payload.brand_id, keyType: "legacy_code", normalizedValue: normalizedCode}) : undefined;
+      const nameKeyRef = firestore.collection(COLLECTIONS.uniqueProductKeys).doc(nameKeyId);
+      const codeKeyRef = codeKeyId ? firestore.collection(COLLECTIONS.uniqueProductKeys).doc(codeKeyId) : null;
+      const auditRef = firestore.collection(COLLECTIONS.productAudits).doc(randomUUID());
+      const [brand, group, nameKey, codeKey] = await Promise.all([
+        transaction.get(brandRef), transaction.get(groupRef), transaction.get(nameKeyRef),
+        codeKeyRef ? transaction.get(codeKeyRef) : Promise.resolve(null),
+      ]);
+      assertCatalogBrand(brand, payload.brand_id);
+      assertCatalogGroup(group, payload.brand_id);
+      assertCatalogKeyAvailable(nameKey, productRef.id);
+      if (codeKey) assertCatalogKeyAvailable(codeKey, productRef.id);
+      const product = compact({
+        id: productRef.id, brand_id: payload.brand_id, group_id: payload.group_id,
+        name: payload.name, normalized_name: normalizedName, legacy_code: payload.legacy_code,
+        units: payload.units, primary_unit_id: payload.primary_unit_id, active: true, version: 1,
+        name_unique_key_id: nameKeyId, legacy_code_unique_key_id: codeKeyId,
+        source_metadata: payload.source_metadata || {}, last_audit_event_id: auditRef.id,
+        created_by: actor.uid, created_by_name: actor.name, created_at: timestamp,
+        updated_by: actor.uid, updated_by_name: actor.name, updated_at: timestamp,
+      });
+      transaction.set(productRef, product);
+      transaction.set(nameKeyRef, uniqueKeyData({
+        id: nameKeyId, brandId: payload.brand_id, keyType: "name", normalizedValue: normalizedName,
+        productId: productRef.id, actor, timestamp,
+      }));
+      if (codeKeyRef) transaction.set(codeKeyRef, uniqueKeyData({
+        id: codeKeyId, brandId: payload.brand_id, keyType: "legacy_code", normalizedValue: normalizedCode,
+        productId: productRef.id, actor, timestamp,
+      }));
+      transaction.set(auditRef, auditData({
+        id: auditRef.id, entityType: "product", entityId: productRef.id, brandId: payload.brand_id,
+        action: "created", actor, timestamp, after: catalogProductSnapshot(product),
+      }));
+      return {statusCode: 201, responseData: {product_id: productRef.id, version: 1}};
+    },
+  });
+}
+
+async function updateCatalogProduct({firestore, actorUid, productId, payload, idempotencyKey, timestamp, randomUUID}) {
+  const requestHash = canonicalRequestHash({product_id: productId, ...payload});
+  return runIdempotent({
+    firestore, command: "update_catalog_product", actorUid,
+    expectedRole: ["collector", "accountant"], idempotencyKey, requestHash, timestamp,
+    execute: async (transaction, actor) => {
+      const productRef = firestore.collection(COLLECTIONS.products).doc(productId);
+      const productSnapshot = await transaction.get(productRef);
+      const current = productSnapshot.data();
+      if (!productSnapshot.exists) throw new PurchaseCommandError("product-not-found", 404, "The product was not found.");
+      if (current.active !== true) throw new PurchaseCommandError("product-archived", 409, "Archived products must be reactivated before editing.");
+      const brandId = catalogString(current.brand_id, "product.brand_id", 128);
+      if (payload.source_metadata !== undefined && !sameCanonicalJson(payload.source_metadata, current.source_metadata || {})) {
+        throw new PurchaseCommandError("catalog-provenance-immutable", 409, "Product source metadata cannot be changed.");
+      }
+      const normalizedName = normalizeCatalogText(payload.name);
+      const normalizedCode = normalizeLegacyCode(payload.legacy_code);
+      const nameKeyId = productUniqueKeyId({brandId, keyType: "name", normalizedValue: normalizedName});
+      const codeKeyId = normalizedCode ? productUniqueKeyId({brandId, keyType: "legacy_code", normalizedValue: normalizedCode}) : undefined;
+      const groupRef = firestore.collection(COLLECTIONS.groups).doc(payload.group_id);
+      const nameKeyRef = firestore.collection(COLLECTIONS.uniqueProductKeys).doc(nameKeyId);
+      const codeKeyRef = codeKeyId ? firestore.collection(COLLECTIONS.uniqueProductKeys).doc(codeKeyId) : null;
+      const auditRef = firestore.collection(COLLECTIONS.productAudits).doc(randomUUID());
+      const [group, nameKey, codeKey] = await Promise.all([
+        transaction.get(groupRef), transaction.get(nameKeyRef), codeKeyRef ? transaction.get(codeKeyRef) : Promise.resolve(null),
+      ]);
+      assertCatalogGroup(group, brandId);
+      assertCatalogKeyAvailable(nameKey, productId);
+      if (codeKey) assertCatalogKeyAvailable(codeKey, productId);
+      const version = (Number.isSafeInteger(current.version) ? current.version : 1) + 1;
+      const after = compact({
+        ...current, group_id: payload.group_id, name: payload.name, normalized_name: normalizedName,
+        legacy_code: payload.legacy_code, units: payload.units, primary_unit_id: payload.primary_unit_id,
+        name_unique_key_id: nameKeyId, legacy_code_unique_key_id: codeKeyId, version,
+        last_audit_event_id: auditRef.id, updated_by: actor.uid, updated_by_name: actor.name, updated_at: timestamp,
+      });
+      transaction.set(productRef, after);
+      transaction.set(nameKeyRef, uniqueKeyData({
+        id: nameKeyId, brandId, keyType: "name", normalizedValue: normalizedName, productId, actor, timestamp,
+      }));
+      if (codeKeyRef) transaction.set(codeKeyRef, uniqueKeyData({
+        id: codeKeyId, brandId, keyType: "legacy_code", normalizedValue: normalizedCode, productId, actor, timestamp,
+      }));
+      transaction.set(auditRef, auditData({
+        id: auditRef.id, entityType: "product", entityId: productId, brandId,
+        action: current.group_id === payload.group_id ? "updated" : "recategorized", actor, timestamp,
+        before: catalogProductSnapshot(current), after: catalogProductSnapshot(after),
+      }));
+      return {statusCode: 200, responseData: {product_id: productId, version}};
+    },
+  });
+}
+
+async function changeCatalogProductLifecycle({firestore, actorUid, productId, payload, idempotencyKey, timestamp, randomUUID, active}) {
+  const requestHash = canonicalRequestHash({product_id: productId, active, ...payload});
+  return runIdempotent({
+    firestore, command: active ? "reactivate_catalog_product" : "archive_catalog_product", actorUid,
+    expectedRole: ["collector", "accountant"], idempotencyKey, requestHash, timestamp,
+    execute: async (transaction, actor) => {
+      const productRef = firestore.collection(COLLECTIONS.products).doc(productId);
+      const productSnapshot = await transaction.get(productRef);
+      const current = productSnapshot.data();
+      if (!productSnapshot.exists) throw new PurchaseCommandError("product-not-found", 404, "The product was not found.");
+      if (current.active === active) throw new PurchaseCommandError("invalid-state", 409, "The product is already in that state.");
+      const brandId = catalogString(current.brand_id, "product.brand_id", 128);
+      const keyIds = [current.name_unique_key_id, current.legacy_code_unique_key_id].filter(Boolean);
+      const keyRefs = keyIds.map((keyId) => firestore.collection(COLLECTIONS.uniqueProductKeys).doc(keyId));
+      const keySnapshots = await Promise.all(keyRefs.map((reference) => transaction.get(reference)));
+      keySnapshots.forEach((snapshot) => assertCatalogKeyAvailable(snapshot, productId));
+      const auditRef = firestore.collection(COLLECTIONS.productAudits).doc(randomUUID());
+      const version = (Number.isSafeInteger(current.version) ? current.version : 1) + 1;
+      const after = compact({
+        ...current, active, version, last_audit_event_id: auditRef.id,
+        updated_by: actor.uid, updated_by_name: actor.name, updated_at: timestamp,
+        archived_by: active ? undefined : actor.uid,
+        archived_by_name: active ? undefined : actor.name,
+        archived_at: active ? undefined : timestamp,
+      });
+      transaction.set(productRef, after);
+      keyRefs.forEach((reference) => transaction.set(reference, {
+        active, updated_by: actor.uid, updated_at: timestamp,
+      }, {merge: true}));
+      transaction.set(auditRef, auditData({
+        id: auditRef.id, entityType: "product", entityId: productId, brandId,
+        action: active ? "reactivated" : "archived", actor, timestamp,
+        before: catalogProductSnapshot(current), after: catalogProductSnapshot(after), reason: payload.reason,
+      }));
+      return {statusCode: 200, responseData: {product_id: productId, version}};
+    },
+  });
 }
 
 function accountingProfileDocumentId(productId, branchId) {
@@ -2032,6 +2348,10 @@ async function reviewProductTask({
       }
 
       if (payload.action === "create_product") {
+        // This route is also publicly callable by an authenticated reviewer,
+        // so it must use the same deep validation as catalog management.
+        const validatedUnits = validateCatalogUnits(payload.units, payload.primary_unit_id);
+        payload = {...payload, units: validatedUnits.units, primary_unit_id: validatedUnits.primaryUnitId};
         const requestedGroupId = payload.group_id ||
           (task.original_group_text === "" ? uncategorizedGroupId(invoice.receiving_brand_id) : "");
         if (!requestedGroupId) {
@@ -3432,6 +3752,26 @@ function createPurchaseInvoiceCommandRouter({
     firestore, admin, now, randomUUID, validator: validateCatalogPricePayload,
     execute: updateCatalogPrice,
   }));
+  router.post("/catalog-products", commandRoute({
+    firestore, admin, now, randomUUID,
+    validator: (payload) => validateCatalogProductPayload(payload, {mode: "create"}),
+    execute: createCatalogProduct,
+  }));
+  router.post("/catalog-products/:productId", commandRoute({
+    firestore, admin, now, randomUUID,
+    validator: (payload) => validateCatalogProductPayload(payload, {mode: "update"}),
+    execute: updateCatalogProduct, productRoute: true,
+  }));
+  router.post("/catalog-products/:productId/archive", commandRoute({
+    firestore, admin, now, randomUUID, validator: validateCatalogLifecyclePayload,
+    execute: (arguments_) => changeCatalogProductLifecycle({...arguments_, active: false}),
+    productRoute: true,
+  }));
+  router.post("/catalog-products/:productId/reactivate", commandRoute({
+    firestore, admin, now, randomUUID, validator: validateCatalogLifecyclePayload,
+    execute: (arguments_) => changeCatalogProductLifecycle({...arguments_, active: true}),
+    productRoute: true,
+  }));
   router.post("/product-review-tasks/:taskId/decide", commandRoute({
     firestore, admin, now, randomUUID, validator: validateReviewPayload,
     execute: reviewProductTask, taskRoute: true,
@@ -3464,4 +3804,9 @@ module.exports = {
   reviewProductTask,
   syncProductBranchAccounting,
   updateCatalogPrice,
+  validateCatalogProductPayload,
+  validateCatalogUnits,
+  createCatalogProduct,
+  updateCatalogProduct,
+  changeCatalogProductLifecycle,
 };

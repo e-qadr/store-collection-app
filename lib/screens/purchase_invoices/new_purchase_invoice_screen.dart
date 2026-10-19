@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:store_collection_app/models/product_catalog_model.dart';
 import 'package:store_collection_app/models/product_price_model.dart';
@@ -12,6 +11,8 @@ import 'package:store_collection_app/services/purchase_invoice_api_service.dart'
 import 'package:store_collection_app/services/purchase_invoice_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/branch_scope.dart';
+import 'package:store_collection_app/utils/catalog_actor_access.dart';
+import 'package:store_collection_app/utils/catalog_operation_error.dart';
 
 bool isEligiblePurchaseReceivingBranch(Map<String, dynamic> branch) =>
     isActiveOperationalBranch(branch);
@@ -764,32 +765,16 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
       _message('اختر الفرع المستلم أولاً.');
       return null;
     }
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _message('انتهت جلسة الدخول. سجل الدخول مجدداً.');
+    late final CatalogActor actor;
+    try {
+      actor = await requireCurrentCatalogActor();
+    } catch (error) {
+      _message(
+        catalogOperationErrorText(error) ??
+            'تعذر التحقق من صلاحية إنشاء المادة. حاول مرة أخرى.',
+      );
       return null;
     }
-    final profile = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-    final data = profile.data();
-    final role = data?['role']?.toString();
-    if (data == null ||
-        (role != 'collector' && role != 'accountant') ||
-        data['isActive'] == false) {
-      // Do not turn an invoice screen into a catalog-management privilege.
-      _message('إضافة مادة جديدة متاحة للمدير العام والمحاسب فقط.');
-      return null;
-    }
-    final actor = CatalogActor(
-      uid: user.uid,
-      name: data['name']?.toString().trim().isNotEmpty == true
-          ? data['name'].toString().trim()
-          : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
-      role: role!,
-      active: data['isActive'] != false,
-    );
     final groups = await _catalog
         .watchGroups(brandId: _brandId, activeOnly: true)
         .first;
@@ -930,27 +915,9 @@ class _NewPurchaseInvoiceScreenState extends State<NewPurchaseInvoiceScreen> {
     if (_brandId.trim().isEmpty) {
       throw StateError('اختر الفرع المستلم أولاً لإنشاء مجموعة.');
     }
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) throw StateError('انتهت جلسة الدخول. سجل الدخول مجدداً.');
-    final profile = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
-    final data = profile.data();
-    final role = data?['role']?.toString() ?? '';
-    if (data == null ||
-        (role != 'collector' && role != 'accountant') ||
-        data['isActive'] == false) {
-      throw StateError('إنشاء مجموعة متاح للمدير العام والمحاسب فقط.');
-    }
+    final actor = await requireCurrentCatalogActor();
     final id = await _catalog.createGroup(
-      actor: CatalogActor(
-        uid: user.uid,
-        name: data['name']?.toString().trim().isNotEmpty == true
-            ? data['name'].toString().trim()
-            : (role == 'collector' ? 'المدير العام' : 'المحاسب'),
-        role: role,
-      ),
+      actor: actor,
       brandId: _brandId,
       name: name,
     );

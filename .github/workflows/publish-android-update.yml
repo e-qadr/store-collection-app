@@ -36,6 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AUTH_API_BASE_URL: https://collection-api.alasalh.com
+      # The endpoint is public configuration; the matching token is kept only
+      # in GitHub Actions Secrets. Both values must be compiled into each
+      # Android release so cash-expense invoice uploads work immediately.
+      INVOICE_UPLOAD_URL: ${{ secrets.INVOICE_UPLOAD_URL }}
+      INVOICE_UPLOAD_TOKEN: ${{ secrets.INVOICE_UPLOAD_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -109,11 +114,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$INVOICE_UPLOAD_URL"
+          test -n "$INVOICE_UPLOAD_TOKEN"
           flutter pub get
           flutter build apk --release \
             --build-name="${{ steps.metadata.outputs.version }}" \
             --build-number="${{ steps.metadata.outputs.build }}" \
-            --dart-define=AUTH_API_BASE_URL="$AUTH_API_BASE_URL"
+            --dart-define=AUTH_API_BASE_URL="$AUTH_API_BASE_URL" \
+            --dart-define=INVOICE_UPLOAD_URL="$INVOICE_UPLOAD_URL" \
+            --dart-define=INVOICE_UPLOAD_TOKEN="$INVOICE_UPLOAD_TOKEN"
 
       - name: Prepare verified release assets
         id: release

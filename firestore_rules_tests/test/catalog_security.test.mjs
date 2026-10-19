@@ -360,6 +360,12 @@ async function createProductAndKey(database, options = {}) {
   return batch.commit();
 }
 
+async function seedProductAndKeyWithoutRules(options = {}) {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await createProductAndKey(context.firestore(), options);
+  });
+}
+
 function latestPrice({
   id = 'latest-a',
   historyId = 'history-a',
@@ -497,7 +503,7 @@ test('managers can read active receiving-brand catalog documents without price a
   )));
 });
 
-test('catalog supervisors can read all brands while collector and accountant can write audited catalog records', async () => {
+test('catalog supervisors can read all brands while direct product writes are denied', async () => {
   const accountant = databaseFor('accountant-user');
   const collector = databaseFor('collector-user');
   const admin = databaseFor('admin-user');
@@ -506,9 +512,9 @@ test('catalog supervisors can read all brands while collector and accountant can
   await assertSucceeds(getDocs(collection(accountant, 'products')));
   await assertSucceeds(getDocs(collection(collector, 'products')));
   await assertSucceeds(getDocs(collection(admin, 'products')));
-  await assertSucceeds(createProductAndKey(accountant));
+  await assertFails(createProductAndKey(accountant));
 
-  await assertSucceeds(createProductAndKey(collector, {
+  await assertFails(createProductAndKey(collector, {
     id: 'collector-product',
     uniqueKeyId: 'collector-key',
     actorUid: 'collector-user',
@@ -525,7 +531,7 @@ test('catalog supervisors can read all brands while collector and accountant can
   }));
 });
 
-test('manual canonical product payload succeeds for catalog editors and remains denied to branch roles', async () => {
+test('manual canonical product payload is server-command-only for every role', async () => {
   const manualSource = { source_profile: 'manual' };
   const units = [
     {
@@ -535,7 +541,7 @@ test('manual canonical product payload succeeds for catalog editors and remains 
     },
   ];
 
-  await assertSucceeds(createProductAndKey(databaseFor('collector-user'), {
+  await assertFails(createProductAndKey(databaseFor('collector-user'), {
     id: 'manual-collector-product',
     uniqueKeyId: 'manual-collector-name',
     legacyKeyId: 'manual-collector-code',
@@ -546,16 +552,7 @@ test('manual canonical product payload succeeds for catalog editors and remains 
     name: 'مادة يدوية للمدير العام',
     extra: { units, source_metadata: manualSource },
   }));
-  const created = await getDoc(doc(
-    databaseFor('collector-user'),
-    'products',
-    'manual-collector-product',
-  ));
-  assert.equal(created.data().group_id, 'group-a');
-  assert.equal(created.data().units[0].unit_id, 'primary');
-  assert.equal(created.data().version, 1);
-
-  await assertSucceeds(createProductAndKey(databaseFor('accountant-user'), {
+  await assertFails(createProductAndKey(databaseFor('accountant-user'), {
     id: 'manual-accountant-product',
     uniqueKeyId: 'manual-accountant-name',
     actorUid: 'accountant-user',
@@ -968,14 +965,14 @@ test('an audited product can move from fallback system group to a normal group',
   }));
 
   const productId = 'fallback-product';
-  await assertSucceeds(createProductAndKey(accountant, {
+  await seedProductAndKeyWithoutRules({
     id: productId,
     uniqueKeyId: 'fallback-product-key',
     extra: {
       group_id: fallbackGroupId,
       source_metadata: fallbackSourceMetadata,
     },
-  }));
+  });
 
   const productReference = doc(accountant, 'products', productId);
   const provenanceMutationAuditId = 'fallback-provenance-mutation-audit';
@@ -1133,10 +1130,10 @@ test('an audited product can move from fallback system group to a normal group',
       created_at: serverTimestamp(),
     },
   );
-  await assertSucceeds(recategorizeBatch.commit());
+  await assertFails(recategorizeBatch.commit());
 
   const product = (await getDoc(productReference)).data();
-  assert.equal(product.group_id, 'group-a');
+  assert.equal(product.group_id, fallbackGroupId);
   assert.equal(product.source_metadata.original_group_missing, true);
   assert.equal(product.source_metadata.fallback_system_group_assigned, true);
   assert.equal(product.source_metadata.fallback_system_group_key, uncategorizedKey);
@@ -1166,9 +1163,9 @@ test('catalog rules reject top-level and nested protected-price fields', async (
   }));
 });
 
-test('a full three-unit legacy-coded import product remains compatible', async () => {
+test('even a full legacy product payload is command-only to the client', async () => {
   const accountant = databaseFor('accountant-user');
-  await assertSucceeds(createProductAndKey(accountant, {
+  await assertFails(createProductAndKey(accountant, {
     id: 'full-import-product',
     name: 'منتج استيراد كامل',
     uniqueKeyId: 'full-import-name-key',
@@ -1211,27 +1208,33 @@ test('a full three-unit legacy-coded import product remains compatible', async (
   }));
 });
 
-test('catalog unit cap remains three to keep audited rules evaluations safe', async () => {
+test('catalog unit writes are denied directly regardless of their count', async () => {
   const accountant = databaseFor('accountant-user');
-  const units = Array.from({length: 3}, (_, index) => ({
+  const units = Array.from({length: 50}, (_, index) => ({
     unit_id: index === 0 ? 'primary' : `unit_${index + 1}`,
     display_value: `وحدة ${index + 1}`,
     raw_value: `وحدة ${index + 1}`,
   }));
   await assertFails(createProductAndKey(accountant, {
-    id: 'four-unit-product',
-    name: 'منتج أربع وحدات',
-    uniqueKeyId: 'four-unit-product-key',
+    id: 'fifty-unit-product',
+    name: 'منتج خمسون وحدة',
+    uniqueKeyId: 'fifty-unit-product-key',
+    units,
+  }));
+  await assertFails(createProductAndKey(accountant, {
+    id: 'fifty-one-unit-product',
+    name: 'منتج واحد وخمسون وحدة',
+    uniqueKeyId: 'fifty-one-unit-product-key',
     units: [
       ...units,
-      {unit_id: 'unit_4', display_value: 'وحدة 4', raw_value: 'وحدة 4'},
+      {unit_id: 'unit_51', display_value: 'وحدة 51', raw_value: 'وحدة 51'},
     ],
   }));
 });
 
 test('duplicate keys cannot be reassigned and catalog records cannot be deleted', async () => {
   const accountant = databaseFor('accountant-user');
-  await assertSucceeds(createProductAndKey(accountant));
+  await seedProductAndKeyWithoutRules();
 
   await assertFails(createProductAndKey(accountant, {
     id: 'duplicate-product',
@@ -1247,10 +1250,10 @@ test('product update, archive, and reactivate require fresh complete audits', as
   const accountant = databaseFor('accountant-user');
   const productId = 'lifecycle-product';
   const productReference = doc(accountant, 'products', productId);
-  await assertSucceeds(createProductAndKey(accountant, {
+  await seedProductAndKeyWithoutRules({
     id: productId,
     uniqueKeyId: 'lifecycle-product-key',
-  }));
+  });
 
   const missingArchiveAudit = {
     active: false,
@@ -1334,8 +1337,8 @@ test('product update, archive, and reactivate require fresh complete audits', as
     actor_role: 'accountant',
     created_at: serverTimestamp(),
   });
-  await assertSucceeds(archiveBatch.commit());
-  assert.equal((await getDoc(productReference)).data().active, false);
+  await assertFails(archiveBatch.commit());
+  assert.equal((await getDoc(productReference)).data().active, true);
 
   const missingReactivateAudit = {
     active: true,
@@ -1425,7 +1428,7 @@ test('product update, archive, and reactivate require fresh complete audits', as
       created_at: serverTimestamp(),
     },
   );
-  await assertSucceeds(reactivateBatch.commit());
+  await assertFails(reactivateBatch.commit());
   const reactivated = (await getDoc(productReference)).data();
   assert.equal(reactivated.active, true);
   assert.equal(Object.hasOwn(reactivated, 'archived_at'), false);
@@ -1496,8 +1499,8 @@ test('product update, archive, and reactivate require fresh complete audits', as
     actor_role: 'accountant',
     created_at: serverTimestamp(),
   });
-  await assertSucceeds(updateBatch.commit());
-  assert.equal((await getDoc(productReference)).data().version, 4);
+  await assertFails(updateBatch.commit());
+  assert.equal((await getDoc(productReference)).data().version, 1);
   await assertFails(deleteDoc(productReference));
 });
 
@@ -1525,10 +1528,10 @@ test('catalog audit events are accountant-authored and immutable', async () => {
     created_at: serverTimestamp(),
   }));
 
-  await assertSucceeds(createProductAndKey(accountant, {
+  await seedProductAndKeyWithoutRules({
     id: 'audited-product',
     uniqueKeyId: 'audited-product-key',
-  }));
+  });
 
   await assertFails(getDoc(doc(
     manager,
