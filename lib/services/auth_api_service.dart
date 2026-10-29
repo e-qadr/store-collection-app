@@ -143,6 +143,75 @@ class AuthApiService {
     await _authorizedRequest('POST', '/v1/auth/complete-email-setup');
   }
 
+  /// Sends a notification only after the server verifies the authenticated
+  /// user against the persisted entity. This must not accept recipient IDs or
+  /// message text from the app, because those are derived server-side.
+  Future<void> dispatchBranchRequestNotification({
+    required String requestId,
+    required String event,
+  }) async {
+    final encodedId = Uri.encodeComponent(requestId.trim());
+    final encodedEvent = Uri.encodeComponent(event.trim());
+    if (encodedId.isEmpty || encodedEvent.isEmpty) {
+      throw const AuthApiException(
+        'invalid-argument',
+        'بيانات الإشعار غير صالحة.',
+      );
+    }
+    await _authorizedRequest(
+      'POST',
+      '/v1/notifications/branch-requests/$encodedId/$encodedEvent',
+    );
+  }
+
+  Future<void> dispatchCashExpenseNotification({
+    required String requestId,
+    required String event,
+  }) async {
+    final encodedId = Uri.encodeComponent(requestId.trim());
+    final encodedEvent = Uri.encodeComponent(event.trim());
+    if (encodedId.isEmpty || encodedEvent.isEmpty) {
+      throw const AuthApiException(
+        'invalid-argument',
+        'بيانات الإشعار غير صالحة.',
+      );
+    }
+    await _authorizedRequest(
+      'POST',
+      '/v1/notifications/cash-expenses/$encodedId/$encodedEvent',
+    );
+  }
+
+  Future<void> dispatchConsumableNotification({
+    required String requestId,
+    required String event,
+  }) async {
+    final id = Uri.encodeComponent(requestId.trim());
+    final kind = Uri.encodeComponent(event.trim());
+    if (id.isEmpty || kind.isEmpty) {
+      throw const AuthApiException(
+        'invalid-argument',
+        'بيانات الإشعار غير صالحة.',
+      );
+    }
+    await _authorizedRequest('POST', '/v1/notifications/consumables/$id/$kind');
+  }
+
+  Future<void> dispatchCollectionNotification({
+    required String transactionId,
+    required String event,
+  }) async {
+    final id = Uri.encodeComponent(transactionId.trim());
+    final kind = Uri.encodeComponent(event.trim());
+    if (id.isEmpty || kind.isEmpty) {
+      throw const AuthApiException(
+        'invalid-argument',
+        'بيانات الإشعار غير صالحة.',
+      );
+    }
+    await _authorizedRequest('POST', '/v1/notifications/collections/$id/$kind');
+  }
+
   Future<void> sendForgotPasswordEmail(String email) async {
     _ensureConfigured();
     try {

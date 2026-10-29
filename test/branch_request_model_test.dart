@@ -21,6 +21,7 @@ void main() {
         branchRequestStatusFromString('completed'),
         BranchRequestStatus.completed,
       );
+      expect(BranchRequestFields.executorRole, 'executor_role');
     },
   );
 

@@ -9,13 +9,17 @@ import 'package:store_collection_app/screens/consumables/consumable_request_deta
 import 'package:store_collection_app/screens/inter_branch_invoices/inter_branch_invoice_details_screen.dart';
 import 'package:store_collection_app/screens/purchase_invoices/purchase_invoice_details_screen.dart';
 import 'package:store_collection_app/screens/transactions/transaction_details_screen.dart';
+import 'package:store_collection_app/screens/notifications/module_badge.dart';
+import 'package:store_collection_app/screens/notifications/task_summary.dart';
 import 'package:store_collection_app/services/device_notification_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 import 'package:store_collection_app/theme/app_theme.dart';
 import 'package:store_collection_app/utils/firestore_refresh.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  const NotificationsScreen({super.key, this.initialNotificationId});
+
+  final String? initialNotificationId;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -28,12 +32,28 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       DeviceNotificationService();
   DeviceNotificationPermissionState? _permissionState;
   bool _isRequestingPermission = false;
+  bool _showTasksOnly = false;
+  String? _moduleFilter;
+  int _notificationLimit = NotificationService.notificationPageSize;
+
+  static const _allModulesFilter = '__all_modules__';
+  static const Map<String, String> _moduleLabels = {
+    NotificationService.transactionsModule: 'سندات التحصيل',
+    NotificationService.cashExpenseRequestsModule: 'طلبات الصرف',
+    NotificationService.consumableRequestsModule: 'طلبات المستهلكات',
+    NotificationService.branchRequestsModule: 'طلبات ومهام الفروع',
+    NotificationService.interBranchInvoicesModule: 'مناقلات الفروع',
+    NotificationService.purchaseInvoicesModule: 'فواتير المشتريات',
+  };
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadPermissionState();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _openInitialNotification(),
+    );
   }
 
   @override
@@ -81,6 +101,23 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     }
   }
 
+  Future<void> _openInitialNotification() async {
+    final notificationId = widget.initialNotificationId?.trim() ?? '';
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (notificationId.isEmpty || uid == null) return;
+
+    final notification = await FirebaseFirestore.instance
+        .collection('notifications')
+        .doc(notificationId)
+        .get();
+    final data = notification.data();
+    if (!mounted || data == null || data['recipient_id'] != uid) return;
+
+    await _notificationService.markAsRead(notification.id);
+    if (!mounted) return;
+    await _openNotificationTarget(data);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -102,28 +139,30 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         body: Column(
           children: [
             _buildPermissionCard(),
+            _buildInboxFilter(),
             Expanded(
               child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _notificationService.getCurrentUserNotifications(),
+                stream: _showTasksOnly
+                    ? _notificationService.getCurrentUserOpenTasks()
+                    : _notificationService.getCurrentUserNotifications(
+                        limit: _notificationLimit,
+                      ),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator());
                   }
 
                   final notifications = snapshot.data?.docs.toList() ?? [];
-                  notifications.sort((a, b) {
-                    final aDate =
-                        (a.data()['created_at'] as Timestamp?)?.toDate() ??
-                        DateTime(2000);
-                    final bDate =
-                        (b.data()['created_at'] as Timestamp?)?.toDate() ??
-                        DateTime(2000);
-                    return bDate.compareTo(aDate);
-                  });
+                  final visibleNotifications = notifications.where((doc) {
+                    if (_showTasksOnly && !_isOpenTask(doc)) return false;
+                    return _moduleFilter == null ||
+                        doc.data()['module'] == _moduleFilter;
+                  }).toList();
 
-                  if (notifications.isEmpty) {
+                  if (visibleNotifications.isEmpty &&
+                      _loadMoreItemCount(notifications) == 0) {
                     return const Center(
-                      child: Text('لا توجد إشعارات حتى الآن'),
+                      child: Text('لا توجد مهام أو إشعارات في هذا القسم'),
                     );
                   }
 
@@ -139,9 +178,14 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     child: ListView.builder(
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16),
-                      itemCount: notifications.length,
+                      itemCount:
+                          visibleNotifications.length +
+                          _loadMoreItemCount(notifications),
                       itemBuilder: (context, index) {
-                        final doc = notifications[index];
+                        if (index >= visibleNotifications.length) {
+                          return _buildLoadMoreButton();
+                        }
+                        final doc = visibleNotifications[index];
                         final data = doc.data();
                         final isRead = data['is_read'] == true;
                         final createdAt = (data['created_at'] as Timestamp?)
@@ -170,6 +214,14 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                               children: [
                                 const SizedBox(height: 4),
                                 Text(data['message'] ?? ''),
+                                if (_moduleLabel(data) != null) ...[
+                                  const SizedBox(height: 8),
+                                  ModuleBadge(label: _moduleLabel(data)!),
+                                ],
+                                if (_isOpenTask(doc)) ...[
+                                  const SizedBox(height: 8),
+                                  TaskSummary(data: data),
+                                ],
                                 if (createdAt != null) ...[
                                   const SizedBox(height: 6),
                                   Text(
@@ -201,6 +253,81 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         ),
       ),
     );
+  }
+
+  Widget _buildInboxFilter() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Row(
+        children: [
+          ChoiceChip(
+            label: const Text('كل الإشعارات'),
+            selected: !_showTasksOnly,
+            onSelected: (_) => setState(() {
+              _showTasksOnly = false;
+              _notificationLimit = NotificationService.notificationPageSize;
+            }),
+          ),
+          const SizedBox(width: 8),
+          ChoiceChip(
+            avatar: const Icon(Icons.task_alt_rounded, size: 18),
+            label: const Text('مهامي'),
+            selected: _showTasksOnly,
+            onSelected: (_) => setState(() => _showTasksOnly = true),
+          ),
+          const Spacer(),
+          PopupMenuButton<String>(
+            tooltip: 'تصفية حسب النظام',
+            onSelected: (value) => setState(() {
+              _moduleFilter = value == _allModulesFilter ? null : value;
+            }),
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: _allModulesFilter,
+                child: Text('كل الأنظمة'),
+              ),
+              ..._moduleLabels.entries.map(
+                (entry) =>
+                    PopupMenuItem(value: entry.key, child: Text(entry.value)),
+              ),
+            ],
+            child: Badge(
+              isLabelVisible: _moduleFilter != null,
+              child: const Icon(Icons.filter_list_rounded),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  int _loadMoreItemCount(
+    List<DocumentSnapshot<Map<String, dynamic>>> notifications,
+  ) {
+    if (_showTasksOnly || notifications.length < _notificationLimit) return 0;
+    return 1;
+  }
+
+  Widget _buildLoadMoreButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: OutlinedButton.icon(
+        onPressed: () => setState(() {
+          _notificationLimit += NotificationService.notificationPageSize;
+        }),
+        icon: const Icon(Icons.expand_more_rounded),
+        label: const Text('تحميل إشعارات أقدم'),
+      ),
+    );
+  }
+
+  String? _moduleLabel(Map<String, dynamic> data) {
+    return _moduleLabels[_string(data, 'module')];
+  }
+
+  bool _isOpenTask(DocumentSnapshot<Map<String, dynamic>> document) {
+    final data = document.data() ?? const <String, dynamic>{};
+    return data['requires_action'] == true && data['task_status'] == 'open';
   }
 
   Future<void> _openNotificationTarget(Map<String, dynamic> data) async {

@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const express = require("express");
+const {buildNotificationDocument, closeOpenTasks} = require("./notification-task-policy");
 
 const {
   CommandError,
@@ -737,23 +738,21 @@ function writeNotifications(transaction, firestore, {
     if (!uid || uid === excludeUid || unique.has(uid)) continue;
     unique.add(uid);
     const reference = notificationReference(firestore, invoice.id, type, revision, uid);
-    transaction.set(reference, {
+    transaction.set(reference, buildNotificationDocument({
       id: reference.id,
-      recipient_id: uid,
+      recipientId: uid,
       title,
       message,
-      is_read: false,
-      push_status: "pending",
       module: COLLECTIONS.invoices,
-      entity_collection: COLLECTIONS.invoices,
-      entity_id: invoice.id,
-      branch_id: invoice.sending_branch_id,
-      branch_ids: [invoice.sending_branch_id, invoice.receiving_branch_id],
-      reference_number: invoice.invoice_number,
-      notification_type: type,
-      inter_branch_invoice_id: invoice.id,
-      created_at: timestamp,
-    });
+      entityCollection: COLLECTIONS.invoices,
+      entityId: invoice.id,
+      branchId: invoice.sending_branch_id,
+      branchIds: [invoice.sending_branch_id, invoice.receiving_branch_id],
+      referenceNumber: invoice.invoice_number,
+      notificationType: type,
+      timestamp,
+      extraData: {inter_branch_invoice_id: invoice.id},
+    }));
   }
 }
 
@@ -1275,13 +1274,20 @@ async function confirmReceipt({
       }));
       const itemDigest = invoiceItemDigest(items);
       const isVersion3 = invoice.workflow_version >= 3;
+      // A historical invoice that has been migrated to the dual-accounting
+      // path can be returned to receipt review after its receiving branch is
+      // corrected.  Treat that receipt exactly like the modern dual workflow:
+      // the source-side posting must remain posted while only the receiving
+      // side returns to pending.
+      const isLegacyDualAccounting = invoice.legacy_dual_accounting?.active === true;
+      const usesDualAccounting = isVersion3 || isLegacyDualAccounting;
       const nextRecipients = await activeUsersByRole(
-          transaction, firestore, isVersion3 ? "accountant" : "collector");
+          transaction, firestore, usesDualAccounting ? "accountant" : "collector");
       if (nextRecipients.length === 0) {
         throw new CommandError(
-            isVersion3 ? "accountant-not-configured" : "general-manager-not-configured",
+            usesDualAccounting ? "accountant-not-configured" : "general-manager-not-configured",
             409,
-            isVersion3 ? "No active accountant is configured." :
+            usesDualAccounting ? "No active accountant is configured." :
               "No active general manager is configured.",
         );
       }
@@ -1293,20 +1299,30 @@ async function confirmReceipt({
           actor,
           timestamp,
       );
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: [actor.uid],
+        notificationTypes: [
+          "inter_branch_v2_direct_created",
+          "inter_branch_v3_direct_created",
+        ],
+        timestamp,
+      });
       transaction.update(invoiceRef, {
         item_digest: itemDigest,
-        status: isVersion3 ? STATUS.pendingDualAccounting : STATUS.pendingPriceEntry,
+        status: usesDualAccounting ? STATUS.pendingDualAccounting : STATUS.pendingPriceEntry,
         revision,
         ...(payload.receiver_notes ? {receiver_notes: payload.receiver_notes} : {}),
         receipt_confirmed_by: actor.uid,
         receipt_confirmed_by_name: actor.name,
         receipt_confirmed_at: timestamp,
-        ...(isVersion3 ? {
+        ...(usesDualAccounting ? {
           participant_ids: [...new Set([
             ...(Array.isArray(invoice.participant_ids) ? invoice.participant_ids : []),
             actor.uid,
           ])],
-          source_accounting_status: "pending",
+          source_accounting_status: isLegacyDualAccounting ?
+            (invoice.source_accounting_status || "pending") : "pending",
           receiving_accounting_status: "pending",
         } : {}),
         last_updated: timestamp,
@@ -1320,11 +1336,11 @@ async function confirmReceipt({
       writeNotifications(transaction, firestore, {
         recipients: nextRecipients,
         invoice,
-        type: isVersion3 ? "inter_branch_v3_receipt_confirmed" :
+        type: usesDualAccounting ? "inter_branch_v3_receipt_confirmed" :
           "inter_branch_v2_receipt_confirmed",
-        title: isVersion3 ? "فاتورة مناقلة بانتظار الترحيل المحاسبي" :
+        title: usesDualAccounting ? "فاتورة مناقلة بانتظار الترحيل المحاسبي" :
           "فاتورة تحويل بانتظار التسعير",
-        message: isVersion3 ?
+        message: usesDualAccounting ?
           `تم تأكيد الاستلام للفاتورة رقم ${invoice.invoice_number}. يلزم ترحيل الصادر والوارد.` :
           `تم تأكيد استلام الفاتورة رقم ${invoice.invoice_number}.`,
         revision,
@@ -1336,7 +1352,7 @@ async function confirmReceipt({
         responseData: responseFor(
             invoiceId,
             null,
-            isVersion3 ? STATUS.pendingDualAccounting : STATUS.pendingPriceEntry,
+            usesDualAccounting ? STATUS.pendingDualAccounting : STATUS.pendingPriceEntry,
             revision,
         ),
       };
@@ -1481,6 +1497,12 @@ async function confirmPrices({
       if (!Number.isFinite(invoiceTotal)) {
         throw new CommandError("invalid-argument", 400, "The invoice total is outside the supported range.");
       }
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: [actor.uid],
+        notificationTypes: ["inter_branch_v2_receipt_confirmed"],
+        timestamp,
+      });
       transaction.set(snapshotRef, {
         id: invoiceId,
         invoice_id: invoiceId,
@@ -1975,6 +1997,13 @@ async function decideAmendment({
         delete nextInvoice.amendment_approvals;
         assertNoPriceLikeKeys(nextInvoice, 'invoice');
         assertClosedPublicInvoice(nextInvoice);
+        await closeOpenTasks(transaction, firestore, {
+          entityId: invoiceId,
+          recipientIds: amendment.required_approver_ids,
+          notificationTypes: ['inter_branch_v3_amendment_requested'],
+          timestamp,
+          resolution: 'cancelled',
+        });
         transaction.set(invoiceRef, nextInvoice);
         writePublicEvent(transaction, firestore, {invoice, event, revision});
         writeNotifications(transaction, firestore, {
@@ -2015,6 +2044,12 @@ async function decideAmendment({
         };
         assertNoPriceLikeKeys(nextInvoice, 'invoice');
         assertClosedPublicInvoice(nextInvoice);
+        await closeOpenTasks(transaction, firestore, {
+          entityId: invoiceId,
+          recipientIds: [actor.uid],
+          notificationTypes: ['inter_branch_v3_amendment_requested'],
+          timestamp,
+        });
         transaction.set(invoiceRef, nextInvoice);
         writePublicEvent(transaction, firestore, {invoice, event, revision});
         return {statusCode: 200, responseData: responseFor(
@@ -2071,6 +2106,12 @@ async function decideAmendment({
       assertNoPriceLikeKeys(nextInvoice, 'invoice');
       assertClosedPublicInvoice(nextInvoice);
       proposedItems.forEach((item) => assertClosedPublicItem(nextInvoice, item, item.item_id));
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: amendment.required_approver_ids,
+        notificationTypes: ['inter_branch_v3_amendment_requested'],
+        timestamp,
+      });
       transaction.set(invoiceRef, nextInvoice);
       updateItemDocuments(transaction, invoiceRef, currentItems, proposedItems);
       writePublicEvent(transaction, firestore, {invoice, event, revision});
@@ -2278,6 +2319,13 @@ async function decideCancellation({
             .forEach((key) => delete nextInvoice[key]);
         assertNoPriceLikeKeys(nextInvoice, 'invoice');
         assertClosedPublicInvoice(nextInvoice);
+        await closeOpenTasks(transaction, firestore, {
+          entityId: invoiceId,
+          recipientIds: cancellation.required_approver_ids,
+          notificationTypes: ['inter_branch_v3_cancellation_requested'],
+          timestamp,
+          resolution: 'cancelled',
+        });
         transaction.set(invoiceRef, nextInvoice);
         writePublicEvent(transaction, firestore, {invoice, event, revision});
         writeNotifications(transaction, firestore, {
@@ -2319,6 +2367,12 @@ async function decideCancellation({
         };
         assertNoPriceLikeKeys(nextInvoice, 'invoice');
         assertClosedPublicInvoice(nextInvoice);
+        await closeOpenTasks(transaction, firestore, {
+          entityId: invoiceId,
+          recipientIds: [actor.uid],
+          notificationTypes: ['inter_branch_v3_cancellation_requested'],
+          timestamp,
+        });
         transaction.set(invoiceRef, nextInvoice);
         writePublicEvent(transaction, firestore, {invoice, event, revision});
         return {statusCode: 200, responseData: responseFor(
@@ -2350,6 +2404,12 @@ async function decideCancellation({
           .forEach((key) => delete nextInvoice[key]);
       assertNoPriceLikeKeys(nextInvoice, 'invoice');
       assertClosedPublicInvoice(nextInvoice);
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: cancellation.required_approver_ids,
+        notificationTypes: ['inter_branch_v3_cancellation_requested'],
+        timestamp,
+      });
       transaction.set(invoiceRef, nextInvoice);
       writePublicEvent(transaction, firestore, {invoice, event, revision});
       writeNotifications(transaction, firestore, {
@@ -2528,6 +2588,14 @@ async function postToAccounting({
             actor,
             timestamp,
         );
+        if (completed) {
+          await closeOpenTasks(transaction, firestore, {
+            entityId: invoiceId,
+            recipientIds: [actor.uid],
+            notificationTypes: ["inter_branch_v3_receipt_confirmed"],
+            timestamp,
+          });
+        }
         transaction.update(invoiceRef, {
           [statusField]: "posted",
           [referenceField]: payload.accounting_reference,
@@ -2607,6 +2675,12 @@ async function postToAccounting({
           actor,
           timestamp,
       );
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: [actor.uid],
+        notificationTypes: ["inter_branch_v2_prices_confirmed"],
+        timestamp,
+      });
       transaction.update(invoiceRef, {
         status: STATUS.postedToAccounting,
         revision,

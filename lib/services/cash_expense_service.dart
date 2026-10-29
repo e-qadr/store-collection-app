@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/cash_expense_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/services/external_invoice_upload_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 
@@ -12,6 +13,7 @@ class CashExpenseService {
   final ExternalInvoiceUploadService _invoiceUploadService =
       ExternalInvoiceUploadService();
   final NotificationService _notificationService = NotificationService();
+  final AuthApiService _api = AuthApiService();
 
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(CashExpenseFields.collection);
@@ -22,6 +24,21 @@ class CashExpenseService {
     } catch (_) {
       // لا يجب أن يمنع فشل الإشعار تنفيذ العملية الأساسية.
     }
+  }
+
+  Future<void> _dispatchOrLegacyNotification({
+    required String requestId,
+    required String event,
+    required Future<void> Function() legacy,
+  }) async {
+    if (_api.isConfigured) {
+      await _api.dispatchCashExpenseNotification(
+        requestId: requestId,
+        event: event,
+      );
+      return;
+    }
+    await legacy();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRequests({
@@ -147,9 +164,13 @@ class CashExpenseService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyCashExpenseCreated(
+        () => _dispatchOrLegacyNotification(
           requestId: doc.id,
-          requestData: savedData,
+          event: 'created',
+          legacy: () => _notificationService.notifyCashExpenseCreated(
+            requestId: doc.id,
+            requestData: savedData,
+          ),
         ),
       );
     }
@@ -251,10 +272,15 @@ class CashExpenseService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyCashExpenseGeneralManagerDecision(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
-          approved: approved,
+          event: 'general_manager_decision',
+          legacy: () =>
+              _notificationService.notifyCashExpenseGeneralManagerDecision(
+                requestId: requestId,
+                requestData: savedData,
+                approved: approved,
+              ),
         ),
       );
     }
@@ -324,9 +350,13 @@ class CashExpenseService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyCashExpenseInvoiceReady(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
+          event: 'invoice_ready',
+          legacy: () => _notificationService.notifyCashExpenseInvoiceReady(
+            requestId: requestId,
+            requestData: savedData,
+          ),
         ),
       );
     }
@@ -377,9 +407,13 @@ class CashExpenseService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyCashExpenseInvoiceReady(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
+          event: 'invoice_ready',
+          legacy: () => _notificationService.notifyCashExpenseInvoiceReady(
+            requestId: requestId,
+            requestData: savedData,
+          ),
         ),
       );
     }
@@ -435,9 +469,14 @@ class CashExpenseService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyCashExpenseAccountingApproved(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
+          event: 'accounting_approved',
+          legacy: () =>
+              _notificationService.notifyCashExpenseAccountingApproved(
+                requestId: requestId,
+                requestData: savedData,
+              ),
         ),
       );
     }
@@ -520,9 +559,14 @@ class CashExpenseService {
       final savedData = savedRequest.data();
       if (savedData != null) {
         await _notifySafely(
-          () => _notificationService.notifyCashExpenseManagerUpdatedAfterEdit(
+          () => _dispatchOrLegacyNotification(
             requestId: requestId,
-            requestData: savedData,
+            event: 'manager_updated_before_review',
+            legacy: () =>
+                _notificationService.notifyCashExpenseManagerUpdatedAfterEdit(
+                  requestId: requestId,
+                  requestData: savedData,
+                ),
           ),
         );
       }
@@ -591,9 +635,13 @@ class CashExpenseService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyCashExpenseEditRequested(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
+          event: 'edit_requested',
+          legacy: () => _notificationService.notifyCashExpenseEditRequested(
+            requestId: requestId,
+            requestData: savedData,
+          ),
         ),
       );
     }
@@ -695,10 +743,14 @@ class CashExpenseService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyCashExpenseEditDecision(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
-          approved: approved,
+          event: 'edit_decision',
+          legacy: () => _notificationService.notifyCashExpenseEditDecision(
+            requestId: requestId,
+            requestData: savedData,
+            approved: approved,
+          ),
         ),
       );
     }

@@ -1,6 +1,32 @@
 {
   "indexes": [
     {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recipient_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recipient_id", "order": "ASCENDING" },
+        { "fieldPath": "requires_action", "order": "ASCENDING" },
+        { "fieldPath": "task_status", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "role", "order": "ASCENDING" },
+        { "fieldPath": "branchId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "product_groups",
       "queryScope": "COLLECTION",
       "fields": [
@@ -274,6 +300,15 @@
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "updated_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "entity_id", "order": "ASCENDING" },
+        { "fieldPath": "recipient_id", "order": "ASCENDING" },
+        { "fieldPath": "requires_action", "order": "ASCENDING" }
       ]
     }
   ],

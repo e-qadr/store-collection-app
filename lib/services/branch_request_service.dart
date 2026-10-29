@@ -2,17 +2,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/branch_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 
 class BranchRequestService {
   final FirebaseFirestore _firestore;
   final NotificationService _notifications;
+  final AuthApiService _api;
 
   BranchRequestService({
     FirebaseFirestore? firestore,
     NotificationService? notifications,
+    AuthApiService? api,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
-       _notifications = notifications ?? NotificationService();
+       _notifications = notifications ?? NotificationService(),
+       _api = api ?? AuthApiService();
 
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(BranchRequestFields.collection);
@@ -64,6 +68,7 @@ class BranchRequestService {
     required String description,
     required BranchRequestCategory category,
     required BranchRequestPriority priority,
+    required String recipientRole,
   }) async {
     final cleanTitle = title.trim();
     final cleanDescription = description.trim();
@@ -76,6 +81,10 @@ class BranchRequestService {
 
     final actor = await _currentActor();
     _requireManagerForBranch(actor, branchId);
+    if (recipientRole != UserRole.collector.name &&
+        recipientRole != UserRole.accountant.name) {
+      throw StateError('اختر المدير العام أو المحاسب لاستلام الطلب.');
+    }
     final request = _collection.doc();
     await request.set({
       BranchRequestFields.id: request.id,
@@ -88,7 +97,7 @@ class BranchRequestService {
       BranchRequestFields.status: BranchRequestStatus.newRequest.value,
       BranchRequestFields.direction:
           BranchRequestDirection.branchToAdministration.value,
-      BranchRequestFields.executorRole: UserRole.collector.name,
+      BranchRequestFields.executorRole: recipientRole,
       BranchRequestFields.createdBy: actor.uid,
       BranchRequestFields.createdByName: actor.name,
       BranchRequestFields.createdByRole: actor.role,
@@ -97,7 +106,7 @@ class BranchRequestService {
       BranchRequestFields.history: [
         _history(
           action: 'created',
-          message: 'تم إرسال الطلب إلى المدير العام.',
+          message: 'تم إرسال الطلب إلى ${_roleLabel(recipientRole)}.',
           actor: actor,
         ),
       ],
@@ -106,9 +115,13 @@ class BranchRequestService {
     final saved = await request.get();
     if (saved.data() case final data?) {
       await _notifySafely(
-        () => _notifications.notifyBranchRequestCreated(
+        () => _dispatchOrLegacyNotification(
           requestId: request.id,
-          requestData: data,
+          event: 'request_created',
+          legacy: () => _notifications.notifyBranchRequestCreated(
+            requestId: request.id,
+            requestData: data,
+          ),
         ),
       );
     }
@@ -165,9 +178,13 @@ class BranchRequestService {
     final saved = await request.get();
     if (saved.data() case final data?) {
       await _notifySafely(
-        () => _notifications.notifyBranchTaskAssigned(
+        () => _dispatchOrLegacyNotification(
           requestId: request.id,
-          requestData: data,
+          event: 'branch_task_assigned',
+          legacy: () => _notifications.notifyBranchTaskAssigned(
+            requestId: request.id,
+            requestData: data,
+          ),
         ),
       );
     }
@@ -229,9 +246,13 @@ class BranchRequestService {
     final saved = await request.get();
     if (saved.data() case final data?) {
       await _notifySafely(
-        () => _notifications.notifyAdministrativeTaskAssigned(
+        () => _dispatchOrLegacyNotification(
           requestId: request.id,
-          requestData: data,
+          event: 'administrative_task_assigned',
+          legacy: () => _notifications.notifyAdministrativeTaskAssigned(
+            requestId: request.id,
+            requestData: data,
+          ),
         ),
       );
     }
@@ -336,9 +357,13 @@ class BranchRequestService {
     final saved = await ref.get();
     if (saved.data() case final data?) {
       await _notifySafely(
-        () => _notifications.notifyBranchRequestRejected(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: data,
+          event: 'rejected',
+          legacy: () => _notifications.notifyBranchRequestRejected(
+            requestId: requestId,
+            requestData: data,
+          ),
         ),
       );
     }
@@ -368,6 +393,14 @@ class BranchRequestService {
         throw StateError('هذا الطلب مخصص لدور آخر للتنفيذ.');
       }
       final isStarting = nextStatus == BranchRequestStatus.inProgress;
+      final executorRole = data[BranchRequestFields.executorRole]
+          ?.toString()
+          .trim();
+      final executorLabel = _roleLabel(
+        executorRole?.isNotEmpty == true
+            ? executorRole!
+            : UserRole.collector.name,
+      );
       transaction.update(ref, {
         BranchRequestFields.status: nextStatus.value,
         if (isStarting) ...{
@@ -386,8 +419,8 @@ class BranchRequestService {
           _history(
             action: isStarting ? 'started' : 'completed',
             message: isStarting
-                ? 'بدأ المدير العام تنفيذ الطلب.'
-                : 'أكمل المدير العام الطلب.',
+                ? 'بدأ $executorLabel تنفيذ الطلب.'
+                : 'أكمل $executorLabel الطلب.',
             actor: actor,
             note: note,
           ),
@@ -399,9 +432,13 @@ class BranchRequestService {
       final saved = await ref.get();
       if (saved.data() case final data?) {
         await _notifySafely(
-          () => _notifications.notifyBranchRequestCompleted(
+          () => _dispatchOrLegacyNotification(
             requestId: requestId,
-            requestData: data,
+            event: 'completed',
+            legacy: () => _notifications.notifyBranchRequestCompleted(
+              requestId: requestId,
+              requestData: data,
+            ),
           ),
         );
       }
@@ -469,6 +506,23 @@ class BranchRequestService {
     } catch (_) {
       // Notification delivery must never reverse a persisted request update.
     }
+  }
+
+  Future<void> _dispatchOrLegacyNotification({
+    required String requestId,
+    required String event,
+    required Future<void> Function() legacy,
+  }) async {
+    // Existing non-server builds retain notification compatibility. Production
+    // builds use the authenticated server, which derives recipients itself.
+    if (_api.isConfigured) {
+      await _api.dispatchBranchRequestNotification(
+        requestId: requestId,
+        event: event,
+      );
+      return;
+    }
+    await legacy();
   }
 }
 

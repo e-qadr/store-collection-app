@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const express = require("express");
+const {buildNotificationDocument, closeOpenTasks} = require("./notification-task-policy");
 
 const {
   PurchaseCommandError,
@@ -969,23 +970,21 @@ function writeNotifications(transaction, firestore, {
     if (!uid || uid === excludeUid || seen.has(uid)) continue;
     seen.add(uid);
     const reference = notificationRef(firestore, invoice.id, type, revision, uid);
-    transaction.set(reference, {
+    transaction.set(reference, buildNotificationDocument({
       id: reference.id,
-      recipient_id: uid,
+      recipientId: uid,
       title,
       message,
-      is_read: false,
-      push_status: "pending",
       module: COLLECTIONS.invoices,
-      entity_collection: COLLECTIONS.invoices,
-      entity_id: invoice.id,
-      branch_id: invoice.receiving_branch_id,
-      branch_ids: [invoice.receiving_branch_id],
-      reference_number: invoice.purchase_number,
-      notification_type: type,
-      purchase_invoice_id: invoice.id,
-      created_at: timestamp,
-    });
+      entityCollection: COLLECTIONS.invoices,
+      entityId: invoice.id,
+      branchId: invoice.receiving_branch_id,
+      branchIds: [invoice.receiving_branch_id],
+      referenceNumber: invoice.purchase_number,
+      notificationType: type,
+      timestamp,
+      extraData: {purchase_invoice_id: invoice.id},
+    }));
   }
 }
 
@@ -1431,6 +1430,12 @@ async function confirmReceipt({firestore, actorUid, invoiceId, payload, idempote
         if (!hasOnlyKeys(nextPrice, PROTECTED_PRICE_KEYS)) {
           throw new PurchaseCommandError("internal", 500, "The protected price schema is invalid.");
         }
+        await closeOpenTasks(transaction, firestore, {
+          entityId: invoiceId,
+          recipientIds: [actor.uid],
+          notificationTypes: ["purchase_invoice_created"],
+          timestamp,
+        });
         const event = eventData(eventAction, eventMessage, actor, timestamp);
         transaction.update(invoiceRef, compact({
           status: STATUS.pendingAccountingEntry,
@@ -1474,6 +1479,12 @@ async function confirmReceipt({firestore, actorUid, invoiceId, payload, idempote
           actor,
           timestamp,
       );
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: [actor.uid],
+        notificationTypes: ["purchase_invoice_created"],
+        timestamp,
+      });
       transaction.update(invoiceRef, compact({
         status: STATUS.pendingPriceEntry,
         revision,
@@ -1807,6 +1818,12 @@ async function confirmPrices({firestore, actorUid, invoiceId, payload, idempoten
       if (!hasOnlyKeys(protectedDocument, PROTECTED_PRICE_KEYS)) {
         throw new PurchaseCommandError("internal", 500, "The protected price schema is invalid.");
       }
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: [actor.uid],
+        notificationTypes: ["purchase_receipt_confirmed"],
+        timestamp,
+      });
       transaction.set(priceRef, protectedDocument);
       writePriceMemory(
           transaction, memory, latestSnapshots, invoice.currency, invoiceId,
@@ -3142,6 +3159,13 @@ async function decidePurchaseAmendment({
             actor,
             timestamp,
         );
+        await closeOpenTasks(transaction, firestore, {
+          entityId: invoiceId,
+          recipientIds: amendment.required_approvers.map((entry) => entry.uid),
+          notificationTypes: ["purchase_amendment_requested"],
+          timestamp,
+          resolution: "cancelled",
+        });
         transaction.update(amendmentRef, {
           status: "rejected",
           rejection_by: actor.uid,
@@ -3176,6 +3200,12 @@ async function decidePurchaseAmendment({
             actor,
             timestamp,
         );
+        await closeOpenTasks(transaction, firestore, {
+          entityId: invoiceId,
+          recipientIds: [actor.uid],
+          notificationTypes: ["purchase_amendment_requested"],
+          timestamp,
+        });
         transaction.update(amendmentRef, {approvals, updated_at: timestamp});
         transaction.update(invoiceRef, {
           last_updated: timestamp,
@@ -3279,6 +3309,12 @@ async function decidePurchaseAmendment({
             "price-snapshot-invalid", 409, "The protected price draft is invalid.",
         );
       }
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: amendment.required_approvers.map((entry) => entry.uid),
+        notificationTypes: ["purchase_amendment_requested"],
+        timestamp,
+      });
       if (currencyChanged) {
         // A numeric price cannot be copied into another currency. Values
         // explicitly entered in the amendment are values in the *new*
@@ -3569,6 +3605,15 @@ async function postToAccounting({firestore, actorUid, invoiceId, payload, idempo
         approved_by_name: actor.name,
         approved_at: timestamp,
       } : undefined;
+      await closeOpenTasks(transaction, firestore, {
+        entityId: invoiceId,
+        recipientIds: [actor.uid],
+        notificationTypes: [
+          "purchase_receipt_sent_to_accounting",
+          "purchase_prices_confirmed",
+        ],
+        timestamp,
+      });
       transaction.update(priceRef, compact({
         locked: true,
         locked_by: actor.uid,

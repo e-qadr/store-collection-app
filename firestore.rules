@@ -2707,7 +2707,7 @@ service cloud.firestore {
         ((role() == 'manager' &&
           data.branch_id == profile().get('branchId', '') &&
           data.direction == 'branch_to_administration' &&
-          data.executor_role == 'collector' &&
+          (data.executor_role == 'collector' || data.executor_role == 'accountant') &&
           branchRequestTargetIsOperational(data)) ||
           ((role() == 'collector' || role() == 'accountant') &&
             data.direction == 'administration_to_branch' &&

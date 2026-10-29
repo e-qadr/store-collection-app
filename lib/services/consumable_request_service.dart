@@ -2,11 +2,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:store_collection_app/models/consumable_request_model.dart';
 import 'package:store_collection_app/models/enums.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 
 class ConsumableRequestService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final NotificationService _notificationService = NotificationService();
+  final AuthApiService _api = AuthApiService();
 
   CollectionReference<Map<String, dynamic>> get _collection =>
       _firestore.collection(ConsumableRequestFields.collection);
@@ -17,6 +19,21 @@ class ConsumableRequestService {
     } catch (_) {
       // لا يجب أن يمنع فشل الإشعار تنفيذ العملية الأساسية.
     }
+  }
+
+  Future<void> _dispatchOrLegacyNotification({
+    required String requestId,
+    required String event,
+    required Future<void> Function() legacy,
+  }) async {
+    if (_api.isConfigured) {
+      await _api.dispatchConsumableNotification(
+        requestId: requestId,
+        event: event,
+      );
+      return;
+    }
+    await legacy();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRequests({
@@ -122,9 +139,13 @@ class ConsumableRequestService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyConsumableRequestCreated(
+        () => _dispatchOrLegacyNotification(
           requestId: doc.id,
-          requestData: savedData,
+          event: 'created',
+          legacy: () => _notificationService.notifyConsumableRequestCreated(
+            requestId: doc.id,
+            requestData: savedData,
+          ),
         ),
       );
     }
@@ -190,9 +211,13 @@ class ConsumableRequestService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyConsumableCollectorReviewed(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
+          event: 'collector_reviewed',
+          legacy: () => _notificationService.notifyConsumableCollectorReviewed(
+            requestId: requestId,
+            requestData: savedData,
+          ),
         ),
       );
     }
@@ -251,9 +276,13 @@ class ConsumableRequestService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyConsumableAccountingApproved(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
+          event: 'accounting_approved',
+          legacy: () => _notificationService.notifyConsumableAccountingApproved(
+            requestId: requestId,
+            requestData: savedData,
+          ),
         ),
       );
     }
@@ -335,9 +364,13 @@ class ConsumableRequestService {
     final savedData = savedRequest.data();
     if (savedData != null) {
       await _notifySafely(
-        () => _notificationService.notifyConsumableRequestRejected(
+        () => _dispatchOrLegacyNotification(
           requestId: requestId,
-          requestData: savedData,
+          event: 'rejected',
+          legacy: () => _notificationService.notifyConsumableRequestRejected(
+            requestId: requestId,
+            requestData: savedData,
+          ),
         ),
       );
     }

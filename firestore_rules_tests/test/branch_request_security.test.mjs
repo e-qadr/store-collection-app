@@ -119,6 +119,9 @@ test('only the assigned branch manager can create a new branch request', async (
     last_updated: serverTimestamp(),
   };
   await assertSucceeds(setDoc(doc(db('manager-r'), 'branch_requests', 'request-new'), created));
+  await assertSucceeds(setDoc(doc(db('manager-r'), 'branch_requests', 'request-to-accountant'), {
+    ...created, id: 'request-to-accountant', executor_role: 'accountant',
+  }));
   await assertFails(setDoc(doc(db('manager-x'), 'branch_requests', 'request-bad'), {
     ...created, id: 'request-bad', branch_id: 'branch-r', created_by: 'manager-x',
   }));
@@ -231,6 +234,30 @@ test('only the collector can advance new to in progress and then complete', asyn
     history: [...history(), ...history('started'), ...history('completed')],
   }));
   await assertFails(deleteDoc(collectorRef));
+});
+
+test('the accountant alone handles a branch request addressed to the accountant', async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'branch_requests', 'request-to-accountant'), {
+      ...request({id: 'request-to-accountant'}), executor_role: 'accountant',
+    });
+  });
+  const accountantRef = doc(db('accountant-user'), 'branch_requests', 'request-to-accountant');
+  await assertFails(updateDoc(doc(db('collector-user'), 'branch_requests', 'request-to-accountant'), {
+    status: 'in_progress', started_by: 'collector-user', started_by_name: 'General Manager',
+    started_by_role: 'collector', started_at: serverTimestamp(), last_updated: serverTimestamp(),
+    history: [...history(), ...history('collector-started')],
+  }));
+  await assertSucceeds(updateDoc(accountantRef, {
+    status: 'in_progress', started_by: 'accountant-user', started_by_name: 'Accountant',
+    started_by_role: 'accountant', started_at: serverTimestamp(), last_updated: serverTimestamp(),
+    history: [...history(), ...history('started')],
+  }));
+  await assertSucceeds(updateDoc(accountantRef, {
+    status: 'completed', completed_by: 'accountant-user', completed_by_name: 'Accountant',
+    completed_at: serverTimestamp(), completion_note: 'Completed safely', last_updated: serverTimestamp(),
+    history: [...history(), ...history('started'), ...history('completed')],
+  }));
 });
 
 test('the creator may edit a request only before work starts', async () => {

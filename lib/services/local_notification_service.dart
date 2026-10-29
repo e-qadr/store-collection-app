@@ -44,8 +44,10 @@ class LocalNotificationService {
     const settings = InitializationSettings(android: androidSettings);
     await _plugin.initialize(
       settings: settings,
-      onDidReceiveNotificationResponse: (_) =>
-          AppNavigationService.openNotifications(),
+      onDidReceiveNotificationResponse: (response) =>
+          AppNavigationService.openNotifications(
+            notificationId: response.payload,
+          ),
       onDidReceiveBackgroundNotificationResponse:
           localNotificationTapBackground,
     );

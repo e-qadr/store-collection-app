@@ -96,7 +96,9 @@ class DeviceNotificationService {
       _messageOpenedSubscription ??= FirebaseMessaging.onMessageOpenedApp
           .listen((message) {
             recordDeviceNotificationDelivery(message, state: 'opened');
-            AppNavigationService.openNotifications();
+            AppNavigationService.openNotifications(
+              notificationId: message.data['notification_id'],
+            );
           });
       final initialMessage = await FirebaseMessaging.instance
           .getInitialMessage();
@@ -105,7 +107,9 @@ class DeviceNotificationService {
           initialMessage,
           state: 'opened_from_terminated',
         );
-        AppNavigationService.openNotifications();
+        AppNavigationService.openNotifications(
+          notificationId: initialMessage.data['notification_id'],
+        );
       }
       if (supportsAutomaticRequest) {
         await requestPermission();

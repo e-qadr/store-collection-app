@@ -5,12 +5,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:store_collection_app/models/enums.dart';
 import 'package:store_collection_app/models/transaction_model.dart';
+import 'package:store_collection_app/services/auth_api_service.dart';
 import 'package:store_collection_app/services/notification_service.dart';
 import 'package:store_collection_app/utils/archive_workflow.dart';
 
 class DatabaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final NotificationService _notificationService = NotificationService();
+  final AuthApiService _api = AuthApiService();
 
   Future<void> _notifySafely(Future<void> Function() notification) async {
     try {
@@ -18,6 +20,21 @@ class DatabaseService {
     } catch (_) {
       // لا يجب أن يؤدي فشل الإشعار إلى التراجع عن عملية السند الأساسية.
     }
+  }
+
+  Future<void> _dispatchCollectionOrLegacy({
+    required String transactionId,
+    required String event,
+    required Future<void> Function() legacy,
+  }) async {
+    if (_api.isConfigured) {
+      await _api.dispatchCollectionNotification(
+        transactionId: transactionId,
+        event: event,
+      );
+      return;
+    }
+    await legacy();
   }
 
   Future<Map<String, String>> _getCurrentActor() async {
@@ -286,9 +303,13 @@ class DatabaseService {
       });
       final savedTransaction = await transactionRef.get();
       await _notifySafely(
-        () => _notificationService.notifyForNewTransaction(
+        () => _dispatchCollectionOrLegacy(
           transactionId: transaction.id,
-          transactionData: savedTransaction.data()!,
+          event: 'created',
+          legacy: () => _notificationService.notifyForNewTransaction(
+            transactionId: transaction.id,
+            transactionData: savedTransaction.data()!,
+          ),
         ),
       );
       return transactionNumber;
@@ -383,9 +404,13 @@ class DatabaseService {
     });
     final saved = await transactionRef.get();
     await _notifySafely(
-      () => _notificationService.notifyCollectionVoucherReserved(
+      () => _dispatchCollectionOrLegacy(
         transactionId: transactionRef.id,
-        transactionData: saved.data()!,
+        event: 'reserved',
+        legacy: () => _notificationService.notifyCollectionVoucherReserved(
+          transactionId: transactionRef.id,
+          transactionData: saved.data()!,
+        ),
       ),
     );
     return number;
@@ -536,13 +561,36 @@ class DatabaseService {
         ]),
       });
     });
-    final saved = await ref.get();
     await _notifySafely(
-      () => _notificationService.notifyCollectionVoucherCollected(
-        transactionId: transactionId,
-        transactionData: saved.data()!,
-        differencePendingReview: requiresReview,
-      ),
+      () => requiresReview
+          ? _dispatchCollectionOrLegacy(
+              transactionId: transactionId,
+              event: 'difference_pending',
+              legacy: () async {
+                final saved = await ref.get();
+                final data = saved.data();
+                if (data == null) return;
+                await _notificationService.notifyCollectionVoucherCollected(
+                  transactionId: transactionId,
+                  transactionData: data,
+                  differencePendingReview: true,
+                );
+              },
+            )
+          : _dispatchCollectionOrLegacy(
+              transactionId: transactionId,
+              event: 'collected',
+              legacy: () async {
+                final saved = await ref.get();
+                final data = saved.data();
+                if (data == null) return;
+                await _notificationService.notifyCollectionVoucherCollected(
+                  transactionId: transactionId,
+                  transactionData: data,
+                  differencePendingReview: false,
+                );
+              },
+            ),
     );
   }
 
@@ -582,6 +630,13 @@ class DatabaseService {
         ]),
       });
     });
+    await _notifySafely(
+      () => _dispatchCollectionOrLegacy(
+        transactionId: transactionId,
+        event: 'difference_decision',
+        legacy: () async {},
+      ),
+    );
   }
 
   // 2. جلب السندات مع الفلاتر
@@ -650,11 +705,21 @@ class DatabaseService {
         firestoreTransaction.update(reference, updateData);
       });
       await _notifySafely(
-        () => _notificationService.notifyForStatus(
-          transactionId: transactionId,
-          newStatus: newStatus,
-          message: managerNotes,
-        ),
+        () => newStatus == 'approvedByManager'
+            ? _dispatchCollectionOrLegacy(
+                transactionId: transactionId,
+                event: 'manager_approved',
+                legacy: () => _notificationService.notifyForStatus(
+                  transactionId: transactionId,
+                  newStatus: newStatus,
+                  message: managerNotes,
+                ),
+              )
+            : _notificationService.notifyForStatus(
+                transactionId: transactionId,
+                newStatus: newStatus,
+                message: managerNotes,
+              ),
       );
     } catch (e) {
       throw Exception('Failed to update transaction status: $e');
@@ -778,9 +843,13 @@ class DatabaseService {
 
     if (wasAppliedDirectly) return;
     await _notifySafely(
-      () => _notificationService.notifyCollectionAmendment(
+      () => _dispatchCollectionOrLegacy(
         transactionId: transactionId,
-        approvers: requiresApprovals,
+        event: 'amendment_requested',
+        legacy: () => _notificationService.notifyCollectionAmendment(
+          transactionId: transactionId,
+          approvers: requiresApprovals,
+        ),
       ),
     );
   }
@@ -930,10 +999,14 @@ class DatabaseService {
     });
 
     await _notifySafely(
-      () => _notificationService.notifyCollectionAmendmentProgress(
+      () => _dispatchCollectionOrLegacy(
         transactionId: transactionId,
-        approvers: participantsToNotify,
-        completed: completed,
+        event: 'amendment_decision',
+        legacy: () => _notificationService.notifyCollectionAmendmentProgress(
+          transactionId: transactionId,
+          approvers: participantsToNotify,
+          completed: completed,
+        ),
       ),
     );
   }
@@ -969,6 +1042,13 @@ class DatabaseService {
         ]),
       });
     });
+    await _notifySafely(
+      () => _dispatchCollectionOrLegacy(
+        transactionId: transactionId,
+        event: 'amendment_decision',
+        legacy: () async {},
+      ),
+    );
   }
 
   // --- دوال المحاسب ---
@@ -991,10 +1071,14 @@ class DatabaseService {
         'history': FieldValue.arrayUnion([historyEntry]),
       });
       await _notifySafely(
-        () => _notificationService.notifyForStatus(
+        () => _dispatchCollectionOrLegacy(
           transactionId: transactionId,
-          newStatus: 'editRequestedByCollector',
-          message: accountantNotes,
+          event: 'accountant_edit_requested',
+          legacy: () => _notificationService.notifyForStatus(
+            transactionId: transactionId,
+            newStatus: 'editRequestedByCollector',
+            message: accountantNotes,
+          ),
         ),
       );
     } catch (e) {
@@ -1037,9 +1121,13 @@ class DatabaseService {
         'history': FieldValue.arrayUnion([historyEntry]),
       });
       await _notifySafely(
-        () => _notificationService.notifyForStatus(
+        () => _dispatchCollectionOrLegacy(
           transactionId: transactionId,
-          newStatus: 'approvedByAccountant',
+          event: 'accountant_approved',
+          legacy: () => _notificationService.notifyForStatus(
+            transactionId: transactionId,
+            newStatus: 'approvedByAccountant',
+          ),
         ),
       );
     } catch (e) {

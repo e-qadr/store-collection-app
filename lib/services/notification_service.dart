@@ -13,12 +13,33 @@ class NotificationService {
   static const interBranchInvoicesModule = 'inter_branch_invoices';
   static const purchaseInvoicesModule = 'purchase_invoices';
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> getCurrentUserNotifications() {
+  static const int notificationPageSize = 50;
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> getCurrentUserNotifications({
+    int limit = notificationPageSize,
+  }) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return const Stream.empty();
     return _firestore
         .collection('notifications')
         .where('recipient_id', isEqualTo: uid)
+        .orderBy('created_at', descending: true)
+        .limit(limit)
+        .snapshots();
+  }
+
+  /// Open tasks use a dedicated query rather than sharing the inbox page.
+  /// A task must not disappear merely because it is older than the first
+  /// notification page.
+  Stream<QuerySnapshot<Map<String, dynamic>>> getCurrentUserOpenTasks() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return const Stream.empty();
+    return _firestore
+        .collection('notifications')
+        .where('recipient_id', isEqualTo: uid)
+        .where('requires_action', isEqualTo: true)
+        .where('task_status', isEqualTo: 'open')
+        .orderBy('created_at', descending: true)
         .snapshots();
   }
 
@@ -38,14 +59,19 @@ class NotificationService {
         .where('recipient_id', isEqualTo: uid)
         .get();
     final unread = snapshot.docs.where((doc) => doc.data()['is_read'] != true);
-    final batch = _firestore.batch();
-    for (final doc in unread) {
-      batch.update(doc.reference, {
-        'is_read': true,
-        'read_at': FieldValue.serverTimestamp(),
-      });
+    // Firestore batches accept at most 500 writes. Keep a margin so an inbox
+    // with many legacy notifications can always be marked read safely.
+    final documents = unread.toList(growable: false);
+    for (var offset = 0; offset < documents.length; offset += 400) {
+      final batch = _firestore.batch();
+      for (final doc in documents.skip(offset).take(400)) {
+        batch.update(doc.reference, {
+          'is_read': true,
+          'read_at': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
     }
-    await batch.commit();
   }
 
   Future<void> notifyForNewTransaction({
@@ -393,8 +419,14 @@ class NotificationService {
   }) async {
     final branchId = _string(requestData, 'branch_id');
     final title = _string(requestData, 'title');
+    final recipientRole = _string(requestData, 'executor_role') == 'accountant'
+        ? 'accountant'
+        : 'collector';
+    final recipientLabel = recipientRole == 'accountant'
+        ? 'المحاسب'
+        : 'المدير العام';
     await _send(
-      recipients: await _usersByRole('collector'),
+      recipients: await _usersByRole(recipientRole),
       module: branchRequestsModule,
       entityCollection: branchRequestsModule,
       entityId: requestId,
@@ -403,7 +435,7 @@ class NotificationService {
       notificationType: 'branch_request_created',
       title: 'طلب جديد من فرع',
       message:
-          'ورد طلب جديد من الفرع: ${title.isEmpty ? 'بدون عنوان' : title}.',
+          'ورد طلب جديد من الفرع للمراجعة لدى $recipientLabel: ${title.isEmpty ? 'بدون عنوان' : title}.',
       extraData: {'branch_request_id': requestId},
     );
   }
@@ -1022,7 +1054,15 @@ class NotificationService {
         .get();
     final assignedManager =
         branchDoc.data()?['branch_manager_id'] as String? ?? '';
-    if (assignedManager.isNotEmpty) recipients.add(assignedManager);
+    if (assignedManager.isNotEmpty) {
+      final manager = await _firestore
+          .collection('users')
+          .doc(assignedManager)
+          .get();
+      if (_isActiveNotificationRecipient(manager.data(), role: 'manager')) {
+        recipients.add(assignedManager);
+      }
+    }
 
     final branchUsers = await _firestore
         .collection('users')
@@ -1030,7 +1070,10 @@ class NotificationService {
         .get();
     recipients.addAll(
       branchUsers.docs
-          .where((doc) => doc.data()['role'] == 'manager')
+          .where(
+            (doc) =>
+                _isActiveNotificationRecipient(doc.data(), role: 'manager'),
+          )
           .map((doc) => doc.id),
     );
     return recipients;
@@ -1041,7 +1084,10 @@ class NotificationService {
         .collection('users')
         .where('role', isEqualTo: role)
         .get();
-    return snapshot.docs.map((doc) => doc.id).toSet();
+    return snapshot.docs
+        .where((doc) => _isActiveNotificationRecipient(doc.data(), role: role))
+        .map((doc) => doc.id)
+        .toSet();
   }
 
   Future<Set<String>> _cashExpenseEditPendingRecipients(
@@ -1127,13 +1173,32 @@ class NotificationService {
     recipients.removeWhere((uid) => uid.isEmpty || uid == senderId);
     if (recipients.isEmpty) return;
 
+    final activeRecipients = <String>{};
+    await Future.wait(
+      recipients.map((recipientId) async {
+        try {
+          final user = await _firestore
+              .collection('users')
+              .doc(recipientId)
+              .get();
+          if (_isActiveNotificationRecipient(user.data())) {
+            activeRecipients.add(recipientId);
+          }
+        } catch (_) {
+          // A notification must never be redirected merely because a profile
+          // lookup failed. The business transition remains authoritative.
+        }
+      }),
+    );
+    if (activeRecipients.isEmpty) return;
+
     final cleanBranchIds = branchIds
         ?.where((id) => id.trim().isNotEmpty)
         .map((id) => id.trim())
         .toSet()
         .toList();
     final batch = _firestore.batch();
-    for (final recipientId in recipients) {
+    for (final recipientId in activeRecipients) {
       final ref = _firestore.collection('notifications').doc();
       batch.set(ref, {
         'id': ref.id,
@@ -1201,6 +1266,15 @@ class NotificationService {
 
   String _string(Map<String, dynamic> data, String key) {
     return data[key]?.toString().trim() ?? '';
+  }
+
+  bool _isActiveNotificationRecipient(
+    Map<String, dynamic>? profile, {
+    String? role,
+  }) {
+    if (profile == null || profile['isActive'] == false) return false;
+    if (profile['mustChangePassword'] == true) return false;
+    return role == null || profile['role'] == role;
   }
 
   Map<String, dynamic> _map(dynamic value) {

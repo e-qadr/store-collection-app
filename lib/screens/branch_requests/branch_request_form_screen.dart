@@ -40,6 +40,7 @@ class _BranchRequestFormScreenState extends State<BranchRequestFormScreen> {
       widget.request?.priority ?? BranchRequestPriority.normal;
   String? _selectedBranchId;
   String? _selectedBranchName;
+  String _requestRecipientRole = UserRole.collector.name;
   String _assignmentDestination = 'branch';
   bool _saving = false;
 
@@ -51,6 +52,11 @@ class _BranchRequestFormScreenState extends State<BranchRequestFormScreen> {
 
   String get _administrativeRecipientLabel =>
       widget.role == UserRole.collector ? 'المحاسب' : 'المدير العام';
+
+  String get _requestRecipientLabel =>
+      _requestRecipientRole == UserRole.accountant.name
+      ? 'المحاسب'
+      : 'المدير العام';
 
   @override
   void initState() {
@@ -127,7 +133,7 @@ class _BranchRequestFormScreenState extends State<BranchRequestFormScreen> {
         ? 'تصل إلى $_administrativeRecipientLabel ليبدأ تنفيذها أو يوضح سبب رفضها.'
         : _isAssignment
         ? 'يستلم مدير الفرع المهمة ثم يبدأ تنفيذها أو يوضح سبب رفضها.'
-        : 'سيظهر طلبك للمدير العام، وتتابع حالته من نفس السجل.';
+        : 'سيظهر طلبك لـ$_requestRecipientLabel، وتتابع حالته من نفس السجل.';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -160,7 +166,7 @@ class _BranchRequestFormScreenState extends State<BranchRequestFormScreen> {
   }
 
   Widget _targetSection() {
-    if (_isEdit || _isBranchManager) {
+    if (_isEdit) {
       final isAdministrativeTask =
           widget.request?.isAdministrativeTask ?? false;
       return _section(
@@ -189,6 +195,46 @@ class _BranchRequestFormScreenState extends State<BranchRequestFormScreen> {
                 : 'يُرسل الطلب إلى المدير العام',
           ),
         ),
+      );
+    }
+    if (_isBranchManager) {
+      return Column(
+        children: [
+          _section(
+            title: 'الجهة المستلمة',
+            child: DropdownButtonFormField<String>(
+              initialValue: _requestRecipientRole,
+              decoration: const InputDecoration(
+                labelText: 'وجّه الطلب إلى',
+                prefixIcon: Icon(Icons.near_me_rounded),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'collector',
+                  child: Text('المدير العام'),
+                ),
+                DropdownMenuItem(value: 'accountant', child: Text('المحاسب')),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _requestRecipientRole = value!),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _section(
+            title: 'الفرع مقدم الطلب',
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.storefront_rounded),
+              title: Text(
+                _selectedBranchName?.isNotEmpty == true
+                    ? _selectedBranchName!
+                    : 'الفرع غير محدد',
+              ),
+              subtitle: Text('سيصل الطلب إلى $_requestRecipientLabel'),
+            ),
+          ),
+        ],
       );
     }
     return Column(
@@ -394,6 +440,7 @@ class _BranchRequestFormScreenState extends State<BranchRequestFormScreen> {
           description: _description.text,
           category: _category,
           priority: _priority,
+          recipientRole: _requestRecipientRole,
         );
       }
       if (mounted) Navigator.pop(context, true);

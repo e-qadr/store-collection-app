@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const admin = require("firebase-admin");
+const {pushEligibility} = require("./notification-task-policy");
 const {createPasswordManagementRouter} = require("./password-management");
 const {
   createInterBranchInvoiceCommandRouter,
@@ -12,6 +13,14 @@ const {
   createPurchaseInvoiceCommandRouter,
   PURCHASE_JSON_LIMIT,
 } = require("./purchase-invoice-commands");
+const {
+  createBranchRequestNotificationRouter,
+} = require("./branch-request-notification-commands");
+const {
+  createCashExpenseNotificationRouter,
+} = require("./cash-expense-notification-commands");
+const {createConsumableNotificationRouter} = require("./consumable-notification-commands");
+const {createCollectionNotificationRouter} = require("./collection-notification-commands");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -167,6 +176,16 @@ if (firestore) {
     admin,
     firestore,
   }));
+  app.use("/v1", createBranchRequestNotificationRouter({
+    admin,
+    firestore,
+  }));
+  app.use("/v1", createCashExpenseNotificationRouter({
+    admin,
+    firestore,
+  }));
+  app.use("/v1", createConsumableNotificationRouter({admin, firestore}));
+  app.use("/v1", createCollectionNotificationRouter({admin, firestore}));
 }
 
 app.get("/", (_request, response) => {
@@ -213,7 +232,17 @@ async function processNotification(reference) {
     const recipientId = notification.recipient_id;
     const userReference = firestore.collection("users").doc(recipientId);
     const userSnapshot = await userReference.get();
-    const tokens = [...new Set(userSnapshot.data()?.notification_tokens ?? [])]
+    const recipient = userSnapshot.data();
+    const eligibility = pushEligibility(userSnapshot.exists, recipient);
+    if (!eligibility.eligible) {
+      await reference.update({
+        push_status: eligibility.status,
+        push_processed_at: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return;
+    }
+
+    const tokens = [...new Set(recipient?.notification_tokens ?? [])]
         .filter((token) => typeof token === "string" && token.length > 0);
 
     if (tokens.length === 0) {

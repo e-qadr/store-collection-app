@@ -5,12 +5,15 @@ class AppNavigationService {
   static final GlobalKey<NavigatorState> navigatorKey =
       GlobalKey<NavigatorState>();
 
-  static void openNotifications() {
+  static void openNotifications({String? notificationId}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final navigator = navigatorKey.currentState;
       if (navigator == null) return;
       navigator.push(
-        MaterialPageRoute(builder: (context) => const NotificationsScreen()),
+        MaterialPageRoute(
+          builder: (context) =>
+              NotificationsScreen(initialNotificationId: notificationId),
+        ),
       );
     });
   }
