@@ -1382,6 +1382,7 @@ async function confirmReceipt({firestore, actorUid, invoiceId, payload, idempote
         let nextPrice = {...price, invoice_revision: revision, item_digest: digest};
         let eventAction = "purchase_receipt_sent_to_accounting";
         let eventMessage = "Purchase receipt was confirmed and sent directly to accounting.";
+        let priceMemory;
         if (completeInitialPrice) {
           const finalItems = finalPriceItems(items, items.map((item) => ({
             item_id: item.item_id,
@@ -1420,22 +1421,31 @@ async function confirmReceipt({firestore, actorUid, invoiceId, payload, idempote
             confirmed_at: timestamp,
             locked: false,
           });
-          writePriceMemory(
-              transaction, memory, latestSnapshots, invoice.currency, invoiceId,
-              invoice.purchase_number, initialPricer, timestamp,
-          );
+          // Keep the write plan until every transaction read, including the
+          // task-close query below, is complete. Firestore rejects reads once
+          // a transaction has started writing.
+          priceMemory = {memory, latestSnapshots, initialPricer};
           eventAction = "purchase_initial_prices_confirmed";
           eventMessage = "Initial purchase prices were confirmed using received quantities.";
         }
         if (!hasOnlyKeys(nextPrice, PROTECTED_PRICE_KEYS)) {
           throw new PurchaseCommandError("internal", 500, "The protected price schema is invalid.");
         }
+        // This query both reads and resolves the manager's inbox task. It must
+        // run after the protected-price reads and before any price-memory write.
         await closeOpenTasks(transaction, firestore, {
           entityId: invoiceId,
           recipientIds: [actor.uid],
           notificationTypes: ["purchase_invoice_created"],
           timestamp,
         });
+        if (priceMemory) {
+          writePriceMemory(
+              transaction, priceMemory.memory, priceMemory.latestSnapshots,
+              invoice.currency, invoiceId, invoice.purchase_number,
+              priceMemory.initialPricer, timestamp,
+          );
+        }
         const event = eventData(eventAction, eventMessage, actor, timestamp);
         transaction.update(invoiceRef, compact({
           status: STATUS.pendingAccountingEntry,

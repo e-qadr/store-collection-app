@@ -114,9 +114,13 @@ class FakeTransaction {
   constructor(firestore) {
     this.firestore = firestore;
     this.operations = [];
+    this.hasWrites = false;
   }
 
   async get(referenceOrQuery) {
+    if (this.firestore.enforceReadsBeforeWrites && this.hasWrites) {
+      throw new Error("Firestore transactions require all reads before writes.");
+    }
     if (referenceOrQuery.kind === "document") {
       return this.firestore._snapshot(referenceOrQuery);
     }
@@ -132,14 +136,17 @@ class FakeTransaction {
   }
 
   set(reference, value, options) {
+    this.hasWrites = true;
     this.operations.push({type: "set", reference, value: clone(value), options});
   }
 
   update(reference, value) {
+    this.hasWrites = true;
     this.operations.push({type: "update", reference, value: clone(value)});
   }
 
   delete(reference) {
+    this.hasWrites = true;
     this.operations.push({type: "delete", reference});
   }
 

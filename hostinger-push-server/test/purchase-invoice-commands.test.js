@@ -564,6 +564,9 @@ test("new fully priced purchase confirms protected prices and bypasses the colle
   });
   const invoiceId = created.responseData.invoice_id;
   const [item] = publicItems(firestore, invoiceId);
+  // Match the ordering contract enforced by the real Firestore SDK.  This
+  // protects the manager confirmation path from a read-after-write regression.
+  firestore.enforceReadsBeforeWrites = true;
   const receipt = await confirmReceipt({
     firestore,
     actorUid: "manager-r",
