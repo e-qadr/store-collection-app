@@ -110,6 +110,7 @@ const PUBLIC_INVOICE_KEYS = new Set([
   "receiving_accounting_posted_by_name",
   "receiving_accounting_posted_at",
   "accounting_reference",
+  "legacy_dual_accounting",
   "posted_by",
   "posted_by_name",
   "posted_at",
@@ -270,6 +271,13 @@ function hasAllKeys(value, requiredKeys) {
 
 function assertClosedPublicInvoice(invoice) {
   if (!hasOnlyKeys(invoice, PUBLIC_INVOICE_KEYS) ||
+      (invoice.legacy_dual_accounting !== undefined &&
+       (invoice.workflow_version !== 2 ||
+        !hasOnlyKeys(invoice.legacy_dual_accounting, new Set([
+          "active", "initialized_by", "initialized_by_name", "initialized_at",
+          "existing_posting_side", "revalidation_required",
+          "prior_source_accounting_reference", "corrected_at", "corrected_reason",
+        ])) || invoice.legacy_dual_accounting.active !== true)) ||
       !Array.isArray(invoice.history) ||
       invoice.history.some((event) => !hasOnlyKeys(event, PUBLIC_HISTORY_KEYS))) {
     throw new CommandError(

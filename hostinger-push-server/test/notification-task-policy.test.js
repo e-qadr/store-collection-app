@@ -149,3 +149,27 @@ test("only matching open tasks are closed for the acting recipient", async () =>
   assert.equal(firestore.document("notifications", "anotherAction").task_status, "open");
   assert.equal(firestore.document("notifications", "activity").task_status, "not_applicable");
 });
+
+test("closing tasks for multiple participants reads all recipients before writing", async () => {
+  const {FakeFirestore} = require("./support/fake-firestore");
+  const task = (recipient) => ({
+    entity_id: "invoice-1",
+    recipient_id: recipient,
+    requires_action: true,
+    notification_type: "inter_branch_v3_amendment_requested",
+    task_status: "open",
+  });
+  const firestore = new FakeFirestore({notifications: {
+    first: task("manager-r"), second: task("manager-s"),
+  }});
+  firestore.enforceReadsBeforeWrites = true;
+  const count = await firestore.runTransaction((transaction) => closeOpenTasks(transaction, firestore, {
+    entityId: "invoice-1",
+    recipientIds: ["manager-r", "manager-s"],
+    notificationTypes: ["inter_branch_v3_amendment_requested"],
+    timestamp: "server-time",
+  }));
+  assert.equal(count, 2);
+  assert.equal(firestore.document("notifications", "first").task_status, "completed");
+  assert.equal(firestore.document("notifications", "second").task_status, "completed");
+});

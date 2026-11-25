@@ -1318,6 +1318,40 @@ test("a historical posted transfer records its prior side before only the remain
   });
 });
 
+test("a corrected legacy dual-accounting transfer can be received without losing the source reference", async () => {
+  const firestore = new FakeFirestore(seed());
+  await withServer(firestore, async (baseUrl) => {
+    let response = await post(baseUrl, "/v1/inter-branch-invoices", {
+      uid: "manager-s", key: "legacy-receipt-create-1",
+      body: {receiving_branch_id: "branch-r", items: [
+        {product_id: "product-a", unit_id: "primary", supplied_quantity: 2},
+      ]},
+    });
+    assert.equal(response.status, 201);
+    const {invoice_id: invoiceId} = await response.json();
+    const invoice = firestore._collection("inter_branch_invoices").get(invoiceId);
+    Object.assign(invoice, {
+      schema_version: 2, workflow_version: 2, creation_mode: "direct_supplier_invoice",
+      legacy_dual_accounting: {active: true, revalidation_required: true,
+        prior_source_accounting_reference: "مرجع سابق", corrected_reason: "manual_material_correction"},
+      source_accounting_status: "pending", source_accounting_reference: "مرجع سابق",
+      receiving_accounting_status: "pending",
+    });
+    const item = firestore._collection(`inter_branch_invoices/${invoiceId}/items`).values().next().value;
+    Object.assign(item, {schema_version: 2, workflow_version: 2, creation_mode: "direct_supplier_invoice"});
+    firestore.enforceReadsBeforeWrites = true;
+    response = await post(baseUrl, `/v1/inter-branch-invoices/${invoiceId}/confirm-receipt`, {
+      uid: "manager-r", key: "legacy-receipt-confirm-1",
+      body: {expected_revision: 1, items: [{item_id: item.item_id, received_quantity: 2}]},
+    });
+    assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+    const updated = firestore.document("inter_branch_invoices", invoiceId);
+    assert.equal(updated.status, "pendingDualAccounting");
+    assert.equal(updated.source_accounting_status, "pending");
+    assert.equal(updated.source_accounting_reference, "مرجع سابق");
+  });
+});
+
 test("transfer amendments use recorded participants, restore after rejection, and restart receipt", async () => {
   const firestore = new FakeFirestore(seed());
   await withServer(firestore, async (baseUrl) => {
@@ -1388,6 +1422,8 @@ test("transfer amendments use recorded participants, restore after rejection, an
     assert.equal(items[0].supplied_quantity, 2, "pending proposal must not mutate the invoice");
     assert.deepEqual(invoice.amendment_request.required_approver_ids.sort(), ["manager-r", "manager-s"]);
 
+    // Exercise decisions under the same read-before-write rule as Firestore.
+    firestore.enforceReadsBeforeWrites = true;
     response = await post(
         baseUrl,
         `/v1/inter-branch-invoices/${created.invoice_id}/decide-amendment`,

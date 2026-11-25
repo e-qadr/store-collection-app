@@ -163,15 +163,18 @@ async function closeOpenTasks(transaction, firestore, {
   const types = new Set(cleanIds(notificationTypes || []));
   if (!entity || recipients.length === 0 || types.size === 0) return 0;
 
-  let closed = 0;
-  for (const recipientId of recipients) {
-    const snapshot = await transaction.get(
+  // Firestore forbids reads after the first transaction write. Read all
+  // recipients before resolving any task, including multi-party decisions.
+  const snapshots = await Promise.all(recipients.map((recipientId) =>
+    transaction.get(
         firestore.collection("notifications")
             .where("entity_id", "==", entity)
             .where("recipient_id", "==", recipientId)
             .where("requires_action", "==", true)
             .limit(50),
-    );
+    )));
+  let closed = 0;
+  for (const snapshot of snapshots) {
     for (const document of snapshot.docs) {
       const data = document.data();
       if (data?.task_status !== "open" || !types.has(data?.notification_type)) continue;
